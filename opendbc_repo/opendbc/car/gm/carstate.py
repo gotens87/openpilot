@@ -26,6 +26,7 @@ TransmissionType = structs.CarParams.TransmissionType
 NetworkLocation = structs.CarParams.NetworkLocation
 
 STANDSTILL_THRESHOLD = 10 * 0.0311
+VOLT_EBCM_BRAKE_PRESSED_THRESHOLD = 6 / 0xd0
 
 BUTTONS_DICT = {CruiseButtons.RES_ACCEL: ButtonType.accelCruise, CruiseButtons.DECEL_SET: ButtonType.decelCruise,
                 CruiseButtons.MAIN: ButtonType.mainCruise, CruiseButtons.CANCEL: ButtonType.cancel}
@@ -46,6 +47,7 @@ class CarState(CarStateBase):
     self.cluster_min_speed = CV.KPH_TO_MS / 2.
 
     self.loopback_lka_steering_cmd_updated = False
+    self.loopback_lka_steering_cmd_counter = 0
     self.loopback_lka_steering_cmd_ts_nanos = 0
     self.pt_lka_steering_cmd_counter = 0
     self.cam_lka_steering_cmd_counter = 0
@@ -119,6 +121,7 @@ class CarState(CarStateBase):
     # Variables used for avoiding LKAS faults
     self.loopback_lka_steering_cmd_updated = len(loopback_cp.vl_all["ASCMLKASteeringCmd"]["RollingCounter"]) > 0
     if self.loopback_lka_steering_cmd_updated:
+      self.loopback_lka_steering_cmd_counter = loopback_cp.vl["ASCMLKASteeringCmd"]["RollingCounter"]
       self.loopback_lka_steering_cmd_ts_nanos = loopback_cp.ts_nanos["ASCMLKASteeringCmd"]["RollingCounter"]
     if self.CP.networkLocation == NetworkLocation.fwdCamera and not self.CP.flags & GMFlags.NO_CAMERA.value:
       self.pt_lka_steering_cmd_counter = pt_cp.vl["ASCMLKASteeringCmd"]["RollingCounter"]
@@ -153,7 +156,9 @@ class CarState(CarStateBase):
       else:
         ret.brake = pt_cp.vl["ECMAcceleratorPos"]["BrakePedalPos"]
 
-    if self.CP.carFingerprint in {CAR.CHEVROLET_MALIBU_CC} or (self.CP.carFingerprint == CAR.CHEVROLET_BLAZER and not no_accel_pos):
+    if self.CP.carFingerprint == CAR.CHEVROLET_VOLT and no_accel_pos:
+      ret.brakePressed = ret.brake >= VOLT_EBCM_BRAKE_PRESSED_THRESHOLD
+    elif self.CP.carFingerprint in {CAR.CHEVROLET_MALIBU_CC} or (self.CP.carFingerprint == CAR.CHEVROLET_BLAZER and not no_accel_pos):
       ret.brakePressed = ret.brake >= 8
     elif (self.CP.flags & GMFlags.FORCE_BRAKE_C9.value) or ((self.CP.networkLocation == NetworkLocation.fwdCamera) and (self.CP.carFingerprint != CAR.CHEVROLET_BLAZER)):
       ret.brakePressed = pt_cp.vl["ECMEngineStatus"]["BrakePressed"] != 0

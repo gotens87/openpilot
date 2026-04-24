@@ -23,11 +23,28 @@ CAMERA_CANCEL_DELAY_FRAMES = 10
 MIN_STEER_MSG_INTERVAL_MS = 15
 
 
+def get_lka_steering_cmd_counter(counter, CS):
+  if CS.loopback_lka_steering_cmd_updated:
+    return (CS.loopback_lka_steering_cmd_counter + 1) % 4
+
+  if CS.loopback_lka_steering_cmd_ts_nanos == 0 and counter < 0:
+    return (CS.pt_lka_steering_cmd_counter + 1) % 4
+
+  return counter % 4
+
+
 def get_stock_cc_active_for_cancel(CP, CS):
+  if CS.out.accFaulted:
+    return False
+
   stock_cc_active = CS.out.cruiseState.enabled or CS.pcm_acc_status != AccState.OFF
   if CP.carFingerprint == CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL:
     return CS.out.cruiseState.enabled
   return stock_cc_active
+
+
+def should_send_stock_long_cancel(cancel_counter, CS):
+  return cancel_counter > CAMERA_CANCEL_DELAY_FRAMES and not CS.out.accFaulted
 
 
 def use_interceptor_sng_launch(CP, CS, maneuver_mode=False):
@@ -112,7 +129,7 @@ class CarController(CarControllerBase):
     self.last_button_frame = 0
     self.cancel_counter = 0
 
-    self.lka_steering_cmd_counter = 0
+    self.lka_steering_cmd_counter = -1
     self.lka_icon_status_last = (False, False)
 
     self.params = CarControllerParams(self.CP)
@@ -396,16 +413,12 @@ class CarController(CarControllerBase):
       if CS.loopback_lka_steering_cmd_ts_nanos == 0 or out_of_sync:
         steer_step = self.params.STEER_STEP
 
-    self.lka_steering_cmd_counter += 1 if CS.loopback_lka_steering_cmd_updated else 0
+    self.lka_steering_cmd_counter = get_lka_steering_cmd_counter(self.lka_steering_cmd_counter, CS)
 
     # Avoid GM EPS faults when transmitting messages too close together: skip this transmit if we
     # received the ASCMLKASteeringCmd loopback confirmation too recently
     last_lka_steer_msg_ms = (now_nanos - CS.loopback_lka_steering_cmd_ts_nanos) * 1e-6
     if (self.frame - self.last_steer_frame) >= steer_step and last_lka_steer_msg_ms > MIN_STEER_MSG_INTERVAL_MS:
-      # Initialize ASCMLKASteeringCmd counter using the camera until we get a msg on the bus
-      if CS.loopback_lka_steering_cmd_ts_nanos == 0:
-        self.lka_steering_cmd_counter = CS.pt_lka_steering_cmd_counter + 1
-
       if CC.latActive:
         new_torque = int(round(actuators.torque * self.params.STEER_MAX))
         apply_torque = apply_driver_steer_torque_limits(new_torque, self.apply_torque_last, CS.out.steeringTorque, self.params)
@@ -418,8 +431,10 @@ class CarController(CarControllerBase):
 
       self.last_steer_frame = self.frame
       self.apply_torque_last = apply_torque
-      idx = self.lka_steering_cmd_counter % 4
+      idx = self.lka_steering_cmd_counter
       can_sends.append(gmcan.create_steering_control(self.packer_pt, CanBus.POWERTRAIN, apply_torque, idx, CC.latActive))
+      # Keep the counter moving even if panda stops returning loopback confirmations.
+      self.lka_steering_cmd_counter = (idx + 1) % 4
 
     if should_spoof_ecm_cruise_status(self.CP) and self.frame % 4 == 0:
       can_sends.append(gmcan.create_ecm_cruise_control_command(
@@ -551,7 +566,12 @@ class CarController(CarControllerBase):
         if self.CP.enableGasInterceptorDEPRECATED:
           can_sends.append(create_gas_interceptor_command(self.packer_pt, interceptor_gas_cmd, idx))
         if self.CP.carFingerprint not in CC_ONLY_CAR:
-          friction_brake_bus = CanBus.CHASSIS
+          volt_gateway_alt_brake = (
+            self.CP.carFingerprint == CAR.CHEVROLET_VOLT and
+            self.CP.networkLocation == NetworkLocation.gateway and
+            bool(self.CP.flags & GMFlags.NO_ACCELERATOR_POS_MSG.value)
+          )
+          friction_brake_bus = CanBus.POWERTRAIN if volt_gateway_alt_brake else CanBus.CHASSIS
           # GM Camera exceptions
           # TODO: can we always check the longControlState?
           if self.CP.networkLocation == NetworkLocation.fwdCamera:
@@ -638,10 +658,10 @@ class CarController(CarControllerBase):
       self.cancel_counter = self.cancel_counter + 1 if CC.cruiseControl.cancel else 0
 
       # Stock longitudinal, integrated at camera
-      if self.CP.carFingerprint == CAR.CHEVROLET_MALIBU_HYBRID_CC and self.cancel_counter > CAMERA_CANCEL_DELAY_FRAMES:
+      if self.CP.carFingerprint == CAR.CHEVROLET_MALIBU_HYBRID_CC and should_send_stock_long_cancel(self.cancel_counter, CS):
         malibu_cancel_requested = True
       elif (self.frame - self.last_button_frame) * DT_CTRL > 0.04:
-        if self.cancel_counter > CAMERA_CANCEL_DELAY_FRAMES:
+        if should_send_stock_long_cancel(self.cancel_counter, CS):
           self.last_button_frame = self.frame
           sdgm_stock_cancel_pt = (
             self.CP.carFingerprint in SDGM_CAR and
