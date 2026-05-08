@@ -155,19 +155,16 @@ StarPilotVehiclesPanel::StarPilotVehiclesPanel(StarPilotSettingsWindow *parent, 
   settingsList->addItem(disableOpenpilotLong);
 
   StarPilotListWidget *gmList = new StarPilotListWidget(this);
-  StarPilotListWidget *hkgList = new StarPilotListWidget(this);
   StarPilotListWidget *subaruList = new StarPilotListWidget(this);
   StarPilotListWidget *toyotaList = new StarPilotListWidget(this);
   StarPilotListWidget *vehicleInfoList = new StarPilotListWidget(this);
 
   ScrollView *gmPanel = new ScrollView(gmList, this);
-  ScrollView *hkgPanel = new ScrollView(hkgList, this);
   ScrollView *subaruPanel = new ScrollView(subaruList, this);
   ScrollView *toyotaPanel = new ScrollView(toyotaList, this);
   ScrollView *vehicleInfoPanel = new ScrollView(vehicleInfoList, this);
 
   vehiclesLayout->addWidget(gmPanel);
-  vehiclesLayout->addWidget(hkgPanel);
   vehiclesLayout->addWidget(subaruPanel);
   vehiclesLayout->addWidget(toyotaPanel);
   vehiclesLayout->addWidget(vehicleInfoPanel);
@@ -180,9 +177,6 @@ StarPilotVehiclesPanel::StarPilotVehiclesPanel(StarPilotSettingsWindow *parent, 
     {"RemoteStartBootsComma", tr("Remote Start Boots comma"), tr("<b>Use the remote-start GM panda firmware at boot.</b><br><br>Required for GM remote-start startup signal behavior."), ""},
     {"RemapCancelToDistance", tr("Remap Cancel To Distance"), tr("<b>On pedal-interceptor Bolts, remap the steering-wheel CANCEL button to distance/personality input.</b>"), ""},
     {"VoltSNG", tr("Stop-and-Go Hack"), tr("<b>Force stop-and-go</b> on the 2017 Chevy Volt."), ""},
-
-    {"HKGToggles", tr("Hyundai/Kia/Genesis Settings"), tr("<b>StarPilot features for Genesis, Hyundai, and Kia vehicles.</b>"), ""},
-    {"TacoTuneHacks", tr("\"Taco Bell Run\" Torque Hack"), tr("<b>The steering torque hack from comma's 2022 \"Taco Bell Run\".</b> Designed to increase steering torque at low speeds for left and right turns."), ""},
 
     {"SubaruToggles", tr("Subaru Settings"), tr("<b>StarPilot features for Subaru vehicles.</b>"), ""},
     {"SubaruSNG", tr("Stop and Go"), tr("Stop and go for supported Subaru vehicles."), ""},
@@ -214,14 +208,6 @@ StarPilotVehiclesPanel::StarPilotVehiclesPanel(StarPilotSettingsWindow *parent, 
         vehiclesLayout->setCurrentWidget(gmPanel);
       });
       vehicleToggle = gmButton;
-
-    } else if (param == "HKGToggles") {
-      ButtonControl *hkgButton = new ButtonControl(title, tr("MANAGE"), desc);
-      QObject::connect(hkgButton, &ButtonControl::clicked, [vehiclesLayout, hkgPanel, this]() {
-        openDescriptions(forceOpenDescriptions, toggles);
-        vehiclesLayout->setCurrentWidget(hkgPanel);
-      });
-      vehicleToggle = hkgButton;
 
     } else if (param == "SubaruToggles") {
       ButtonControl *subaruButton = new ButtonControl(title, tr("MANAGE"), desc);
@@ -275,8 +261,6 @@ StarPilotVehiclesPanel::StarPilotVehiclesPanel(StarPilotSettingsWindow *parent, 
 
     if (gmKeys.contains(param)) {
       gmList->addItem(vehicleToggle);
-    } else if (hkgKeys.contains(param)) {
-      hkgList->addItem(vehicleToggle);
     } else if (subaruKeys.contains(param)) {
       subaruList->addItem(vehicleToggle);
     } else if (toyotaKeys.contains(param)) {
@@ -303,27 +287,18 @@ StarPilotVehiclesPanel::StarPilotVehiclesPanel(StarPilotSettingsWindow *parent, 
 
   static_cast<StarPilotParamValueControl*>(toggles["LockDoorsTimer"])->setWarning("<b>Warning:</b> openpilot can't detect if keys are still inside the car, so ensure you have a spare key to prevent accidental lockouts!");
 
-  QSet<QString> rebootKeys = {"RemapCancelToDistance", "TacoTuneHacks"};
-  for (const QString &key : rebootKeys) {
-    QObject::connect(static_cast<ToggleControl*>(toggles[key]), &ToggleControl::toggleFlipped, [key, this](bool state) {
-      if (key == "RemapCancelToDistance" && state && params.getInt("LKASButtonControl") != 0) {
-        params.putInt("LKASButtonControl", 0);
-        updateStarPilotToggles();
-      }
+  QObject::connect(static_cast<ToggleControl*>(toggles["RemapCancelToDistance"]), &ToggleControl::toggleFlipped, [this](bool state) {
+    if (state && params.getInt("LKASButtonControl") != 0) {
+      params.putInt("LKASButtonControl", 0);
+      updateStarPilotToggles();
+    }
 
-      if (started) {
-        if (key == "TacoTuneHacks" && state) {
-          if (StarPilotConfirmationDialog::toggleReboot(this)) {
-            Hardware::reboot();
-          }
-        } else if (key != "TacoTuneHacks") {
-          if (StarPilotConfirmationDialog::toggleReboot(this)) {
-            Hardware::reboot();
-          }
-        }
+    if (started) {
+      if (StarPilotConfirmationDialog::toggleReboot(this)) {
+        Hardware::reboot();
       }
-    });
-  }
+    }
+  });
 
   ParamControl *remoteStartToggle = static_cast<ParamControl*>(toggles["RemoteStartBootsComma"]);
   QObject::connect(remoteStartToggle, &ToggleControl::toggleFlipped, [parent, remoteStartToggle, this](bool state) {
@@ -413,8 +388,6 @@ void StarPilotVehiclesPanel::updateToggles() {
     if (!showAllToggles) {
       if (gmKeys.contains(key)) {
         setVisible &= parent->isGM;
-      } else if (hkgKeys.contains(key)) {
-        setVisible &= parent->isHKG;
       } else if (subaruKeys.contains(key)) {
         setVisible &= parent->isSubaru;
       } else if (toyotaKeys.contains(key)) {
@@ -447,10 +420,6 @@ void StarPilotVehiclesPanel::updateToggles() {
         setVisible &= parent->hasSNG;
       }
 
-      else if (key == "TacoTuneHacks") {
-        setVisible &= parent->isHKGCanFd;
-      }
-
       else if (key == "VoltSNG") {
         setVisible &= parent->isVolt && !parent->hasSNG;
       }
@@ -461,8 +430,6 @@ void StarPilotVehiclesPanel::updateToggles() {
     if (setVisible) {
       if (gmKeys.contains(key)) {
         toggles["GMToggles"]->setVisible(true);
-      } else if (hkgKeys.contains(key)) {
-        toggles["HKGToggles"]->setVisible(true);
       } else if (subaruKeys.contains(key)) {
         toggles["SubaruToggles"]->setVisible(true);
       } else if (toyotaKeys.contains(key)) {

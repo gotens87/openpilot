@@ -307,7 +307,6 @@ StoppedTimer
 StoppingDecelRate
 StoppingDecelRateStock
 TacoTune
-TacoTuneHacks
 TetheringEnabled
 ToyotaDoors
 TrafficFollow
