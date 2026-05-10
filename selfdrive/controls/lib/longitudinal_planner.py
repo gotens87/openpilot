@@ -118,6 +118,23 @@ LEAD_CATCHUP_ACCEL_MAX_GAP_BUFFER_GAIN = 0.15
 # Uncertainty-based filter disable thresholds
 UNCERT_SLOPE_TRIG = 0.12  # per second
 UNCERT_MAG_TRIG = 0.50
+UNCERT_PANIC_MIN_CLOSING_SPEED = 2.0
+UNCERT_PANIC_MIN_CLOSING_SPEED_GAIN = 0.08
+UNCERT_PANIC_MAX_GAP_BUFFER_MIN = 8.0
+UNCERT_PANIC_MAX_GAP_BUFFER_GAIN = 0.35
+STEADY_FOLLOW_SMOOTHING_MIN_SPEED = 22.0
+STEADY_FOLLOW_SMOOTHING_MIN_CLOSING_SPEED = 0.15
+STEADY_FOLLOW_SMOOTHING_MAX_CLOSING_SPEED = 1.8
+STEADY_FOLLOW_SMOOTHING_MIN_HEADWAY = 0.95
+STEADY_FOLLOW_SMOOTHING_HEADWAY_BELOW_TARGET = 0.35
+STEADY_FOLLOW_SMOOTHING_HEADWAY_ABOVE_TARGET = 0.90
+STEADY_FOLLOW_SMOOTHING_MAX_LEAD_BRAKE = 0.35
+STEADY_FOLLOW_SMOOTHING_MIN_MODEL_PROB = 0.7
+STEADY_FOLLOW_SMOOTHING_FILTER_FACTOR_FLOOR = 0.24
+STEADY_FOLLOW_BRAKE_CAP_MIN_HEADWAY = 1.05
+STEADY_FOLLOW_BRAKE_CAP_MAX_HEADWAY_ABOVE_TARGET = 0.90
+STEADY_FOLLOW_BRAKE_CAP_MIN_DECEL = 0.18
+STEADY_FOLLOW_BRAKE_CAP_MAX_DECEL = 0.32
 
 # Lookup table for turns
 _A_TOTAL_MAX_V = [3.5, 3.5, 3.2]
@@ -286,6 +303,7 @@ class LongitudinalPlanner:
     # Uncertainty slope tracking
     self._uncert_last = 0.0
     self._uncert_last_t = None
+    self._panic_bypass_log_t = 0.0
     self.effective_t_follow = None
     self.vision_low_speed_stop_hold_until = 0.0
     self.vision_lead_approach_confirm_t = 0.0
@@ -638,6 +656,37 @@ class LongitudinalPlanner:
     gap_factor = float(np.clip(max(gap_error, 0.0) / max(gap_buffer, 0.1), 0.0, 1.0))
     return float(np.interp(gap_factor, [0.0, 1.0], [near_cap, edge_cap]))
 
+  def get_matched_follow_brake_cap(self, lead, v_ego, base_t_follow):
+    if lead is None or not lead.status or v_ego < STEADY_FOLLOW_SMOOTHING_MIN_SPEED:
+      return None
+
+    closing_speed = max(0.0, float(v_ego) - float(lead.vLead))
+    if not (STEADY_FOLLOW_SMOOTHING_MIN_CLOSING_SPEED <= closing_speed <= STEADY_FOLLOW_SMOOTHING_MAX_CLOSING_SPEED):
+      return None
+
+    lead_brake = max(0.0, -float(getattr(lead, "aLeadK", 0.0)))
+    if lead_brake > STEADY_FOLLOW_SMOOTHING_MAX_LEAD_BRAKE:
+      return None
+
+    lead_prob = float(getattr(lead, "modelProb", 1.0 if bool(getattr(lead, "radar", False)) else 0.0))
+    if not bool(getattr(lead, "radar", False)) and lead_prob < STEADY_FOLLOW_SMOOTHING_MIN_MODEL_PROB:
+      return None
+
+    actual_headway = float(lead.dRel) / max(float(v_ego), 1e-3)
+    if actual_headway < max(STEADY_FOLLOW_BRAKE_CAP_MIN_HEADWAY, float(base_t_follow) - STEADY_FOLLOW_SMOOTHING_HEADWAY_BELOW_TARGET):
+      return None
+    if actual_headway > float(base_t_follow) + STEADY_FOLLOW_BRAKE_CAP_MAX_HEADWAY_ABOVE_TARGET:
+      return None
+
+    cap_decel = float(np.interp(
+      closing_speed,
+      [STEADY_FOLLOW_SMOOTHING_MIN_CLOSING_SPEED, STEADY_FOLLOW_SMOOTHING_MAX_CLOSING_SPEED],
+      [STEADY_FOLLOW_BRAKE_CAP_MIN_DECEL, STEADY_FOLLOW_BRAKE_CAP_MAX_DECEL],
+    ))
+    headway_deficit = float(np.clip((float(base_t_follow) - actual_headway) / STEADY_FOLLOW_SMOOTHING_HEADWAY_BELOW_TARGET, 0.0, 1.0))
+    cap_decel = min(STEADY_FOLLOW_BRAKE_CAP_MAX_DECEL, cap_decel + 0.05 * headway_deficit)
+    return -cap_decel
+
   @staticmethod
   def raw_close_lead_needs_control(lead, v_ego):
     if lead is None or not lead.status:
@@ -720,8 +769,10 @@ class LongitudinalPlanner:
 
     if not self.allow_throttle:
       clipped_accel_coast = max(accel_coast, accel_limits_turns[0])
-      clipped_accel_coast_interp = np.interp(v_ego, [MIN_ALLOW_THROTTLE_SPEED, MIN_ALLOW_THROTTLE_SPEED*2], [accel_limits_turns[1], clipped_accel_coast])
-      accel_limits_turns[1] = min(accel_limits_turns[1], clipped_accel_coast_interp)
+      # Hold the output cap to the physical coasting limit until throttle is
+      # allowed again. Relaxing back toward positive accel while the gate is
+      # still closed can stall downhill coastdown well above the target speed.
+      accel_limits_turns[1] = min(accel_limits_turns[1], clipped_accel_coast)
     no_throttle_output_max = accel_limits_turns[1]
 
     if force_slow_decel:
@@ -840,15 +891,57 @@ class LongitudinalPlanner:
     self._uncert_last = uncertainty
     self._uncert_last_t = now_t
 
-    closing_fast = lead_one_active and (v_ego - self.lead_one.vLead) > 0.5
-    # Trigger if either slope is high or magnitude is high; require a valid lead and closing
-    panic_bypass = closing_fast and (uncert_slope > UNCERT_SLOPE_TRIG or uncertainty >= UNCERT_MAG_TRIG)
+    panic_close_window = False
+    closing_fast = False
+    desired_gap = None
+    closing_speed = 0.0
+    if lead_one_active:
+      desired_gap = float(desired_follow_distance(v_ego, self.lead_one.vLead, effective_t_follow))
+      close_gap_window = max(UNCERT_PANIC_MAX_GAP_BUFFER_MIN,
+                             UNCERT_PANIC_MAX_GAP_BUFFER_GAIN * float(v_ego))
+      panic_close_window = float(self.lead_one.dRel) <= desired_gap + close_gap_window
+      closing_speed = max(0.0, v_ego - self.lead_one.vLead)
+      closing_fast = closing_speed >= max(
+        UNCERT_PANIC_MIN_CLOSING_SPEED,
+        UNCERT_PANIC_MIN_CLOSING_SPEED_GAIN * float(v_ego),
+      )
+
+    # Only bypass lead smoothing when we're closing meaningfully and already
+    # near the follow window. Far or nearly pace-matched leads should stay on
+    # the smoothed path so the planner doesn't flip-flop between accel and brake.
+    panic_bypass = panic_close_window and closing_fast and (
+      uncert_slope > UNCERT_SLOPE_TRIG or uncertainty >= UNCERT_MAG_TRIG
+    )
+
+    steady_follow_filter_floor = 0.0
+    if lead_one_active and desired_gap is not None and not panic_bypass:
+      lead_brake = max(0.0, -float(getattr(self.lead_one, "aLeadK", 0.0)))
+      lead_prob = float(getattr(self.lead_one, "modelProb", 1.0 if bool(getattr(self.lead_one, "radar", False)) else 0.0))
+      actual_headway = float(self.lead_one.dRel) / max(float(v_ego), 1e-3)
+      matched_follow_window = (
+        v_ego >= STEADY_FOLLOW_SMOOTHING_MIN_SPEED and
+        STEADY_FOLLOW_SMOOTHING_MIN_CLOSING_SPEED <= closing_speed <= STEADY_FOLLOW_SMOOTHING_MAX_CLOSING_SPEED and
+        actual_headway >= max(STEADY_FOLLOW_SMOOTHING_MIN_HEADWAY,
+                              effective_t_follow - STEADY_FOLLOW_SMOOTHING_HEADWAY_BELOW_TARGET) and
+        actual_headway <= effective_t_follow + STEADY_FOLLOW_SMOOTHING_HEADWAY_ABOVE_TARGET and
+        lead_brake <= STEADY_FOLLOW_SMOOTHING_MAX_LEAD_BRAKE and
+        (bool(getattr(self.lead_one, "radar", False)) or lead_prob >= STEADY_FOLLOW_SMOOTHING_MIN_MODEL_PROB)
+      )
+      if matched_follow_window:
+        steady_follow_filter_floor = STEADY_FOLLOW_SMOOTHING_FILTER_FACTOR_FLOOR
 
     if panic_bypass:
-      try:
-        cloudlog.error(f"LON_SLOPE; slope={uncert_slope:.3f}/s; uncertainty={uncertainty:.3f}; v_ego={v_ego:.2f}; v_rel={(v_ego - self.lead_one.vLead) if lead_one_active else 0.0:.2f}; lead_dist={self.lead_dist_f if self.lead_dist_f is not None else -1:.2f}; trigger=True")
-      except Exception:
-        pass
+      if now_t - self._panic_bypass_log_t > 5.0:
+        self._panic_bypass_log_t = now_t
+        try:
+          cloudlog.warning(
+            "LON_SLOPE close bypass: "
+            f"slope={uncert_slope:.3f}/s uncertainty={uncertainty:.3f} "
+            f"v_ego={v_ego:.2f} v_rel={(v_ego - self.lead_one.vLead) if lead_one_active else 0.0:.2f} "
+            f"lead_dist={self.lead_dist_f if self.lead_dist_f is not None else -1:.2f}"
+          )
+        except Exception:
+          pass
 
     personality = get_longitudinal_personality(sm)
 
@@ -860,7 +953,8 @@ class LongitudinalPlanner:
                          v_ego=v_ego,
                          lead_dist=self.lead_dist_f if lead_one_active and self.lead_dist_f is not None else 50.0,
                          uncertainty=uncertainty,
-                         panic_bypass=panic_bypass)
+                         panic_bypass=panic_bypass,
+                         filter_time_factor_floor=steady_follow_filter_floor)
     self.mpc.set_accel_limits(accel_limits_turns[0], accel_limits_turns[1])
     self.mpc.set_cur_state(self.v_desired_filter.x, self.a_desired)
     # After deciding the MPC mode via get_mpc_mode(), ensure MPC uses that mode when not mlsim
@@ -1039,6 +1133,12 @@ class LongitudinalPlanner:
 
     if vision_brake_cap_active:
       output_accel_min = min(output_accel_min, vision_cap_accel_min)
+
+    if lead_one_active and not panic_bypass:
+      matched_follow_brake_cap = self.get_matched_follow_brake_cap(self.lead_one, v_ego, sm['starpilotPlan'].tFollow)
+      if matched_follow_brake_cap is not None:
+        self.a_desired = max(self.a_desired, matched_follow_brake_cap)
+        output_a_target = max(output_a_target, matched_follow_brake_cap)
 
     output_accel_max = no_throttle_output_max if not self.allow_throttle else accel_limits_turns[1]
     output_a_target = float(np.clip(output_a_target, output_accel_min, output_accel_max))

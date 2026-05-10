@@ -9,7 +9,7 @@ from cereal import log
 from opendbc.car.honda.interface import CarInterface
 from opendbc.car.honda.values import CAR
 from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
-from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner, get_vehicle_min_accel
+from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner, get_coast_accel, get_vehicle_min_accel
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import soften_far_radar_lead_accel
 from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
 
@@ -29,7 +29,7 @@ def make_lead(*, status: bool, d_rel: float = 200.0, v_lead: float = 0.0, a_lead
   return lead
 
 
-def make_model(v_ego: float, desired_accel: float, gas_press_prob: float = 1.0):
+def make_model(v_ego: float, desired_accel: float, gas_press_prob: float = 1.0, brake_press_prob: float = 0.0):
   model = log.ModelDataV2.new_message()
   t_idxs = ModelConstants.T_IDXS
 
@@ -49,6 +49,7 @@ def make_model(v_ego: float, desired_accel: float, gas_press_prob: float = 1.0):
   model.acceleration.t = [float(t) for t in t_idxs]
 
   model.meta.disengagePredictions.gasPressProbs = [float(gas_press_prob)] * 6
+  model.meta.disengagePredictions.brakePressProbs = [float(brake_press_prob)] * 6
   model.action.desiredAcceleration = desired_accel
   model.action.shouldStop = False
   return model
@@ -56,7 +57,7 @@ def make_model(v_ego: float, desired_accel: float, gas_press_prob: float = 1.0):
 
 def make_sm(v_ego: float, desired_accel: float, min_accel: float, *, experimental_mode: bool = True,
             tracking_lead: bool = False, lead_one=None, lead_two=None,
-            gas_press_prob: float = 1.0, disable_throttle: bool = False):
+            gas_press_prob: float = 1.0, brake_press_prob: float = 0.0, disable_throttle: bool = False):
   return {
     "carControl": SimpleNamespace(orientationNED=[0.0, 0.0, 0.0]),
     "carState": SimpleNamespace(
@@ -72,7 +73,7 @@ def make_sm(v_ego: float, desired_accel: float, min_accel: float, *, experimenta
       forceDecel=False,
     ),
     "liveParameters": SimpleNamespace(angleOffsetDeg=0.0),
-    "modelV2": make_model(v_ego, desired_accel, gas_press_prob=gas_press_prob),
+    "modelV2": make_model(v_ego, desired_accel, gas_press_prob=gas_press_prob, brake_press_prob=brake_press_prob),
     "radarState": SimpleNamespace(
       leadOne=lead_one if lead_one is not None else make_lead(status=False),
       leadTwo=lead_two if lead_two is not None else make_lead(status=False),
@@ -912,3 +913,85 @@ def test_allow_throttle_hysteresis_filters_gas_prob_chatter():
   planner.update(sm, toggles)
   assert planner.model_allow_throttle
   assert planner.allow_throttle
+
+
+def test_no_throttle_cap_stays_at_coast_limit_until_throttle_returns():
+  v_ego = 8.5
+
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  sm = make_sm(v_ego, desired_accel=0.0, min_accel=-3.0, experimental_mode=False, gas_press_prob=0.0)
+  sm["carControl"].orientationNED = [0.0, 0.1, 0.0]
+  toggles = make_toggles()
+
+  planner.update(sm, toggles)
+
+  accel_coast = max(get_vehicle_min_accel(CP, v_ego), get_coast_accel(sm["carControl"].orientationNED[1]))
+
+  assert not planner.allow_throttle
+  assert planner.output_a_target == pytest.approx(accel_coast, abs=1e-3)
+
+
+def test_far_near_speed_follow_keeps_uncertainty_smoothing_active():
+  v_ego = 30.0
+
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  sm = make_sm(
+    v_ego,
+    desired_accel=0.0,
+    min_accel=-1.0,
+    experimental_mode=False,
+    tracking_lead=True,
+    lead_one=make_lead(status=True, d_rel=78.0, v_lead=29.2, radar=False, model_prob=0.96),
+  )
+  sm["modelV2"] = make_model(v_ego, desired_accel=0.0, gas_press_prob=1.0, brake_press_prob=0.52)
+  toggles = make_toggles()
+
+  for _ in range(12):
+    planner.update(sm, toggles)
+
+  assert planner.mpc.filter_time_factor > 0.75
+
+
+def test_near_speed_follow_keeps_some_smoothing_under_high_uncertainty():
+  v_ego = 31.0
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=53.0, v_lead=29.8, radar=False, model_prob=0.96)
+  sm = make_sm(
+    v_ego,
+    desired_accel=0.0,
+    min_accel=-1.0,
+    experimental_mode=False,
+    tracking_lead=True,
+    lead_one=lead,
+    brake_press_prob=0.85,
+  )
+
+  for _ in range(16):
+    planner.update(sm, make_toggles())
+
+  assert planner.mpc.filter_time_factor >= 0.24
+
+
+def test_near_speed_follow_soft_brake_cap_limits_matched_follow_pulse():
+  v_ego = 31.4
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=44.0, v_lead=30.1, radar=False, model_prob=0.96)
+  sm = make_sm(
+    v_ego,
+    desired_accel=0.0,
+    min_accel=-1.0,
+    experimental_mode=False,
+    tracking_lead=True,
+    lead_one=lead,
+    brake_press_prob=0.85,
+  )
+
+  for _ in range(16):
+    planner.update(sm, make_toggles())
+
+  assert planner.mpc.filter_time_factor >= 0.24
+  assert planner.output_a_target >= -0.33
