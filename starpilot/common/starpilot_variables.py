@@ -784,6 +784,7 @@ class StarPilotVariables:
     toggle.no_onroad_uploads = self.get_value("DisableOnroadUploads", condition=toggle.no_uploads)
 
     toggle.always_ipedal = self.get_value("AlwaysIPedal", condition=toggle.car_model == HYUNDAI_CAR.HYUNDAI_IONIQ_6)
+    toggle.hwy_smoothing = self.get_value("HwySmoothing", condition=toggle.car_make == "hyundai")
     toggle.nostalgia_mode = self.get_value("NostalgiaMode", condition=toggle.openpilot_longitudinal and toggle.car_model == HYUNDAI_CAR.HYUNDAI_IONIQ_6)
 
     distance_button_control = self.get_value("DistanceButtonControl", cast=float)
