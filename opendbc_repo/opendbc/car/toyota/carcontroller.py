@@ -106,6 +106,7 @@ class CarController(CarControllerBase):
     self.long_pid = get_long_tune(self.CP, self.params)
     self.aego = FirstOrderFilter(0.0, 0.25, DT_CTRL * 3)
     self.pitch = FirstOrderFilter(0, 0.5, DT_CTRL)
+    self.accel_hysteresis_positive = True  # eCVT lash mitigation state (experimental)
     self.pitch_hp = HighPassFilter(0.0, 0.25, 1.5, DT_CTRL)
 
     self.accel = 0
@@ -347,6 +348,17 @@ class CarController(CarControllerBase):
                                                     CS.out.vEgo,
                                                     lead)
 
+
+        # --- EXPERIMENTAL: eCVT zero-crossing lash mitigation (Camry/Prius hybrids) ---
+        # No community precedent — custom deadband + bias to reduce powertrain mode-switching
+        if (self.CP.carFingerprint in (CAR.TOYOTA_CAMRY, CAR.TOYOTA_PRIUS) and
+            CC.longActive and actuators.longControlState == LongCtrlState.pid and
+            CS.out.vEgo > 15.0):
+          pcm_accel_cmd += 0.02  # positive bias to favor drive over regen
+          if -0.03 < pcm_accel_cmd < 0.03:
+            pcm_accel_cmd = 0.03 if self.accel_hysteresis_positive else -0.03
+          else:
+            self.accel_hysteresis_positive = (pcm_accel_cmd > 0.0)
         pcm_accel_cmd = float(np.clip(pcm_accel_cmd, self.params.ACCEL_MIN, self.params.ACCEL_MAX))
 
         main_accel_cmd = 0. if self.CP.flags & ToyotaFlags.SECOC.value else pcm_accel_cmd
