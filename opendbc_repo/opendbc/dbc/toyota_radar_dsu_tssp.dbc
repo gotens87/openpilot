@@ -33,7 +33,15 @@ NS_ :
 
 BS_:
 
-BU_: XXX RADAR
+BU_: XXX RADAR SDSU
+
+CM_ "Ocelot smartDSU bridge status TX (firmware-derived from RetroPilot/ocelot main.c TIM3_IRQ_Handler)"
+BO_ 767 SDSU_STATUS: 4 SDSU
+ SG_ DISTANCE_BUTTON : 7|1@1+ (1,0) [0|1] "" XXX
+ SG_ CTRL_MODE : 8|8@1+ (1,0) [0|255] "" XXX
+ SG_ COUNTER : 16|4@1+ (1,0) [0|15] "" XXX
+ SG_ STATE : 20|4@1+ (1,0) [0|15] "" XXX
+ SG_ CHECKSUM : 24|8@1+ (1,0) [0|255] "" XXX
 
 BO_ 768 BUTTONS: 8 RADAR
  SG_ LKAS_PRESS : 2|1@0+ (1,0) [0|1] "" XXX
@@ -192,3 +200,5 @@ BO_ 1669 CLUSTER_R_A: 8 RADAR
  SG_ ID : 0|6@1+ (1,0) [0|63] "" XXX
  SG_ LAT_SPEED : 48|7@1- (0.1,0) [0|127] "m/s" XXX
  SG_ RCS : 63|8@0+ (1,0) [0|255] "" XXX
+
+VAL_ 767 STATE 0 "NO_FAULT" 1 "FAULT_BAD_CHECKSUM" 2 "FAULT_SEND" 3 "FAULT_SCE" 4 "FAULT_STARTUP" 5 "FAULT_TIMEOUT" 6 "FAULT_INVALID" 7 "STATE_AEB_CTRL" ;
