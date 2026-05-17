@@ -202,3 +202,30 @@ BO_ 1669 CLUSTER_R_A: 8 RADAR
  SG_ RCS : 63|8@0+ (1,0) [0|255] "" XXX
 
 VAL_ 767 STATE 0 "NO_FAULT" 1 "FAULT_BAD_CHECKSUM" 2 "FAULT_SEND" 3 "FAULT_SCE" 4 "FAULT_STARTUP" 5 "FAULT_TIMEOUT" 6 "FAULT_INVALID" 7 "STATE_AEB_CTRL" ;
+
+CM_ BO_ 291 "RADAR_HEARTBEAT: Continental ARS (bus 1) liveness frame, 7-byte static payload. Confidence: HIGH (always 00 00 00 00 00 00 2b across 600+ msgs driving + 600+ stationary). Reference: 2026-05-16 RE on route 00000312.";
+BO_ 291 RADAR_HEARTBEAT: 7 RADAR
+ SG_ STATIC_PAYLOAD : 48|8@1+ (1,0) [0|255] "" XXX
+
+CM_ BO_ 849 "RADAR_STATUS: Continental ARS (bus 1) per-frame status + counter + CRC. Confidence: HIGH structural (B1 counter sig, B6+B7 CRC sig). LOW byte-level for B0/B5 (best-fit only). STATUS_BIT_0..15 are placeholder names for B3+B4 sparse status flags — meanings TBD via fault-injection drives (cover radar, drive multipath, etc.). Reference: 2026-05-16 RE on route 00000312 segs 0-3, Gemini Pro Preview cold handoff. Tesla PR #3011 vocabulary applies once bit→flag mapping is known.";
+BO_ 849 RADAR_STATUS: 8 RADAR
+ SG_ ProcessorTime : 0|8@1+ (1,0) [0|255] "" XXX
+ SG_ MessageCounter : 8|8@1+ (1,0) [0|255] "" XXX
+ SG_ STATUS_BIT_0 : 24|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_1 : 25|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_2 : 26|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_3 : 27|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_4 : 28|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_5 : 29|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_6 : 30|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_7 : 31|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_8 : 32|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_9 : 33|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_10 : 34|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_11 : 35|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_12 : 36|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_13 : 37|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_14 : 38|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_15 : 39|1@1+ (1,0) [0|1] "" XXX
+ SG_ LoopCounter : 44|4@1+ (1,0) [0|15] "" XXX
+ SG_ Checksum : 48|16@1+ (1,0) [0|65535] "" XXX
