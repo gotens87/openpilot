@@ -64,8 +64,21 @@ class Track:
     self._prev_dRel: float | None = None
     self._prev_vRel: float | None = None
     self._glitch_frames: int = 0
+    self._new_track_frames: int = 6
 
   def update(self, d_rel: float, y_rel: float, v_rel: float, v_lead: float, measured: float):
+    # --- New track stabilization ---
+    # Continental ARS radars often output heavily negative vRel noise on the first few frames
+    # of a new track (BM-D/F evidence). We clamp vRel to -1.0 m/s for the first 6 frames
+    # to prevent phantom braking, while still preserving response to real slow cut-ins.
+    if self._new_track_frames > 0:
+      v_rel_clamped = max(v_rel, -1.0)
+      v_lead += (v_rel_clamped - v_rel)
+      v_rel = float(v_rel_clamped)
+      if self.cnt == 0:  # sync initial KF state
+        self.kf = KF1D([[v_lead], [0.0]], self.K_A, self.K_C, self.K_K)
+      self._new_track_frames -= 1
+
     # --- Discontinuity handling (BM_curve fix) ---
     # If radar reacquires a target, some radars output unstable dRel/vRel for a few frames.
     # 1) reset the KF (for vLeadK/aLeadK)
