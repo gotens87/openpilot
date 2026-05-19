@@ -121,7 +121,7 @@ COMFORT_BRAKE = 3.2   # Patch E (2026-05-19): up from 2.5. Shrinks the v² kinem
                       # when a confirmed lead is present. Toyota PCS Phase 3 (verified 2026-05-19 BM-K)
                       # is the safety backstop. See BM-L/M 2026-05-19 (Patch D got planSource=lead0
                       # but steady-state still ~2.5s headway — formula structurally too conservative).
-STOP_DISTANCE = 3.0   # Patch E (2026-05-19): down from 6.0. Cuts 3m off steady-state lead gap.
+STOP_DISTANCE = 2.0   # Patch F (2026-05-19): down from 3.0 (Patch E) to match Toyota OEM physical stop ~1.8-2.2m.
 
 
 def should_trigger_planner_fcw(lead, v_ego: float) -> bool:

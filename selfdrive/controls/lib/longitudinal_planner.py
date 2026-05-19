@@ -1218,7 +1218,10 @@ class LongitudinalPlanner:
     # safety path so ACC/chill does not ignore a visible lead during that debounce.
     lead_control_active = tracking_lead or raw_close_lead_control
     lead_one_active = bool(self.lead_one.status and lead_control_active)
-    effective_t_follow = self.get_dynamic_t_follow(sm['starpilotPlan'].tFollow, self.lead_one if lead_one_active else None, v_ego)
+    # Patch F (2026-05-19): bypass get_dynamic_t_follow inflation (+0.18s radar, up to +0.42s vision-extra).
+    # OEM-feel follow requires accepting the base t_follow as-is. Toyota PCS Phase 3 is the safety backstop.
+    # Original: effective_t_follow = self.get_dynamic_t_follow(sm['starpilotPlan'].tFollow, self.lead_one if lead_one_active else None, v_ego)
+    effective_t_follow = float(sm['starpilotPlan'].tFollow)
 
     if self.is_preap and self.nap_adaptive_accel and lead_one_active:
       follow_limit = get_preap_follow_limit(v_ego)
