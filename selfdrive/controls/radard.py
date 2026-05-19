@@ -220,14 +220,20 @@ def get_lead(v_ego: float, ready: bool, tracks: dict[int, Track], lead_msg: capn
     lead_dict = track.get_RadarState(lead_msg.prob)
   elif (track is None) and ready and (lead_msg.prob > lead_detection_probability):
     # BM2 fix: don't fall to vision-only if radar sees a plausible close in-path object
-    # while vision claims lead is far. Prefer the close radar track over vision-only.
+    # while vision claims lead is much farther. Prefer the close radar track over vision-only.
+    # Proportional threshold (vision > 1.5x radar + 5m floor) per Gemini 3 Pro hybridization
+    # recommendation 2026-05-18 PM — generalizes across speed/distance vs. a hard absolute floor.
     # See 2018-camry-openpilot-investigation.md "Full 5-bookmark analysis 2026-05-18 PM" BM2.
     vision_drel = float(lead_msg.x[0] - RADAR_TO_CAMERA)
     close_radar_candidates = [c for c in tracks.values()
                               if abs(c.yRel) < 1.5 and 0.75 < c.dRel < 40.0]
-    if len(close_radar_candidates) > 0 and vision_drel > 45.0:
+    if len(close_radar_candidates) > 0:
       closest_track = min(close_radar_candidates, key=lambda c: c.dRel)
-      lead_dict = closest_track.get_RadarState()
+      # Trigger only when vision is egregiously farther than the close radar track.
+      if vision_drel > closest_track.dRel * 1.5 + 5.0:
+        lead_dict = closest_track.get_RadarState()
+      else:
+        lead_dict = get_RadarState_from_vision(lead_msg, v_ego, model_v_ego)
     else:
       lead_dict = get_RadarState_from_vision(lead_msg, v_ego, model_v_ego)
 
