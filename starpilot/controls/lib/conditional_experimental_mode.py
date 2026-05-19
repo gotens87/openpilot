@@ -319,7 +319,7 @@ class ConditionalExperimentalMode:
       tuned_filter_time_curves = self.FILTER_TIME_CURVES[1]  # At 35-55 mph
       tuned_filter_time_leads = self.FILTER_TIME_LEADS[1]
       tuned_filter_time_lights = self.FILTER_TIME_LIGHTS[1]
-      low_boost = 1.0
+      low_boost = 1.25
       tuned_boost = self.LIGHT_BOOSTS[1]
       low_cap_factor = 0.0  # No cap under 35 mph
       tuned_cap_factor = 1.0
