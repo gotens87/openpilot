@@ -59,9 +59,33 @@ class Track:
     self.kf = KF1D([[v_lead], [0.0]], self.K_A, self.K_C, self.K_K)
 
     self.leadTrackID = 0
+    # Discontinuity/glitch handling (radar reacquisition, slot migration, curve FOV loss)
+    # See 2018-camry-openpilot-investigation.md "Full 5-bookmark analysis 2026-05-18 PM" BM_curve
+    self._prev_dRel: float | None = None
+    self._prev_vRel: float | None = None
+    self._glitch_frames: int = 0
 
   def update(self, d_rel: float, y_rel: float, v_rel: float, v_lead: float, measured: float):
-    # relative values, copy
+    # --- Discontinuity handling (BM_curve fix) ---
+    # If radar reacquires a target, some radars output unstable dRel/vRel for a few frames.
+    # 1) reset the KF (for vLeadK/aLeadK)
+    # 2) clamp the PUBLISHED dRel/vRel briefly to avoid phantom braking, since
+    #    RadarState.dRel/vRel come from self.dRel/self.vRel below (not the KF).
+    if self._prev_dRel is not None:
+      d_jump = abs(d_rel - self._prev_dRel)
+      if d_jump > 10.0:  # 10m+ instantaneous jump is almost never physical at 20Hz for a tracked lead
+        self._glitch_frames = 6  # ~0.12s at 20Hz
+        self.kf = KF1D([[v_lead], [0.0]], self.K_A, self.K_C, self.K_K)
+
+    if self._glitch_frames > 0 and self._prev_dRel is not None and self._prev_vRel is not None:
+      # clamp per-frame changes during stabilization window
+      max_dd = 2.5   # m per frame
+      max_dv = 3.0   # m/s per frame
+      d_rel = float(np.clip(d_rel, self._prev_dRel - max_dd, self._prev_dRel + max_dd))
+      v_rel = float(np.clip(v_rel, self._prev_vRel - max_dv, self._prev_vRel + max_dv))
+      self._glitch_frames -= 1
+
+    # relative values, copy (after deglitch)
     self.dRel = d_rel   # LONG_DIST
     self.yRel = y_rel   # -LAT_DIST
     self.vRel = v_rel   # REL_SPEED
@@ -82,6 +106,8 @@ class Track:
       self.aLeadTau.update(0.0)
 
     self.cnt += 1
+    self._prev_dRel = float(self.dRel)
+    self._prev_vRel = float(self.vRel)
 
   def get_RadarState(self, model_prob: float = 0.0):
     return {
@@ -193,7 +219,17 @@ def get_lead(v_ego: float, ready: bool, tracks: dict[int, Track], lead_msg: capn
   if track is not None:
     lead_dict = track.get_RadarState(lead_msg.prob)
   elif (track is None) and ready and (lead_msg.prob > lead_detection_probability):
-    lead_dict = get_RadarState_from_vision(lead_msg, v_ego, model_v_ego)
+    # BM2 fix: don't fall to vision-only if radar sees a plausible close in-path object
+    # while vision claims lead is far. Prefer the close radar track over vision-only.
+    # See 2018-camry-openpilot-investigation.md "Full 5-bookmark analysis 2026-05-18 PM" BM2.
+    vision_drel = float(lead_msg.x[0] - RADAR_TO_CAMERA)
+    close_radar_candidates = [c for c in tracks.values()
+                              if abs(c.yRel) < 1.5 and 0.75 < c.dRel < 40.0]
+    if len(close_radar_candidates) > 0 and vision_drel > 45.0:
+      closest_track = min(close_radar_candidates, key=lambda c: c.dRel)
+      lead_dict = closest_track.get_RadarState()
+    else:
+      lead_dict = get_RadarState_from_vision(lead_msg, v_ego, model_v_ego)
 
   if low_speed_override:
     low_speed_tracks = [c for c in tracks.values() if c.potential_low_speed_lead(v_ego)]
