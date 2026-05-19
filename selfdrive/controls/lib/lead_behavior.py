@@ -56,28 +56,35 @@ def is_radarless_matched_follow_window(v_ego: float, lead_distance: float, v_lea
 
 def get_tracked_lead_catchup_bias(v_ego: float, lead_distance: float, desired_gap: float, closing_speed: float,
                                   v_cruise: float | None = None) -> float:
+  # Patch D (2026-05-19): Zeno's-paradox rewrite. Previous capped bias at ~14m which was structurally
+  # insufficient to flip planSource=lead0 (lead_obstacle naturally beats cruise_obstacle by ~30m+ in
+  # follow-too-far cases). 45 mph gate + 1.72-3.0s headway deadzone removed — those stranded ego at
+  # 2.5-3s headway at any speed. New proportional bias up to 100m guarantees lead0 wins argmin in
+  # long_mpc, with smooth speed_factor decay near v_cruise to prevent overshoot.
+  # See 2018-camry-openpilot-investigation.md BM-A/C/H 2026-05-19.
   gap_error = lead_distance - desired_gap
-  actual_hw = lead_distance / max(v_ego, 1e-3)
-  desired_hw = desired_gap / max(v_ego, 1e-3)
 
-  if v_ego <= HIGHWAY_LEAD_BEHAVIOR_MIN_SPEED:
-    return 0.0
-  if v_cruise is not None and v_ego >= v_cruise:
-    return 0.0
   if gap_error <= 0.0:
     return 0.0
 
-  # Encourage ACC to treat a tracked lead as the active constraint when we're
-  # hanging far above the requested time gap, but don't override cruise for a
-  # truly distant lead or one we're already closing on decisively.
-  if actual_hw <= max(desired_hw + 0.3, 1.72):
-    return 0.0
-  if actual_hw >= max(desired_hw + 1.6, 3.0):
-    return 0.0
+  # Don't bias if we're already closing decisively — let normal ACC handle it.
   if closing_speed > max(2.5, 0.12 * v_ego):
     return 0.0
 
-  return min(gap_error * 0.65, max(14.0, 0.75 * v_ego))
+  bias = (gap_error - 2.0) * 4.0
+  if bias <= 0.0:
+    return 0.0
+
+  # Phase out the bias as ego approaches v_cruise — clean hand-off back to cruise_obstacle
+  # without overshooting the set speed.
+  if v_cruise is not None:
+    if v_ego >= v_cruise:
+      return 0.0
+    v_diff = max(0.0, v_cruise - v_ego)
+    speed_factor = min(max(v_diff / 2.5, 0.0), 1.0)
+    bias *= speed_factor
+
+  return float(min(bias, 100.0))
 
 
 def should_disable_far_lead_throttle(v_ego: float, lead_distance: float, desired_gap: float,
