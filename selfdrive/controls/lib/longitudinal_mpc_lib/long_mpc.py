@@ -116,8 +116,12 @@ T_IDXS_LST = [index_function(idx, max_val=MAX_T, max_idx=N) for idx in range(N+1
 T_IDXS = np.array(T_IDXS_LST)
 FCW_IDXS = T_IDXS < 5.0
 T_DIFFS = np.diff(T_IDXS, prepend=[0.])
-COMFORT_BRAKE = 2.5
-STOP_DISTANCE = 6.0
+COMFORT_BRAKE = 3.2   # Patch E (2026-05-19): up from 2.5. Shrinks the v² kinematic buffer in
+                      # get_safe_obstacle_distance — lets ego follow at closer steady-state gaps
+                      # when a confirmed lead is present. Toyota PCS Phase 3 (verified 2026-05-19 BM-K)
+                      # is the safety backstop. See BM-L/M 2026-05-19 (Patch D got planSource=lead0
+                      # but steady-state still ~2.5s headway — formula structurally too conservative).
+STOP_DISTANCE = 2.0   # Patch E + Patch F (2026-05-19): down from 6.0 to 2.0. Matches Toyota OEM physical stop ~1.8-2.2m. Acados recompile required.
 
 
 def should_trigger_planner_fcw(lead, v_ego: float) -> bool:
