@@ -33,7 +33,15 @@ NS_ :
 
 BS_:
 
-BU_: XXX RADAR
+BU_: XXX RADAR SDSU
+
+CM_ "Ocelot smartDSU bridge status TX (firmware-derived from RetroPilot/ocelot main.c TIM3_IRQ_Handler)"
+BO_ 767 SDSU_STATUS: 4 SDSU
+ SG_ DISTANCE_BUTTON : 7|1@1+ (1,0) [0|1] "" XXX
+ SG_ CTRL_MODE : 8|8@1+ (1,0) [0|255] "" XXX
+ SG_ COUNTER : 16|4@1+ (1,0) [0|15] "" XXX
+ SG_ STATE : 20|4@1+ (1,0) [0|15] "" XXX
+ SG_ CHECKSUM : 24|8@1+ (1,0) [0|255] "" XXX
 
 BO_ 768 BUTTONS: 8 RADAR
  SG_ LKAS_PRESS : 2|1@0+ (1,0) [0|1] "" XXX
@@ -192,3 +200,34 @@ BO_ 1669 CLUSTER_R_A: 8 RADAR
  SG_ ID : 0|6@1+ (1,0) [0|63] "" XXX
  SG_ LAT_SPEED : 48|7@1- (0.1,0) [0|127] "m/s" XXX
  SG_ RCS : 63|8@0+ (1,0) [0|255] "" XXX
+
+VAL_ 767 STATE 0 "NO_FAULT" 1 "FAULT_BAD_CHECKSUM" 2 "FAULT_SEND" 3 "FAULT_SCE" 4 "FAULT_STARTUP" 5 "FAULT_TIMEOUT" 6 "FAULT_INVALID" 7 "STATE_AEB_CTRL" ;
+
+CM_ BO_ 291 "RADAR_HEARTBEAT: Continental ARS (bus 1) liveness frame, 7-byte static payload. Confidence: HIGH (always 00 00 00 00 00 00 2b across 600+ msgs driving + 600+ stationary). Reference: 2026-05-16 RE on route 00000312.";
+BO_ 291 RADAR_HEARTBEAT: 7 RADAR
+ SG_ STATIC_PAYLOAD : 48|8@1+ (1,0) [0|255] "" XXX
+
+CM_ BO_ 849 "RADAR_STATUS: Continental ARS (bus 1) per-frame status + counter + CRC. B0=ProcessorTime, B1=MessageCounter, B5 hi-nibble=LoopCounter, B6+B7=Checksum (HIGH structural). B3 partially mapped 2026-05-17 via clean-vs-noisy diff + Gemini Pro validation: bit 1 = TargetAcquired (HIGH conf), bit 0 = STATUS_BIT_0 placeholder (LOW conf, environmentally reactive but specific semantic unverified). B3 bits 2-7 + B4 bits 1-7 never active in normal driving — fault-injection drives required. B4 bit 0 frozen SET (likely static capability/version field; cold-boot capture would disambiguate). References: 2026-05-16 RE route 00000312, 2026-05-17 clean-vs-noisy diff (tanker route 00000323 seg 28 vs curve route 00000323 seg 31), 2026-05-17 cross-reference test against radarState.leadOne.status in op-long route 0000031a (delta +37.9% on 32815 frames).";
+CM_ SG_ 849 TargetAcquired "B3 bit 1. HIGH confidence 2026-05-17 — cross-reference against openpilot's radarState.leadOne.status in route 0000031a showed bit SET in 66.3% of lead=True frames vs 28.4% of lead=False frames (delta +37.9% on 32815 matched frames). Represents the radar's internal lead-acquisition flag (independent from openpilot's leadOne fusion).";
+CM_ SG_ 849 STATUS_BIT_0 "B3 bit 0. +20.7% SET-rate elevation in known-noisy radar conditions (curve passenger-car capture 2026-05-17). NO correlation with leadOne.status. Likely environmental-quality flag (clutter / multipath / interference) but specific semantic unverified — keep placeholder until fault-injection drive maps to Tesla PR #3011 vocabulary.";
+BO_ 849 RADAR_STATUS: 8 RADAR
+ SG_ ProcessorTime : 0|8@1+ (1,0) [0|255] "" XXX
+ SG_ MessageCounter : 8|8@1+ (1,0) [0|255] "" XXX
+ SG_ STATUS_BIT_0 : 24|1@1+ (1,0) [0|1] "" XXX
+ SG_ TargetAcquired : 25|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_2 : 26|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_3 : 27|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_4 : 28|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_5 : 29|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_6 : 30|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_7 : 31|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_8 : 32|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_9 : 33|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_10 : 34|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_11 : 35|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_12 : 36|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_13 : 37|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_14 : 38|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_15 : 39|1@1+ (1,0) [0|1] "" XXX
+ SG_ LoopCounter : 44|4@1+ (1,0) [0|15] "" XXX
+ SG_ Checksum : 48|16@1+ (1,0) [0|65535] "" XXX
