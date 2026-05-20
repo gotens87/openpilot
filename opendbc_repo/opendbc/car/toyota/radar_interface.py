@@ -8,12 +8,14 @@ from opendbc.car import Bus
 from opendbc.car.structs import RadarData
 from opendbc.car.toyota.values import DBC, TSS2_CAR, CAR
 from opendbc.car.interfaces import RadarInterfaceBase
+from collections import deque
 
 # Continental radar on TSS-P NO_DSU cars (2018 Camry/CHR). Uses the radar's pre-clustered
 # output (CLUSTER_F..R_A, 0x680-0x685) rather than the raw OBJECT_0..11 list.
 RADAR_ACC_TSSP_CAR = {CAR.TOYOTA_CAMRY}
 CLUSTER_MSGS = list(range(0x680, 0x686))
 
+RADAR_V_EGO_DELAY_NS = 75_000_000  # 75ms estimated radar pipeline + CAN latency (heuristic, untuned)
 KPH_TO_MS = 1. / 3.6
 
 
@@ -53,6 +55,7 @@ class RadarInterface(RadarInterfaceBase):
     self.radar_acc_tssp = CP.carFingerprint in RADAR_ACC_TSSP_CAR
 
     if self.radar_acc_tssp:
+      self.v_ego_history = deque(maxlen=100)  # ~1.25s at 80Hz; radard polls 100Hz, WHEEL_SPEEDS at 80Hz, so ~80 samples/s
       self.RADAR_MSGS = CLUSTER_MSGS
       self.rcp = None if CP.radarUnavailable else _create_radar_acc_tssp_can_parser(CP.carFingerprint)
       self.pt_cp = None if CP.radarUnavailable else _create_pt_speed_parser(CP.carFingerprint)
@@ -79,6 +82,11 @@ class RadarInterface(RadarInterfaceBase):
     self.updated_messages.update(vls)
     if self.pt_cp is not None:
       self.pt_cp.update(can_strings)   # keep ego-speed parser fresh; don't add to triggers
+
+      if self.radar_acc_tssp:
+        ts = self.pt_cp.ts_nanos["WHEEL_SPEEDS"]["WHEEL_SPEED_FL"]
+        if ts > 0 and (not self.v_ego_history or self.v_ego_history[-1][0] < ts):
+          self.v_ego_history.append((ts, self._get_v_ego()))
 
     if self.trigger_msg not in self.updated_messages:
       return None
@@ -114,7 +122,15 @@ class RadarInterface(RadarInterfaceBase):
     if not self.rcp.can_valid:
       ret.errors.canError = True
 
-    v_ego = self._get_v_ego()
+    if self.v_ego_history:
+      # use v_ego from when the radar internally computed SPEED, not "now" — radar's SPEED reflects
+      # an older ego snapshot (radar pipeline + radar→PCM CAN hop, ~75ms). single trigger_msg ts
+      # for all 6 clusters keeps every vRel in this frame on the same ego reference.
+      target_ts = self.rcp.ts_nanos[self.trigger_msg]['SPEED'] - RADAR_V_EGO_DELAY_NS
+      v_ego = min(self.v_ego_history, key=lambda x: abs(x[0] - target_ts))[1]
+    else:
+      v_ego = self._get_v_ego()
+
     updated_ids = set()
     for ii in sorted(updated_messages):
       if ii in self.RADAR_MSGS:
