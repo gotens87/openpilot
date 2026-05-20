@@ -64,6 +64,13 @@ if ! mountpoint -q /data/media; then
   sudo mount -t f2fs -o rw,noatime,nosuid,nodev,discard,fsync_mode=strict /dev/nvme0n1 /data/media || true
 fi
 
+# F2FS durability tuning: remount lfs-mode + noatime (Gemini 2026-05-19, vault Part 5).
+sudo mount -o remount,noatime,mode=lfs /data/media
+
+# F2FS durability stopgap: sync /data/media every 10s (loggerd has no explicit fsync,
+# cold-shutdown without this loses 20+ minutes of in-flight log data).
+( while true; do sync -f /data/media; sleep 10; done ) &
+
 # Comma egress block. Vault Part 2.
 /data/comma-block.sh
 
