@@ -86,6 +86,8 @@ NEAR_DUPLICATE_LEAD_SOURCE_MAX_DREL_DIFF = 1.5
 NEAR_DUPLICATE_LEAD_SOURCE_MAX_VREL_DIFF = 0.35
 NEAR_DUPLICATE_LEAD_SOURCE_HYSTERESIS_MIN = 0.75
 NEAR_DUPLICATE_LEAD_SOURCE_HYSTERESIS_MAX = 1.5
+GAPDBG_PARAM_PATH = "/data/params/d/GapDbg"
+GAPDBG_INTERVAL = 1.0
 
 # Function to get parameter value based on current speed
 def get_speed_based_param(speed_mph, param_array):
@@ -393,6 +395,7 @@ class LongitudinalMpc:
     for i in range(N+1):
       self.solver.set(i, 'x', np.zeros(X_DIM))
     self.last_cloudlog_t = 0
+    self.last_gapdbg_t = 0
     self.status = False
     self.crash_cnt = 0.0
     self.solution_status = 0
@@ -681,6 +684,16 @@ class LongitudinalMpc:
         lead_1_obstacle = lead_1_obstacle + lead_1_bias
       x_obstacles = np.column_stack([lead_0_obstacle, lead_1_obstacle, cruise_obstacle])
       self.source = SOURCES[np.argmin(x_obstacles[0])]
+      gapdbg_t = time.monotonic()
+      if tracking_lead and lead_one.status and os.path.exists(GAPDBG_PARAM_PATH) and gapdbg_t > self.last_gapdbg_t + GAPDBG_INTERVAL:
+        self.last_gapdbg_t = gapdbg_t
+        gap = desired_follow_distance(v_ego, lead_one.vLead, t_follow)
+        cloudlog.info(
+          "GAPDBG src=%s dRel=%.1f vE=%.1f vL=%.1f tF=%.2f lead0=%.1f lead1=%.1f cruise=%.1f bind=%.1f gap=%.1f aLeadK=%.2f",
+          self.source, float(lead_one.dRel), float(v_ego), float(lead_one.vLead), float(t_follow),
+          float(lead_0_obstacle[0]), float(lead_1_obstacle[0]), float(cruise_obstacle[0]),
+          float(np.min(x_obstacles[0])), float(gap), float(lead_one.aLeadK),
+        )
 
       # These are not used in ACC mode
       x[:], v[:], a[:], j[:] = 0.0, 0.0, 0.0, 0.0
