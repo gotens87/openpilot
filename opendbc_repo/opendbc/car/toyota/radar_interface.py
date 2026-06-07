@@ -15,6 +15,7 @@ RADAR_ACC_TSSP_CAR = {CAR.TOYOTA_CAMRY}
 CLUSTER_MSGS = list(range(0x680, 0x686))
 
 KPH_TO_MS = 1. / 3.6
+RADAR_EGO_REF_SCALE = 0.922
 
 
 def _create_radar_can_parser(car_fingerprint):
@@ -127,8 +128,8 @@ class RadarInterface(RadarInterfaceBase):
             self.pts[track_id].trackId = self.track_id
             self.track_id += 1
           self.pts[track_id].dRel = float(cpt['LONG_DIST'])      # m, from front of car
-          self.pts[track_id].yRel = float(cpt['LAT_DIST'])       # m, LAT_DIST as-is — sign unverified
-          self.pts[track_id].vRel = float(cpt['SPEED']) - v_ego  # radar SPEED is absolute
+          self.pts[track_id].yRel = -float(cpt['LAT_DIST'])
+          self.pts[track_id].vRel = float(cpt['SPEED']) - v_ego * RADAR_EGO_REF_SCALE
           self.pts[track_id].aRel = float('nan')
           self.pts[track_id].yvRel = float(cpt['LAT_SPEED'])
           self.pts[track_id].measured = True
