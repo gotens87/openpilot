@@ -408,7 +408,12 @@ class CarController(CarControllerBase):
               pcm_accel_cmd += pitch_compensation
 
             feedforward = pcm_accel_cmd
-            if self.CP.carFingerprint in (CAR.TOYOTA_PRIUS, CAR.TOYOTA_CAMRY):
+            if self.CP.carFingerprint == CAR.TOYOTA_PRIUS:
+              # Camry REMOVED from positive-ff-scale 2026-06-08 -> Camry now uses the STOCK DEFAULT x1.0
+              # (Prius x0.7 under-pushed -> a few km/h under set speed, no-lead). Integral-unwind (kept,
+              # line ~397) is what actually holds the judder off, not this scale.
+              # >>> REVERT IF JUDDER RETURNS: change `== CAR.TOYOTA_PRIUS` back to
+              # `in (CAR.TOYOTA_PRIUS, CAR.TOYOTA_CAMRY)` on the line above, then reboot. <<<
               # Keep Prius positive handoffs softer than the stock tune, while restoring some launch authority.
               if feedforward > 0.0:
                 feedforward *= PRIUS_POSITIVE_FEEDFORWARD_SCALE
