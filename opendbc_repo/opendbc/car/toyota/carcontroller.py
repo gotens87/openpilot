@@ -423,7 +423,7 @@ class CarController(CarControllerBase):
           else:
             # constantly slowly unwind integral to recover from large temporary errors
             unwind_rate = ACCEL_PID_UNWIND
-            if self.CP.carFingerprint == CAR.TOYOTA_PRIUS and pcm_accel_cmd * self.long_pid.i < 0.0:
+            if self.CP.carFingerprint in (CAR.TOYOTA_PRIUS, CAR.TOYOTA_CAMRY) and pcm_accel_cmd * self.long_pid.i < 0.0:
               unwind_rate *= PRIUS_INTEGRAL_MISMATCH_UNWIND
             self.long_pid.i -= unwind_rate * float(np.sign(self.long_pid.i))
 
@@ -437,7 +437,7 @@ class CarController(CarControllerBase):
               pcm_accel_cmd += pitch_compensation
 
             feedforward = pcm_accel_cmd
-            if self.CP.carFingerprint == CAR.TOYOTA_PRIUS:
+            if self.CP.carFingerprint in (CAR.TOYOTA_PRIUS, CAR.TOYOTA_CAMRY):
               # Keep Prius positive handoffs softer than the stock tune, while restoring some launch authority.
               if feedforward > 0.0:
                 feedforward *= PRIUS_POSITIVE_FEEDFORWARD_SCALE
