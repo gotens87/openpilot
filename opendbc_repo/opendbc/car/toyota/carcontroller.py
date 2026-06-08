@@ -54,7 +54,10 @@ def get_long_tune(CP, params):
   kiV = [0.5, 0.25]
   k_f = 1.0
 
-  if CP.carFingerprint == CAR.TOYOTA_PRIUS:
+  if CP.carFingerprint in (CAR.TOYOTA_PRIUS, CAR.TOYOTA_CAMRY):
+    # Camry Hybrid shares the Prius THS-II eCVT -> adopt the Prius gentle integral tune
+    # (keeps default kiV=[0.5,0.25]) + kf=0.8. Without this the Camry fell to the legacy
+    # ICE high-gain elif (kiV=[3.6,2.4,1.5], ~6x) -> integral windup/burst -> fast judder.
     k_f = 0.8
   elif CP.carFingerprint not in TSS2_CAR:
     kiBP = [0., 5., 35.]
