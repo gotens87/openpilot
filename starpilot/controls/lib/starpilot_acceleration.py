@@ -93,7 +93,10 @@ def get_max_accel_low_speeds(max_accel, v_cruise):
   return float(akima_interp(v_cruise, [0., CITY_SPEED_LIMIT / 2, CITY_SPEED_LIMIT], [max_accel / 4, max_accel / 2, max_accel]))
 
 def get_max_accel_ramp_off(max_accel, v_cruise, v_ego):
-  return float(akima_interp(v_cruise - v_ego, [0., 1., 5., 10.], [0., 0.5, 1.0, max_accel]))
+  # ramp_off floor: stock table gave a 0.0 accel ceiling at set speed (delta=0) -> no headroom
+  # to hold -> bang-bang hunt. Keep ceiling 0 for delta<=0 (no over-speed); allow ~0.3 m/s2 just
+  # below set so the planner can hold steady. max(0.,) clamps any akima undershoot.
+  return float(max(0.0, akima_interp(v_cruise - v_ego, [-0.5, 0.0, 0.5, 5.0, 10.0], [0.0, 0.0, 0.3, 1.0, max_accel])))
 
 def get_max_allowed_accel(v_ego, ev_tuning=True, truck_tuning=False):
   return float(get_profile_max_allowed_accel(v_ego, ev_tuning, truck_tuning))
