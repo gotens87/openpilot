@@ -11,7 +11,7 @@ from openpilot.system.manager.process import PythonProcess, NativeProcess, Daemo
 
 WEBCAM = os.getenv("USE_WEBCAM") is not None
 UI_WATCHDOG_MAX_DT = int(os.getenv("UI_WATCHDOG_MAX_DT", "10"))
-BLOCK_COMMA_UPLOADS = True
+BLOCK_COMMA_UPLOADS = not Params().get_bool("UseKonikServer")  # was True (comma egress block); allow athenad+uploads to KONIK when on konik
 
 def driverview(started: bool, params: Params, CP: car.CarParams, starpilot_toggles: SimpleNamespace) -> bool:
   return started or params.get_bool("IsDriverViewEnabled")
