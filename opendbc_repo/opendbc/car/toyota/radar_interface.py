@@ -16,6 +16,12 @@ CLUSTER_MSGS = list(range(0x680, 0x686))
 
 KPH_TO_MS = 1. / 3.6
 RADAR_EGO_REF_SCALE = 0.922
+# track-swap deglitch (2026-06-13 Kimi audit): a >10 m dRel jump in one 10 Hz frame is >100 m/s,
+# physically impossible for a real same-ID track -> Continental track-ID swap/dropout. Skip the
+# frame's update and hold the previous point; accept only if the out-of-clamp value persists
+# GLITCH_ESCAPE_N frames (genuine new object reusing the ID). Cut-ins arrive as a NEW id, not a jump.
+GLITCH_JUMP_M = 10.0
+GLITCH_ESCAPE_N = 3
 
 
 def _create_radar_can_parser(car_fingerprint):
@@ -58,6 +64,7 @@ class RadarInterface(RadarInterfaceBase):
       self.rcp = None if CP.radarUnavailable else _create_radar_acc_tssp_can_parser(CP.carFingerprint)
       self.pt_cp = None if CP.radarUnavailable else _create_pt_speed_parser(CP.carFingerprint)
       self.trigger_msg = self.RADAR_MSGS[-1]
+      self.jump_cnt = {}   # per-track consecutive out-of-clamp dRel-jump counter (deglitch)
     else:
       if CP.carFingerprint in TSS2_CAR:
         self.RADAR_A_MSGS = list(range(0x180, 0x190))
@@ -122,12 +129,21 @@ class RadarInterface(RadarInterfaceBase):
         cpt = self.rcp.vl[ii]
         track_id = int(cpt['ID'])
         if track_id != 0x3f and cpt['LONG_DIST'] > 0:   # 0x3f = "no object"
+          new_dRel = float(cpt['LONG_DIST'])                     # m, parser-scaled (DBC factor 0.03)
+          # deglitch: reject an impossible >10 m single-frame jump on an existing track (ID swap/dropout)
+          if track_id in self.pts and abs(new_dRel - self.pts[track_id].dRel) > GLITCH_JUMP_M:
+            self.jump_cnt[track_id] = self.jump_cnt.get(track_id, 0) + 1
+            if self.jump_cnt[track_id] < GLITCH_ESCAPE_N:
+              updated_ids.add(track_id)                          # hold previous point, skip this frame
+              continue
+            # value persisted GLITCH_ESCAPE_N frames -> accept as a real new object reusing the ID
+          self.jump_cnt[track_id] = 0
           updated_ids.add(track_id)
           if track_id not in self.pts:
             self.pts[track_id] = RadarData.RadarPoint()
             self.pts[track_id].trackId = self.track_id
             self.track_id += 1
-          self.pts[track_id].dRel = float(cpt['LONG_DIST'])      # m, from front of car
+          self.pts[track_id].dRel = new_dRel                     # m, from front of car
           self.pts[track_id].yRel = -float(cpt['LAT_DIST'])
           self.pts[track_id].vRel = float(cpt['SPEED']) - v_ego * RADAR_EGO_REF_SCALE
           self.pts[track_id].aRel = float('nan')
@@ -140,6 +156,7 @@ class RadarInterface(RadarInterfaceBase):
     for track_id in list(self.pts):
       if track_id not in updated_ids:
         del self.pts[track_id]
+        self.jump_cnt.pop(track_id, None)
 
     ret.points = list(self.pts.values())
     return ret
