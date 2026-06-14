@@ -11,6 +11,9 @@
 #include "selfdrive/ui/qt/util.h"
 #include "selfdrive/ui/qt/window.h"
 
+// StarPilot: embedded UI-prebuilt-freshness hash (see selfdrive/ui/SConscript).
+extern "C" const char g_sp_ui_hash[];
+
 // Qt 5.12.8's qErrnoWarning() emits QtCriticalMsg then calls abort() directly,
 // bypassing the fatal-message path. Intercept critical+fatal Wayland messages
 // before the unconditional abort() fires and clean-exit so the manager restarts
@@ -30,6 +33,8 @@ void waylandAwareMessageHandler(QtMsgType type, const QMessageLogContext &contex
 
 int main(int argc, char *argv[]) {
   setpriority(PRIO_PROCESS, 0, -20);
+  // StarPilot: force the linker to keep g_sp_ui_hash (gc-sections would otherwise drop it).
+  (void)g_sp_ui_hash;
 
   qInstallMessageHandler(waylandAwareMessageHandler);
   initApp(argc, argv);
