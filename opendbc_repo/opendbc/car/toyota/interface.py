@@ -66,6 +66,10 @@ class CarInterface(CarInterfaceBase):
     if Ecu.hybrid in found_ecus:
       ret.flags |= ToyotaFlags.HYBRID.value
 
+    # CAN fallback: detect hybrid via passive Bus 0 messages when ECU query fails.
+    if not (ret.flags & ToyotaFlags.HYBRID.value) and (0x127 in fingerprint[0] or 0x245 in fingerprint[0]):
+      ret.flags |= ToyotaFlags.HYBRID.value
+
     if candidate == CAR.TOYOTA_PRIUS:
       stop_and_go = True
       # Only give steer angle deadzone to for bad angle sensor prius
@@ -161,9 +165,9 @@ class CarInterface(CarInterfaceBase):
       ret.vEgoStarting = 0.25
       ret.stoppingDecelRate = 0.3  # reach stopping target smoothly
 
-      # Hybrids have much quicker longitudinal actuator response
-      if ret.flags & ToyotaFlags.HYBRID.value:
-        ret.longitudinalActuatorDelay = 0.05
+    # Hybrids have much quicker longitudinal actuator response.
+    if ret.flags & ToyotaFlags.HYBRID.value:
+      ret.longitudinalActuatorDelay = 0.05
 
     if ret.enableGasInterceptorDEPRECATED:
       # Pedal/SDSU Toyotas feel best with a softer final stop clamp.

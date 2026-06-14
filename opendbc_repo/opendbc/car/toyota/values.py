@@ -172,7 +172,7 @@ class CAR(Platforms):
     ],
     CarSpecs(mass=3400. * CV.LB_TO_KG, wheelbase=2.82448, steerRatio=13.7, tireStiffnessFactor=0.7933),
     dbc_dict('toyota_nodsu_pt_generated', 'toyota_radar_dsu_tssp'),
-    flags=ToyotaFlags.NO_DSU,
+    flags=ToyotaFlags.NO_DSU | ToyotaFlags.NO_STOP_TIMER,
   )
   TOYOTA_CAMRY_TSS2 = ToyotaTSS2PlatformConfig( # TSS 2.5
     [
