@@ -152,8 +152,11 @@ function launch {
   function prebuilt_runtime_compatible {
     python3 - <<'PY'
 import importlib
+import mmap
 import os
 from pathlib import Path
+import re
+import subprocess
 import sys
 import time
 
@@ -213,6 +216,43 @@ for path in required_files:
   if not path.is_file():
     raise FileNotFoundError(f"Missing prebuilt runtime artifact: {path}")
 log_step("required_files")
+
+# --- StarPilot UI prebuilt freshness check ---
+def check_ui_prebuilt():
+  ui_dir = repo_root / "selfdrive/ui"
+  hash_script = ui_dir / "compute_ui_hash.py"
+  binary = ui_dir / "ui"
+
+  # Backward compatibility: commits that predate this mechanism have no
+  # compute_ui_hash.py; skip rather than force a spurious rebuild.
+  if not hash_script.is_file():
+    log_step("ui_prebuilt_skip_no_mechanism")
+    return
+
+  if not binary.is_file():
+    raise FileNotFoundError(f"Missing UI prebuilt binary: {binary}")
+
+  current_hash = subprocess.check_output(
+    [sys.executable, str(hash_script)], text=True, stderr=subprocess.PIPE,
+  ).strip()
+  if not re.fullmatch(r"[0-9a-f]{64}", current_hash):
+    raise ValueError(f"Bad UI source hash from {hash_script}: {current_hash!r}")
+
+  with open(binary, "rb") as f:
+    with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+      match = re.search(rb"SP_UI_PREBUILT_HASH:([0-9a-f]{64})", mm)
+      if match is None:
+        raise RuntimeError("UI prebuilt binary lacks embedded source hash; rebuild required")
+      embedded = match.group(1).decode("ascii")
+      if embedded != current_hash:
+        raise RuntimeError(
+          f"UI prebuilt binary is stale: embedded={embedded} current={current_hash}"
+        )
+
+  log_step("ui_prebuilt_fresh")
+
+check_ui_prebuilt()
+# --- end StarPilot ---
 PY
   }
 
