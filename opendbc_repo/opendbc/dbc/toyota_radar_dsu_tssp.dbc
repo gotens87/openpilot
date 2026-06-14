@@ -33,7 +33,15 @@ NS_ :
 
 BS_:
 
-BU_: XXX RADAR
+BU_: XXX RADAR SDSU
+
+CM_ "Ocelot smartDSU bridge status TX (firmware-derived from RetroPilot/ocelot main.c TIM3_IRQ_Handler)"
+BO_ 767 SDSU_STATUS: 4 SDSU
+ SG_ DISTANCE_BUTTON : 7|1@1+ (1,0) [0|1] "" XXX
+ SG_ CTRL_MODE : 8|8@1+ (1,0) [0|255] "" XXX
+ SG_ COUNTER : 16|4@1+ (1,0) [0|15] "" XXX
+ SG_ STATE : 20|4@1+ (1,0) [0|15] "" XXX
+ SG_ CHECKSUM : 24|8@1+ (1,0) [0|255] "" XXX
 
 BO_ 768 BUTTONS: 8 RADAR
  SG_ LKAS_PRESS : 2|1@0+ (1,0) [0|1] "" XXX
@@ -192,3 +200,27 @@ BO_ 1669 CLUSTER_R_A: 8 RADAR
  SG_ ID : 0|6@1+ (1,0) [0|63] "" XXX
  SG_ LAT_SPEED : 48|7@1- (0.1,0) [0|127] "m/s" XXX
  SG_ RCS : 63|8@0+ (1,0) [0|255] "" XXX
+
+VAL_ 767 STATE 0 "NO_FAULT" 1 "FAULT_BAD_CHECKSUM" 2 "FAULT_SEND" 3 "FAULT_SCE" 4 "FAULT_STARTUP" 5 "FAULT_TIMEOUT" 6 "FAULT_INVALID" 7 "STATE_AEB_CTRL" ;
+
+CM_ BO_ 291 "RADAR_HEARTBEAT: Continental ARS (bus 1) liveness frame, 7-byte static payload. Confidence: HIGH (always 00 00 00 00 00 00 2b across 600+ msgs driving + 600+ stationary). Reference: 2026-05-16 RE on route 00000312.";
+BO_ 291 RADAR_HEARTBEAT: 7 RADAR
+ SG_ STATIC_PAYLOAD : 48|8@1+ (1,0) [0|255] "" XXX
+
+CM_ BO_ 849 "RADAR_STATUS: Continental ARS (bus 1) per-frame status + counter + CRC. B0=ProcessorTime, B1=MessageCounter, B5 hi-nibble=LoopCounter, B6+B7=Checksum (HIGH structural). B3 RE-CORRECTED 2026-06-13 (Kimi non-cluster audit, fresh route 0000000d, 29992 matched frames): bit 0 = TargetAcquired (the real lead-present flag — +66.2% SET-rate delta vs radarState.leadOne.status, 78.8% lead=True vs 12.6% lead=False); bit 1 = STATUS_BIT_1 placeholder (only +16.6% delta — the prior bit-1=TargetAcquired/HIGH call from route 0000031a did NOT reproduce and is demoted); bit 2 = active but semantic-unknown (byte3 takes values 0-4). B3 bits 3-7 dark in normal driving (fault-injection needed). B4 is a frozen static byte 0x01 (was mis-split into STATUS_BIT_8..15; collapsed to StaticByte4). References: 2026-06-13 status0x351_test route 0000000d; superseded 2026-05-17 clean-vs-noisy + route 0000031a (delta +37.9%, bit-1 only).";
+CM_ SG_ 849 TargetAcquired "B3 bit 0. Re-derived 2026-06-13 (route 0000000d, 29992 frames): SET in 78.8% of lead=True vs 12.6% of lead=False frames (delta +66.2%) — the strongest lead-correlated bit in 0x351, so this is the radar's internal lead-acquisition flag. (Was previously labelled STATUS_BIT_0/LOW; the prior TargetAcquired=bit1 call is demoted to STATUS_BIT_1.)";
+CM_ SG_ 849 STATUS_BIT_1 "B3 bit 1. Was previously TargetAcquired (HIGH, +37.9% on route 0000031a) but reproduces only +16.6% on route 0000000d (SET 20.4% lead=True vs 3.8% lead=False) — far weaker than bit 0, so demoted to an unverified placeholder. Semantic unknown until a fault-injection drive.";
+BO_ 849 RADAR_STATUS: 8 RADAR
+ SG_ ProcessorTime : 0|8@1+ (1,0) [0|255] "" XXX
+ SG_ MessageCounter : 8|8@1+ (1,0) [0|255] "" XXX
+ SG_ TargetAcquired : 24|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_1 : 25|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_2 : 26|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_3 : 27|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_4 : 28|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_5 : 29|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_6 : 30|1@1+ (1,0) [0|1] "" XXX
+ SG_ STATUS_BIT_7 : 31|1@1+ (1,0) [0|1] "" XXX
+ SG_ StaticByte4 : 32|8@1+ (1,0) [0|255] "" XXX
+ SG_ LoopCounter : 44|4@1+ (1,0) [0|15] "" XXX
+ SG_ Checksum : 48|16@1+ (1,0) [0|65535] "" XXX
