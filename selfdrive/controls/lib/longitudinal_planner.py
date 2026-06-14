@@ -1870,8 +1870,7 @@ class LongitudinalPlanner:
                          lead_dist=self.lead_dist_f if lead_one_active and self.lead_dist_f is not None else 50.0,
                          uncertainty=uncertainty,
                          panic_bypass=panic_bypass,
-                         filter_time_factor_floor=steady_follow_filter_floor,
-                         lead_present=lead_one_active)
+                         filter_time_factor_floor=steady_follow_filter_floor)
     self.mpc.set_accel_limits(accel_limits_turns[0], accel_limits_turns[1])
     self.mpc.set_cur_state(self.v_desired_filter.x, self.a_desired)
     # After deciding the MPC mode via get_mpc_mode(), ensure MPC uses that mode when not mlsim

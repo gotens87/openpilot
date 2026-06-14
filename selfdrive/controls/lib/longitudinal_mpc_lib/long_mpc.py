@@ -426,7 +426,7 @@ class LongitudinalMpc:
   def set_weights(self, acceleration_jerk=1.0, danger_jerk=1.0, speed_jerk=1.0, prev_accel_constraint=True,
                   personality=log.LongitudinalPersonality.standard, v_ego=0.0, lead_dist=50.0,
                   uncertainty=0.0, accel_reengage=False, panic_bypass=False,
-                  filter_time_factor_floor=0.0, lead_present=False):
+                  filter_time_factor_floor=0.0):
     # Update parameters based on current speed with interpolation for smooth scaling
     speed_mph = v_ego * CV.MS_TO_MPH  # Convert m/s to mph
 
@@ -490,8 +490,7 @@ class LongitudinalMpc:
 
     if self.mode == 'acc':
       a_change_cost = acceleration_jerk if prev_accel_constraint else 0
-      v_ego_cost = 0.30 if lead_present else V_EGO_COST  # [RELVEL-DAMP] rel-velocity damping while following a lead
-      cost_weights = [self.current_x_ego_cost, X_EGO_COST, v_ego_cost, A_EGO_COST, a_change_cost, speed_jerk]
+      cost_weights = [self.current_x_ego_cost, X_EGO_COST, V_EGO_COST, A_EGO_COST, a_change_cost, speed_jerk]
       constraint_cost_weights = [LIMIT_COST, LIMIT_COST, LIMIT_COST, danger_jerk]
     elif self.mode == 'blended':
       a_change_cost = 40.0 if prev_accel_constraint else 0
@@ -698,10 +697,6 @@ class LongitudinalMpc:
 
       # These are not used in ACC mode
       x[:], v[:], a[:], j[:] = 0.0, 0.0, 0.0, 0.0
-      # [RELVEL-DAMP] reference ego speed to the lead's predicted speed when actively following so
-      # the MPC penalizes (v_ego - v_lead); pairs with v_ego_cost=0.30 in set_weights. Reversible.
-      if tracking_lead and lead_one.status:
-        v[:] = lead_xv_0[:, 1]
 
     elif self.mode == 'blended':
       self.params[:,5] = 1.0
