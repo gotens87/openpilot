@@ -467,7 +467,9 @@ class CarController(CarControllerBase):
         if self.CP.enableGasInterceptorDEPRECATED:
           pcm_accel_cmd = limit_interceptor_pcm_accel(pcm_accel_cmd, actuators.accel, stopping, CS.out.vEgo)
           pcm_accel_cmd = limit_interceptor_stopping_accel(pcm_accel_cmd, actuators.accel, stopping, CS.out.vEgo, bool(hud_control.leadVisible))
-        elif self.CP.carFingerprint == CAR.TOYOTA_PRIUS:
+        elif self.CP.carFingerprint in (CAR.TOYOTA_PRIUS, CAR.TOYOTA_CAMRY):
+          # Camry Hybrid shares the Prius THS-II brake-blend: clamp the stale full-negative
+          # stop command once the planner softens, so stop->launch is smooth, not abrupt.
           pcm_accel_cmd = limit_prius_stopping_accel(pcm_accel_cmd, actuators.accel, stopping, CS.out.vEgo, lead)
 
         pcm_accel_cmd = float(np.clip(pcm_accel_cmd, self.params.ACCEL_MIN, self.params.ACCEL_MAX))
