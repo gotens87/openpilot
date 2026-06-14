@@ -113,7 +113,7 @@ class CarInterface(CarInterfaceBase):
 
     # No radar dbc for cars without DSU which are not TSS 2.0
     # TODO: make an adas dbc file for dsu-less models
-    ret.radarUnavailable = Bus.radar not in DBC[candidate] or candidate in (NO_DSU_CAR - TSS2_CAR)
+    ret.radarUnavailable = Bus.radar not in DBC[candidate] or candidate in (NO_DSU_CAR - TSS2_CAR - {CAR.TOYOTA_CAMRY})
 
     # Since we don't yet parse radar on TSS2/TSS-P radar-based ACC cars, gate
     # longitudinal behind the alpha-long toggle.
