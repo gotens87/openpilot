@@ -34,6 +34,7 @@ DRIVE_STATS_SYNC_RATE = 30
 OFFROAD_GPS_MEMORY_REFRESH_SECONDS = 1.0
 OFFROAD_GPS_PERSIST_REFRESH_SECONDS = 30.0
 TOGGLE_BROADCAST_INTERVAL_FRAMES = int(1 / DT_MDL)
+BLOCK_COMMA_UPLOADS = not Params().get_bool("UseKonikServer")  # was True (comma egress block); allow athenad+uploads to KONIK when on konik
 UPDATE_CHECK_INTERVAL_SECONDS = 60 * 60
 
 
@@ -110,6 +111,9 @@ def check_assets(now, model_manager, theme_manager, thread_manager, params, para
     thread_manager.run_with_lock(update_maps, (now, params, params_memory, True))
 
 def sync_drive_stats(params, session):
+  if BLOCK_COMMA_UPLOADS:
+    return
+
   try:
     dongle_id = params.get("DongleId")
     if isinstance(dongle_id, bytes):
