@@ -11,6 +11,7 @@ from openpilot.system.manager.process import PythonProcess, NativeProcess, Daemo
 
 WEBCAM = os.getenv("USE_WEBCAM") is not None
 UI_WATCHDOG_MAX_DT = int(os.getenv("UI_WATCHDOG_MAX_DT", "10"))
+BLOCK_COMMA_UPLOADS = not Params().get_bool("UseKonikServer")  # was True (comma egress block); allow athenad+uploads to KONIK when on konik
 
 def driverview(started: bool, params: Params, CP: car.CarParams, starpilot_toggles: SimpleNamespace) -> bool:
   return started or params.get_bool("IsDriverViewEnabled")
@@ -72,6 +73,8 @@ def allow_logging(started: bool, params: Params, CP: car.CarParams, starpilot_to
   return not starpilot_toggles.no_logging
 
 def allow_uploads(started: bool, params: Params, CP: car.CarParams, starpilot_toggles: SimpleNamespace) -> bool:
+  if BLOCK_COMMA_UPLOADS:
+    return False
   return params.get_bool("AlwaysAllowUploads") or not starpilot_toggles.no_uploads or starpilot_toggles.no_onroad_uploads
 
 def run_speed_limit_filler(started: bool, params: Params, CP: car.CarParams, starpilot_toggles: SimpleNamespace) -> bool:
@@ -84,7 +87,7 @@ def run_navigationd(started: bool, params: Params, CP: car.CarParams, starpilot_
   return started and params.get("NavDestination") is not None
 
 procs = [
-  DaemonProcess("manage_athenad", "system.athena.manage_athenad", "AthenadPid"),
+  DaemonProcess("manage_athenad", "system.athena.manage_athenad", "AthenadPid", enabled=not BLOCK_COMMA_UPLOADS),
 
   NativeProcess("loggerd", "system/loggerd", ["./loggerd"], and_(allow_logging, logging)),
   NativeProcess("encoderd", "system/loggerd", ["./encoderd"], and_(allow_logging, only_onroad)),
