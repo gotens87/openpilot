@@ -57,7 +57,10 @@ def get_long_tune(CP, params):
   kiV = [0.5, 0.25]
   k_f = 1.0
 
-  if CP.carFingerprint == CAR.TOYOTA_PRIUS:
+  if CP.carFingerprint in (CAR.TOYOTA_PRIUS, CAR.TOYOTA_CAMRY):
+    # Camry Hybrid shares the Prius THS-II eCVT -> adopt the Prius gentle integral tune
+    # (keeps default kiV=[0.5,0.25]) + kf=0.8. Without this the Camry fell to the legacy
+    # ICE high-gain elif (kiV=[3.6,2.4,1.5], ~6x) -> integral windup/burst -> fast judder.
     k_f = 0.8
   elif CP.carFingerprint not in TSS2_CAR:
     kiBP = [0., 5., 35.]
@@ -440,7 +443,7 @@ class CarController(CarControllerBase):
           else:
             # constantly slowly unwind integral to recover from large temporary errors
             unwind_rate = ACCEL_PID_UNWIND
-            if self.CP.carFingerprint == CAR.TOYOTA_PRIUS and pcm_accel_cmd * self.long_pid.i < 0.0:
+            if self.CP.carFingerprint in (CAR.TOYOTA_PRIUS, CAR.TOYOTA_CAMRY) and pcm_accel_cmd * self.long_pid.i < 0.0:
               unwind_rate *= PRIUS_INTEGRAL_MISMATCH_UNWIND
             self.long_pid.i -= unwind_rate * float(np.sign(self.long_pid.i))
 
@@ -455,6 +458,12 @@ class CarController(CarControllerBase):
 
             feedforward = pcm_accel_cmd
             if self.CP.carFingerprint == CAR.TOYOTA_PRIUS:
+              # Camry REMOVED from positive-ff-scale 2026-06-08 -> Camry now uses the STOCK DEFAULT x1.0
+              # (Prius x0.7 under-pushed -> a few km/h under set speed, no-lead). Integral-unwind (kept,
+              # line ~397) is what actually holds the judder off, not this scale.
+              # >>> REVERT IF JUDDER RETURNS: change `== CAR.TOYOTA_PRIUS` back to
+              # `in (CAR.TOYOTA_PRIUS, CAR.TOYOTA_CAMRY)` on the line above, then reboot. <<<
+              # Keep Prius positive handoffs softer than the stock tune, while restoring some launch authority.
               if feedforward > 0.0:
                 feedforward *= get_prius_positive_feedforward_scale(CS.out.vEgo)
 
