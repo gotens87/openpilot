@@ -165,6 +165,15 @@ class CarInterface(CarInterfaceBase):
       ret.vEgoStarting = 0.25
       ret.stoppingDecelRate = 0.3  # reach stopping target smoothly
 
+    # Camry Hybrid (THS-II eCVT, non-TSS2): adopt the gentler TSS2-style stop ramp. The
+    # generic non-TSS2 defaults (vEgoStopping/Starting 0.5, stoppingDecelRate 0.8) ramp the
+    # brake too fast into the stop for the eCVT's slower brake-blend -> abrupt stops. We do
+    # NOT take RAISED_ACCEL_LIMIT (kept off above) - only the gentler stop ramp.
+    if candidate == CAR.TOYOTA_CAMRY:
+      ret.vEgoStopping = 0.25
+      ret.vEgoStarting = 0.25
+      ret.stoppingDecelRate = 0.3
+
     # Hybrids have much quicker longitudinal actuator response.
     if ret.flags & ToyotaFlags.HYBRID.value:
       ret.longitudinalActuatorDelay = 0.05
