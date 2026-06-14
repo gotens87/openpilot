@@ -80,12 +80,15 @@ def quarantine_offline_tile(filename: str) -> Path | None:
     cloudlog.warning(f"mapd_wrapper refusing to quarantine unexpected path: {filename}")
     return None
 
-  if not tile_path.exists():
+  try:
+    if not tile_path.exists():
+      return None
+    quarantined = tile_path.with_name(f"{tile_path.name}.corrupt.{int(time.time())}")
+    tile_path.rename(quarantined)
+    return quarantined
+  except OSError:
+    cloudlog.exception(f"mapd_wrapper failed to quarantine offline tile: {filename}")
     return None
-
-  quarantined = tile_path.with_name(f"{tile_path.name}.corrupt.{int(time.time())}")
-  tile_path.rename(quarantined)
-  return quarantined
 
 
 def terminate_child(proc: subprocess.Popen[str]) -> None:
@@ -135,7 +138,11 @@ def run_mapd_once() -> int:
     if bad_tile is None:
       continue
 
-    quarantined = quarantine_offline_tile(bad_tile)
+    try:
+      quarantined = quarantine_offline_tile(bad_tile)
+    except Exception:
+      cloudlog.exception(f"mapd_wrapper unexpected exception while handling bad tile: {bad_tile}")
+      quarantined = None
     if quarantined is None:
       if not OFFLINE_ROOT.exists():
         cloudlog.warning(
