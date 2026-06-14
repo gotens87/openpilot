@@ -11,7 +11,12 @@ To drop a tune: remove its row + the commit.
 | 3 | camry-long-tune   | toyota: Camry longitudinal tune (Prius THS-II PID) | experimental |
 | 4 | camry-stops       | toyota: Camry smoother stops (eCVT stop ramp) | ride-quality |
 | 5 | star-infra        | infra: StarPilot local (konik upload-gate + onroad reboot + mapd EIO survival) | infra |
+| 6 | assert-normalcy   | assert normalcy: revert StarPilot's bespoke longitudinal layer to stock | required |
 
 Log:
 - 2026-06-13: rewrote 13 fine-grained commits -> these 5; squashed self-corrections
   (ff-scale add/undo -> net stock ff; radar status bit relabel folded into #1).
+- 2026-06-14: + #6 "assert normalcy" - force stock get_max_accel / A_CRUISE_MIN +
+  neutralize accel+speed jerk multipliers + far-lead throttle-kill = SunnyPilot/stock-
+  equivalent longitudinal (kills the with-lead follow oscillation, a FrogPilot-lineage
+  accel-layer regression). danger_jerk (braking) + t_follow left as-is. Drive-test pending.

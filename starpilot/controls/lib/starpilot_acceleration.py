@@ -228,6 +228,15 @@ class StarPilotAcceleration:
           not stop_context):
         self.min_accel = get_slc_shaped_min_accel(v_ego, v_target, deceleration_profile, self.min_accel)
 
+    # assert normalcy (Don't Panic): StarPilot's bespoke accel layer above — custom profiles +
+    # human_acceleration ramp-off (collapses the accel ceiling to ~0 at set speed) + weather +
+    # SLC coast-shaping — is what drives the with-lead follow limit-cycle on this car. Stock
+    # openpilot / SunnyPilot (the Toyota gold standard) run a flat get_max_accel(v_ego) + a fixed
+    # A_CRUISE_MIN and ~1000 cars hold smooth. Force the stock clip here; this overrides everything
+    # computed above. Reversible: delete this block. (assert-normalcy revert, 2026-06-14)
+    self.max_accel = float(get_max_accel(v_ego))
+    self.min_accel = float(A_CRUISE_MIN)
+
     # Sync AccelerationProfile and DecelerationProfile params so the UI reflects the active drive mode
     # Eco → Eco, Normal → Standard, Sport → Sport+
     gear_state = "eco" if eco_gear else ("sport" if sport_gear else "normal")

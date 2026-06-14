@@ -99,6 +99,14 @@ class StarPilotFollowing:
     else:
       self.desired_follow_distance = 0
 
+    # assert normalcy: neutralize StarPilot's personality/traffic accel+speed jerk multipliers and
+    # the far-lead throttle-kill back to stock (flat jerk factor ~1.0, no throttle cut) = stock
+    # follow dynamics. LEFT ALONE on purpose: danger_jerk (emergency-braking authority) and
+    # t_follow (the planner already floors it to the stock 1.45 s). Reversible: delete this block.
+    self.acceleration_jerk = 1.0
+    self.speed_jerk = 1.0
+    self.disable_throttle = False
+
   def update_follow_values(self, lead_distance, v_ego, v_lead, starpilot_toggles):
     if starpilot_toggles.conditional_slower_lead and v_lead < v_ego:
       distance_factor = max(lead_distance - (v_lead * self.t_follow), 1)
