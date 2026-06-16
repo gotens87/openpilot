@@ -75,6 +75,9 @@ class Track:
       self.kf.update(self.vLead)
 
     self.vLeadK = float(self.kf.x[SPEED][0])
+    # aLeadK is the KF acceleration estimate (observes vLead only); it stays finite even when
+    # the radar reports no aRel (Continental/Denso Toyota send aRel=NaN). aRel is never read
+    # here, so DOM's aLeadK-based follow/brake tuning is valid on those cars.
     self.aLeadK = float(self.kf.x[ACCEL][0])
 
     # Learn if constant acceleration
