@@ -130,6 +130,11 @@ class RadarInterface(RadarInterfaceBase):
           self.pts[track_id].dRel = float(cpt['LONG_DIST'])      # m, from front of car
           self.pts[track_id].yRel = -float(cpt['LAT_DIST'])
           self.pts[track_id].vRel = float(cpt['SPEED']) - v_ego * RADAR_EGO_REF_SCALE
+          # trackId above is a PERSISTENT monotonic id (minted once per first-seen cluster ID,
+          # deleted on dropout) — NOT a reused slot index. Measured persistent per object on
+          # real drives, so id-based lead logic in radard (preferred_track, near-duplicate) is
+          # safe on this radar. aRel is NaN by design: radard's aLeadK is a Kalman estimate
+          # from vLead and never reads aRel (identical to stock Denso). Do not "fix" the NaN.
           self.pts[track_id].aRel = float('nan')
           self.pts[track_id].yvRel = float(cpt['LAT_SPEED'])
           self.pts[track_id].measured = True
