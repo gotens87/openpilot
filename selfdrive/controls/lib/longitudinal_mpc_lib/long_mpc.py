@@ -33,8 +33,8 @@ SOURCES = ['lead0', 'lead1', 'cruise', 'e2e']
 
 X_DIM = 3
 U_DIM = 1
-PARAM_DIM = 6
-COST_E_DIM = 5
+PARAM_DIM = 8  # +v_lead (p6) +v_rel_gate (p7) for source-gated range-rate cost
+COST_E_DIM = 6  # +range-rate cost dim
 COST_DIM = COST_E_DIM + 1
 CONSTR_DIM = 4
 
@@ -110,6 +110,7 @@ DIST_ADAPT = 0.06
 X_EGO_COST = 0.
 V_EGO_COST = 0.
 A_EGO_COST = 0.
+V_REL_COST = 4.0  # source-gated range-rate cost weight (inert on cruise via p7 gate)
 DANGER_ZONE_COST = 100.
 CRASH_DISTANCE = .25
 LEAD_DANGER_FACTOR = 0.75
@@ -255,7 +256,9 @@ def gen_long_model():
   prev_a = SX.sym('prev_a')
   lead_t_follow = SX.sym('lead_t_follow')
   lead_danger_factor = SX.sym('lead_danger_factor')
-  model.p = vertcat(a_min, a_max, x_obstacle, prev_a, lead_t_follow, lead_danger_factor)
+  v_lead = SX.sym('v_lead')
+  v_rel_gate = SX.sym('v_rel_gate')
+  model.p = vertcat(a_min, a_max, x_obstacle, prev_a, lead_t_follow, lead_danger_factor, v_lead, v_rel_gate)
 
   # dynamics model
   f_expl = vertcat(v_ego, a_ego, j_ego)
@@ -291,6 +294,8 @@ def gen_long_ocp():
   prev_a = ocp.model.p[3]
   lead_t_follow = ocp.model.p[4]
   lead_danger_factor = ocp.model.p[5]
+  v_lead = ocp.model.p[6]
+  v_rel_gate = ocp.model.p[7]
 
   ocp.cost.yref = np.zeros((COST_DIM, ))
   ocp.cost.yref_e = np.zeros((COST_E_DIM, ))
@@ -307,6 +312,7 @@ def gen_long_ocp():
            v_ego,
            a_ego,
            accel_change,
+           v_rel_gate * (v_ego - v_lead) / (v_ego + 10.),
            j_ego]
   ocp.model.cost_y_expr = vertcat(*costs)
   ocp.model.cost_y_expr_e = vertcat(*costs[:-1])
@@ -322,7 +328,7 @@ def gen_long_ocp():
 
   x0 = np.zeros(X_DIM)
   ocp.constraints.x0 = x0
-  ocp.parameter_values = np.array([-1.2, 1.2, 0.0, 0.0, get_T_FOLLOW(), LEAD_DANGER_FACTOR])
+  ocp.parameter_values = np.array([-1.2, 1.2, 0.0, 0.0, get_T_FOLLOW(), LEAD_DANGER_FACTOR, 0.0, 0.0])
 
 
   # We put all constraint cost weights to 0 and only set them at runtime
@@ -495,11 +501,11 @@ class LongitudinalMpc:
 
     if self.mode == 'acc':
       a_change_cost = acceleration_jerk if prev_accel_constraint else 0
-      cost_weights = [self.current_x_ego_cost, X_EGO_COST, V_EGO_COST, A_EGO_COST, a_change_cost, speed_jerk]
+      cost_weights = [self.current_x_ego_cost, X_EGO_COST, V_EGO_COST, A_EGO_COST, a_change_cost, V_REL_COST, speed_jerk]
       constraint_cost_weights = [LIMIT_COST, LIMIT_COST, LIMIT_COST, danger_jerk]
     elif self.mode == 'blended':
       a_change_cost = 40.0 if prev_accel_constraint else 0
-      cost_weights = [0., 0.1, 0.2, 5.0, a_change_cost, 1.0]
+      cost_weights = [0., 0.1, 0.2, 5.0, a_change_cost, 0.0, 1.0]
       constraint_cost_weights = [LIMIT_COST, LIMIT_COST, LIMIT_COST, danger_jerk]
     else:
       raise NotImplementedError(f'Planner mode {self.mode} not recognized in planner cost set')
@@ -695,6 +701,8 @@ class LongitudinalMpc:
     lead_one = radarstate.leadOne
     lead_two = radarstate.leadTwo
     self.status = tracking_lead and (lead_one.status or lead_two.status)
+    lead0_real = 1.0 if (tracking_lead and lead_one.status) else 0.0
+    lead1_real = 1.0 if (tracking_lead and lead_two.status) else 0.0
     lead_xv_0 = self.process_lead(lead_one, tracking_lead, t_follow=t_follow)
     lead_xv_1 = self.process_lead(lead_two, tracking_lead, t_follow=t_follow)
 
@@ -735,6 +743,7 @@ class LongitudinalMpc:
         lead_0_obstacle = lead_0_obstacle + lead_0_bias
         lead_1_obstacle = lead_1_obstacle + lead_1_bias
       x_obstacles = np.column_stack([lead_0_obstacle, lead_1_obstacle, cruise_obstacle])
+      v_obstacles = np.column_stack([lead_xv_0[:,1], lead_xv_1[:,1], v_cruise_clipped])
       candidate_source = SOURCES[np.argmin(x_obstacles[0])]
       sticky_source = None
       if optional_far_lead_comfort and candidate_source in ("lead0", "lead1"):
@@ -755,6 +764,7 @@ class LongitudinalMpc:
 
       x_obstacles = np.column_stack([lead_0_obstacle,
                                      lead_1_obstacle])
+      v_obstacles = np.column_stack([lead_xv_0[:,1], lead_xv_1[:,1]])
       cruise_target = T_IDXS * np.clip(v_cruise, v_ego - 2.0, 1e3) + x[0]
       xforward = ((v[1:] + v[:-1]) / 2) * (T_IDXS[1:] - T_IDXS[:-1])
       x = np.cumsum(np.insert(xforward, 0, x[0]))
@@ -770,12 +780,17 @@ class LongitudinalMpc:
     self.yref[:,1] = x
     self.yref[:,2] = v
     self.yref[:,3] = a
-    self.yref[:,5] = j
+    self.yref[:,6] = j
     for i in range(N):
       self.solver.set(i, "yref", self.yref[i])
     self.solver.set(N, "yref", self.yref[N][:COST_E_DIM])
 
     self.params[:,2] = np.min(x_obstacles, axis=1)
+    obstacle_idx = np.argmin(x_obstacles, axis=1)
+    self.params[:,6] = np.take_along_axis(v_obstacles, obstacle_idx[:, None], axis=1)[:, 0]
+    # source-gate the range-rate cost: active only when a REAL lead is the per-node obstacle (0 on cruise or faked lead)
+    real_by_col = np.array([lead0_real, lead1_real, 0.0])
+    self.params[:,7] = real_by_col[obstacle_idx]
     self.params[:,3] = np.copy(self.prev_a)
     self.params[:,4] = t_follow
 
