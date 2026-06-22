@@ -151,7 +151,12 @@ def track_matches_vision(track: Track, lead: capnp._DynamicStructReader, v_ego: 
   offset_vision_dist = lead.x[0] - RADAR_TO_CAMERA
   dist_sane = abs(track.dRel - offset_vision_dist) < max(abs(offset_vision_dist) * dist_scale, dist_floor)
   vel_sane = (abs(track.vRel + v_ego - lead.v[0]) < vel_limit) or (v_ego + track.vRel > 3)
-  lat_sane = abs(track.yRel + lead.y[0]) < max(y_floor, y_std_scale * max(float(lead.yStd[0]), 0.2))
+  # Continental ARS suppresses stopped targets until ~46m. Once a near-stationary in-path
+  # cluster finally appears, promote it without waiting for the lateral gate to tighten at
+  # short range (was costing ~1.9s, 46->22m). Relax the lateral floor for confident stopped leads.
+  stationary = abs(track.vRel + v_ego) < 2.5
+  eff_y_floor = 2.5 if (stationary and float(lead.prob) > 0.6) else y_floor
+  lat_sane = abs(track.yRel + lead.y[0]) < max(eff_y_floor, y_std_scale * max(float(lead.yStd[0]), 0.2))
   return dist_sane and vel_sane and lat_sane
 
 
