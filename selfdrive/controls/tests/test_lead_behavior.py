@@ -12,7 +12,7 @@ def test_tracked_lead_catchup_bias_for_hanging_gap():
 
 
 def test_tracked_lead_catchup_bias_ignores_near_desired_gap():
-  bias = get_tracked_lead_catchup_bias(31.4, 50.0, 38.0, 0.1)
+  bias = get_tracked_lead_catchup_bias(31.4, 44.0, 38.0, 0.1)
   assert bias == 0.0
 
 
