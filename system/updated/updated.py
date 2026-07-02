@@ -26,6 +26,7 @@ from openpilot.starpilot.common.starpilot_variables import BACKUP_PATH, get_star
 
 LOCK_FILE = os.getenv("UPDATER_LOCK_FILE", "/tmp/safe_staging_overlay.lock")
 STAGING_ROOT = os.getenv("UPDATER_STAGING_ROOT", "/data/safe_staging")
+GIT_CLEANUP_TIMEOUT = int(os.getenv("UPDATER_GIT_CLEANUP_TIMEOUT", "30"))
 
 OVERLAY_UPPER = os.path.join(STAGING_ROOT, "upper")
 OVERLAY_METADATA = os.path.join(STAGING_ROOT, "metadata")
@@ -233,10 +234,12 @@ def finalize_update() -> None:
   cloudlog.info("Starting git cleanup in finalized update")
   t = time.monotonic()
   try:
-    run(["git", "gc"], FINALIZED)
-    run(["git", "lfs", "prune"], FINALIZED)
+    subprocess.run(["git", "gc", "--auto"], cwd=FINALIZED, check=True, stdout=subprocess.PIPE,
+                   stderr=subprocess.STDOUT, encoding="utf8", timeout=GIT_CLEANUP_TIMEOUT)
+    subprocess.run(["git", "lfs", "prune"], cwd=FINALIZED, check=True, stdout=subprocess.PIPE,
+                   stderr=subprocess.STDOUT, encoding="utf8", timeout=GIT_CLEANUP_TIMEOUT)
     cloudlog.event("Done git cleanup", duration=time.monotonic() - t)
-  except subprocess.CalledProcessError:
+  except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
     cloudlog.exception(f"Failed git cleanup, took {time.monotonic() - t:.3f} s")
 
   set_consistent_flag(True)
@@ -491,9 +494,6 @@ def main() -> None:
     updater = Updater()
     update_failed_count = 0 # TODO: Load from param?
     wait_helper = WaitTimeHelper()
-
-    # invalidate old finalized update
-    set_consistent_flag(False)
 
     # set initial state
     params.put("UpdaterState", "idle")

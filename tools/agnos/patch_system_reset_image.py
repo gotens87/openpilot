@@ -863,6 +863,8 @@ def zipapp_has_markers(data: bytes) -> bool:
     app_script = z.read(APPLICATION_ENTRY_IN_ZIPAPP)
   return (
     PATCH_MARKER.encode() in reset_script
+    and b"_device_tree_device_type" in reset_script
+    and b"gui_app.big_ui()" not in reset_script
     and TICI_RESET_PATCH_MARKER.encode() in tici_reset_script
     and MICI_RESET_PATCH_MARKER.encode() in mici_reset_script
     and APP_PATCH_MARKER.encode() in app_script

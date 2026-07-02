@@ -125,7 +125,7 @@ class TestManager:
   def test_python_ui_subprocess_is_scoped_to_ui(self):
     ui_proc = managed_processes["ui"]
     uses_python_ui = python_ui_enabled(HARDWARE.get_device_type())
-    subprocess_scoped_procs = {"the_galaxy"}
+    subprocess_scoped_procs = {"the_galaxy", "updated"}
 
     assert isinstance(ui_proc, PythonProcess) == uses_python_ui
     if uses_python_ui:

@@ -40,6 +40,7 @@ def python_ui_process_start_method(uses_python_ui: bool, is_pc: bool = PC) -> st
 PYTHON_UI = python_ui_enabled(device_type)
 PYTHON_UI_PROCESS_START_METHOD = python_ui_process_start_method(PYTHON_UI)
 THE_GALAXY_PROCESS_START_METHOD = "fork" if PC else "subprocess"
+UPDATED_PROCESS_START_METHOD = "fork" if PC else "subprocess"
 
 from openpilot.system.manager.process import PythonProcess, NativeProcess, DaemonProcess
 
@@ -156,7 +157,13 @@ procs = [
   PythonProcess("radard", "selfdrive.controls.radard", only_onroad),
   PythonProcess("hardwared", "system.hardware.hardwared", always_run),
   PythonProcess("tombstoned", "system.tombstoned", always_run, enabled=not PC),
-  PythonProcess("updated", "system.updated.updated", always_run, enabled=not PC),
+  PythonProcess(
+    "updated",
+    "system.updated.updated",
+    always_run,
+    enabled=not PC,
+    start_method=UPDATED_PROCESS_START_METHOD,
+  ),
   PythonProcess("uploader", "system.loggerd.uploader", allow_uploads),
   PythonProcess("statsd", "system.statsd", always_run),
   PythonProcess("feedbackd", "selfdrive.ui.feedback.feedbackd", only_onroad),
