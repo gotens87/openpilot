@@ -1,10 +1,14 @@
 import os
+import subprocess
+import threading
 import time
 import datetime
 from pathlib import Path
 from openpilot.common.time_helpers import system_time_valid
+from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.ui.lib.starpilot_version import starpilot_display_description
 from openpilot.selfdrive.ui.ui_state import ui_state
+from openpilot.system.hardware import HARDWARE
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.lib.multilang import tr, trn
 from openpilot.system.ui.widgets import Widget, DialogResult
@@ -22,6 +26,16 @@ STATE_TO_DISPLAY_TEXT = {
   "downloading...": tr("downloading..."),
   "finalizing update...": tr("finalizing update..."),
 }
+
+# ── Git environment hardening (prevent prompts, hangs) ─
+_GIT_ENV = os.environ.copy() | {
+  "GIT_TERMINAL_PROMPT": "0",
+  "GIT_ASKPASS": "/bin/false",
+  "SSH_ASKPASS": "/bin/false",
+  "GCM_INTERACTIVE": "Never",
+}
+
+_fast_update_lock = threading.Lock()
 
 
 def time_ago(date: datetime.datetime | None) -> str:
@@ -62,7 +76,11 @@ class SoftwareLayout(Widget):
       initial_state=ui_state.params.get_bool("AutomaticUpdates"),
       callback=self._on_auto_updates_toggle,
     )
-    self._download_btn = button_item(lambda: tr("Download"), lambda: tr("CHECK"), callback=self._on_download_update)
+    self._download_btn = button_item(
+      lambda: tr("Download"), lambda: tr("CHECK"),
+      callback=self._on_download_update,
+      long_press_callback=self._on_long_press_fast_update,
+    )
 
     # Install button is initially hidden
     self._install_btn = button_item(lambda: tr("Install Update"), lambda: tr("INSTALL"), callback=self._on_install_update)
@@ -71,6 +89,9 @@ class SoftwareLayout(Widget):
     # Track waiting-for-updater transition to avoid brief re-enable while still idle
     self._waiting_for_updater = False
     self._waiting_start_ts: float = 0.0
+    self._fast_update_active = False
+    self._fast_update_status: str = ""
+    self._fast_update_error: str = ""
 
     # Branch switcher
     self._branch_btn = button_item(lambda: tr("Target Branch"), lambda: tr("SELECT"), callback=self._on_select_branch)
@@ -113,72 +134,171 @@ class SoftwareLayout(Widget):
     # Update download button visibility and state
     self._download_btn.set_visible(ui_state.is_offroad())
 
-    updater_state = ui_state.params.get("UpdaterState") or "idle"
-    failed_count = ui_state.params.get("UpdateFailedCount") or 0
-    fetch_available = ui_state.params.get_bool("UpdaterFetchAvailable")
-    update_available = ui_state.params.get_bool("UpdateAvailable")
-
-    if updater_state != "idle":
-      # Updater responded
-      self._waiting_for_updater = False
-      self._download_btn.action_item.set_enabled(False)
-      # Use the mapping, with a fallback to the original state string
-      display_text = STATE_TO_DISPLAY_TEXT.get(updater_state, updater_state)
-      self._download_btn.action_item.set_value(display_text)
-    else:
-      if failed_count > 0:
-        self._download_btn.action_item.set_value(tr("failed to check for update"))
-        self._download_btn.action_item.set_text(tr("CHECK"))
-      elif fetch_available:
-        self._download_btn.action_item.set_value(tr("update available"))
-        self._download_btn.action_item.set_text(tr("DOWNLOAD"))
+    # ── Fast update progress (in-memory status from worker thread) ─
+    if self._fast_update_active:
+      if self._fast_update_status == "rebooting":
+        self._download_btn.action_item.set_enabled(False)
+        self._download_btn.action_item.set_text(tr("REBOOTING"))
+        self._download_btn.action_item.set_value(tr("Update applied, rebooting..."))
+      elif self._fast_update_error:
+        self._download_btn.action_item.set_enabled(True)
+        self._download_btn.action_item.set_text(tr("RETRY"))
+        self._download_btn.action_item.set_value(tr("Failed: {}").format(self._fast_update_error))
       else:
-        last_update = ui_state.params.get("LastUpdateTime")
-        if last_update:
-          formatted = time_ago(last_update)
-          self._download_btn.action_item.set_value(tr("up to date, last checked {}").format(formatted))
-        else:
-          self._download_btn.action_item.set_value(tr("up to date, last checked never"))
-        self._download_btn.action_item.set_text(tr("CHECK"))
+        self._download_btn.action_item.set_enabled(False)
+        self._download_btn.action_item.set_text(tr("FAST UPDATE"))
+        self._download_btn.action_item.set_value(self._fast_update_status or tr("Starting..."))
 
-      # If we've been waiting too long without a state change, reset state
-      if self._waiting_for_updater and (time.monotonic() - self._waiting_start_ts > UPDATED_TIMEOUT):
+    # ── Normal updater state (only when fast update NOT active) ───
+    if not self._fast_update_active:
+      updater_state = ui_state.params.get("UpdaterState") or "idle"
+      failed_count = ui_state.params.get("UpdateFailedCount") or 0
+      fetch_available = ui_state.params.get_bool("UpdaterFetchAvailable")
+      update_available = ui_state.params.get_bool("UpdateAvailable")
+
+      if updater_state != "idle":
         self._waiting_for_updater = False
+        self._download_btn.action_item.set_enabled(False)
+        display_text = STATE_TO_DISPLAY_TEXT.get(updater_state, updater_state)
+        self._download_btn.action_item.set_value(display_text)
+      else:
+        if failed_count > 0:
+          self._download_btn.action_item.set_value(tr("failed to check for update"))
+          self._download_btn.action_item.set_text(tr("CHECK"))
+        elif fetch_available:
+          self._download_btn.action_item.set_value(tr("update available"))
+          self._download_btn.action_item.set_text(tr("DOWNLOAD"))
+        else:
+          last_update = ui_state.params.get("LastUpdateTime")
+          if last_update:
+            formatted = time_ago(last_update)
+            self._download_btn.action_item.set_value(tr("up to date, last checked {}").format(formatted))
+          else:
+            self._download_btn.action_item.set_value(tr("up to date, last checked never"))
+          self._download_btn.action_item.set_text(tr("CHECK"))
 
-      # Only enable if we're not waiting for updater to flip out of idle
-      self._download_btn.action_item.set_enabled(not self._waiting_for_updater)
+        if self._waiting_for_updater and (time.monotonic() - self._waiting_start_ts > UPDATED_TIMEOUT):
+          self._waiting_for_updater = False
+
+        self._download_btn.action_item.set_enabled(not self._waiting_for_updater)
+    else:
+      update_available = False
 
     # Update target branch button value
     current_branch = ui_state.params.get("UpdaterTargetBranch") or ""
     self._branch_btn.action_item.set_value(current_branch)
 
     # Update install button
-    self._install_btn.set_visible(ui_state.is_offroad() and update_available)
-    if update_available:
+    self._install_btn.set_visible(ui_state.is_offroad() and update_available and not self._fast_update_active)
+    if update_available and not self._fast_update_active:
       new_desc = starpilot_display_description(ui_state.params.get("UpdaterNewDescription"))
       new_release_notes = (ui_state.params.get("UpdaterNewReleaseNotes") or b"").decode("utf-8", "replace")
       self._install_btn.action_item.set_text(tr("INSTALL"))
       self._install_btn.action_item.set_value(new_desc)
       self._install_btn.set_description(new_release_notes)
-      # Enable install button for testing (like Qt showEvent)
       self._install_btn.action_item.set_enabled(True)
     else:
       self._install_btn.set_visible(False)
 
   def _on_download_update(self):
-    # Check if we should start checking or start downloading
+    if self._fast_update_active:
+      if self._fast_update_error:
+        self._fast_update_active = False
+        self._fast_update_error = ""
+        self._fast_update_status = ""
+      return
     self._download_btn.action_item.set_enabled(False)
     if self._download_btn.action_item.text == tr("CHECK"):
-      # Start checking for updates
       self._waiting_for_updater = True
       self._waiting_start_ts = time.monotonic()
       os.system("pkill -SIGUSR1 -f system.updated.updated")
     else:
-      # Start downloading
       self._waiting_for_updater = True
       self._waiting_start_ts = time.monotonic()
       ui_state.params_memory.put_bool("ManualUpdateInitiated", True)
       os.system("pkill -SIGHUP -f system.updated.updated")
+
+  def _on_long_press_fast_update(self):
+    if self._fast_update_active:
+      return
+    def on_confirm(result):
+      if result == DialogResult.CONFIRM:
+        self._execute_fast_update()
+    gui_app.push_widget(ConfirmDialog(
+      tr("Fast update will replace the current installation without backup and reboot the device. Continue?"),
+      tr("Fast Update"), callback=on_confirm,
+    ))
+
+  def _execute_fast_update(self):
+    if ui_state.is_onroad():
+      self._download_btn.action_item.set_value(tr("Cannot update while driving"))
+      return
+    if not _fast_update_lock.acquire(blocking=False):
+      return
+    self._fast_update_active = True
+    self._fast_update_status = tr("Starting fast update...")
+    self._fast_update_error = ""
+    self._download_btn.action_item.set_enabled(False)
+    self._download_btn.action_item.set_text(tr("FAST UPDATE"))
+    self._download_btn.action_item.set_value(self._fast_update_status)
+    os.system("pkill -f system.updated.updated")
+
+    def _run_worker():
+      repo_path = str(Path(__file__).resolve().parents[4])
+      try:
+        self._fast_update_status = tr("Preparing...")
+        result = subprocess.run(
+          ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_path,
+          capture_output=True, text=True, timeout=15, env=_GIT_ENV)
+        if result.returncode != 0:
+          raise RuntimeError(result.stderr.strip() or "failed to resolve HEAD branch")
+        branch = result.stdout.strip()
+        result = subprocess.run(
+          ["git", "rev-parse", "HEAD"], cwd=repo_path,
+          capture_output=True, text=True, timeout=15, env=_GIT_ENV)
+        if result.returncode != 0:
+          raise RuntimeError(result.stderr.strip() or "failed to resolve HEAD commit")
+        current_commit = result.stdout.strip()
+
+        subprocess.run(["git", "update-ref", "refs/starpilot/rollback", current_commit],
+                       cwd=repo_path, capture_output=True, timeout=15, env=_GIT_ENV)
+        subprocess.run(["git", "config", "--local", "--replace-all", "starpilot.rollbackbranch", branch],
+                       cwd=repo_path, capture_output=True, timeout=15, env=_GIT_ENV)
+
+        self._fast_update_status = tr("Fetching latest commit...")
+        result = subprocess.run(
+          ["git", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "fetch",
+           "--progress", "--depth=1", "--no-recurse-submodules", "origin", branch],
+          cwd=repo_path, capture_output=True, text=True, timeout=120, env=_GIT_ENV)
+        if result.returncode != 0:
+          raise RuntimeError(result.stderr.strip() or "fetch failed")
+
+        self._fast_update_status = tr("Applying update...")
+        result = subprocess.run(["git", "reset", "--hard", "FETCH_HEAD"],
+                                cwd=repo_path, capture_output=True, text=True, timeout=120, env=_GIT_ENV)
+        if result.returncode != 0:
+          raise RuntimeError(result.stderr.strip() or "reset failed")
+
+        gitmodules = Path(repo_path) / ".gitmodules"
+        if gitmodules.is_file():
+          self._fast_update_status = tr("Updating submodules...")
+          result = subprocess.run(
+            ["git", "submodule", "update", "--init", "--recursive", "--depth=1", "--progress"],
+            cwd=repo_path, capture_output=True, text=True, timeout=300, env=_GIT_ENV)
+          if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or "submodule update failed")
+
+        self._fast_update_status = "rebooting"
+        time.sleep(6)
+        HARDWARE.reboot()
+
+      except Exception as e:
+        self._fast_update_error = str(e)[:200]
+        cloudlog.exception("Fast update failed")
+      finally:
+        _fast_update_lock.release()
+
+    threading.Thread(target=_run_worker, daemon=True).start()
 
   def _on_auto_updates_toggle(self, enabled: bool):
     ui_state.params.put_bool("AutomaticUpdates", enabled)
