@@ -24,6 +24,10 @@ if [ -z "$AGNOS_VERSION" ]; then
   export AGNOS_VERSION="12.8.18"
 fi
 
+if [ -z "$AGNOS_ACCEPTED_VERSIONS" ]; then
+  export AGNOS_ACCEPTED_VERSIONS="$AGNOS_VERSION 12.8.17"
+fi
+
 export STAGING_ROOT="/data/safe_staging"
 
 # StarPilot variables (only available after StarPilot is installed to /data/openpilot)

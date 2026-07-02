@@ -54,7 +54,16 @@ function agnos_init {
   sudo rm -f /data/misc/display/color_cal/color_cal /data/misc/display/color_cal/source.sha256
 
   # Check if AGNOS update is required
-  if [ $(< /VERSION) != "$AGNOS_VERSION" ]; then
+  AGNOS_CURRENT_VERSION="$(< /VERSION)"
+  AGNOS_UPDATE_REQUIRED=1
+  for accepted_version in $AGNOS_ACCEPTED_VERSIONS; do
+    if [ "$AGNOS_CURRENT_VERSION" = "$accepted_version" ]; then
+      AGNOS_UPDATE_REQUIRED=0
+      break
+    fi
+  done
+
+  if [ "$AGNOS_UPDATE_REQUIRED" = "1" ]; then
     AGNOS_PY="$DIR/system/hardware/tici/agnos.py"
     MANIFEST="$DIR/system/hardware/tici/agnos.json"
     if $AGNOS_PY --verify $MANIFEST; then
