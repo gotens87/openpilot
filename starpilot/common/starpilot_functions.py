@@ -1,205 +1,33 @@
 #!/usr/bin/env python3
 import dataclasses
 import json
-import os
+import requests
 import threading
 import time
 
 from pathlib import Path
 from types import SimpleNamespace
 
+from cereal import messaging
 from openpilot.common.basedir import BASEDIR
 from openpilot.common.params import Params
 from openpilot.common.time_helpers import system_time_valid
 from openpilot.system.hardware import HARDWARE
+from openpilot.system.version import get_build_metadata
 
-STARPILOT_API = os.getenv("STARPILOT_API", "https://frogpilot.com/api")
-BOOT_LOGO_STATE_PATH = Path("/cache/starpilot_boot_logo_state_v1")
-ACTIVE_THEME_PATH = Path(BASEDIR) / "starpilot/assets/active_theme"
-STOCK_THEME_PATH = Path(BASEDIR) / "starpilot/assets/stock_theme"
-ACTIVE_THEME_REQUIRED_PATHS = (
-  ACTIVE_THEME_PATH / "colors/colors.json",
-  ACTIVE_THEME_PATH / "icons",
-  ACTIVE_THEME_PATH / "distance_icons",
-  ACTIVE_THEME_PATH / "sounds",
-  ACTIVE_THEME_PATH / "steering_wheel",
+from openpilot.starpilot.assets.theme_manager import ThemeManager
+from openpilot.starpilot.common.starpilot_backups import backup_starpilot
+from openpilot.starpilot.common.connect_server import sync_konik_dongle_id
+from openpilot.starpilot.common.maps_catalog import normalize_schedule_value, sanitize_selected_locations_csv
+from openpilot.starpilot.common.theme_asset_names import find_matching_theme_asset_file
+from openpilot.starpilot.common.starpilot_utilities import get_starpilot_api_info, is_FrogsGoMoo, is_url_pingable, run_cmd
+from openpilot.starpilot.common.starpilot_variables import (
+  ERROR_LOGS_PATH, STARPILOT_API, FROGS_GO_MOO_PATH, HD_LOGS_PATH, KONIK_LOGS_PATH, MAPS_PATH, THEME_SAVE_PATH,
+  StarPilotVariables, get_starpilot_toggles
 )
-ACTIVE_THEME_BOOTSTRAP_LINKS = (
-  ("colors", STOCK_THEME_PATH / "colors"),
-  ("icons", STOCK_THEME_PATH / "icons"),
-  ("distance_icons", STOCK_THEME_PATH / "distance_icons"),
-  ("sounds", STOCK_THEME_PATH / "sounds"),
-  ("steering_wheel", STOCK_THEME_PATH / "steering_wheel"),
-)
-
-
-def _starpilot_data_root():
-  if HARDWARE.get_device_type() == "pc":
-    from openpilot.system.hardware.hw import Paths
-
-    return Path(Paths.comma_home()) / "starpilot" / "data"
-  return Path("/data")
-
-
-def _starpilot_persist_root():
-  if HARDWARE.get_device_type() == "pc":
-    from openpilot.system.hardware.hw import Paths
-
-    return Path(Paths.persist_root())
-  return Path("/persist")
-
-
-def _theme_save_path():
-  return _starpilot_data_root() / "themes"
-
-
-def _maps_path():
-  return _starpilot_data_root() / "media/0/osm/offline"
-
-
-def _run_cmd(*args, **kwargs):
-  from openpilot.starpilot.common.starpilot_utilities import run_cmd
-
-  return run_cmd(*args, **kwargs)
-
-
-def _path_has_content(path):
-  if path.is_symlink() and not path.exists():
-    return False
-  if path.is_file():
-    return True
-  if not path.is_dir():
-    return False
-  try:
-    next(path.iterdir())
-    return True
-  except (OSError, StopIteration):
-    return False
-
-
-def _active_theme_ready():
-  return all(_path_has_content(path) for path in ACTIVE_THEME_REQUIRED_PATHS)
-
-
-def _replace_with_symlink(path, target):
-  if path.is_symlink() or path.is_file():
-    try:
-      path.unlink()
-    except OSError:
-      return
-  elif path.exists():
-    import shutil
-
-    try:
-      shutil.rmtree(path)
-    except OSError:
-      return
-
-  path.parent.mkdir(parents=True, exist_ok=True)
-  try:
-    path.symlink_to(target, target_is_directory=target.is_dir())
-  except OSError:
-    pass
-
-
-def _ensure_minimal_active_theme():
-  for name, target in ACTIVE_THEME_BOOTSTRAP_LINKS:
-    if target.exists() and not _path_has_content(ACTIVE_THEME_PATH / name):
-      _replace_with_symlink(ACTIVE_THEME_PATH / name, target)
-
-  signals_path = ACTIVE_THEME_PATH / "signals"
-  if signals_path.is_symlink() and not signals_path.exists():
-    try:
-      signals_path.unlink()
-    except OSError:
-      pass
-
-
-def _normalize_dongle_id(value):
-  if isinstance(value, bytes):
-    value = value.decode("utf-8", errors="ignore")
-  if value is None:
-    return None
-  value = str(value).strip()
-  return value or None
-
-
-def _read_persisted_stock_dongle_id():
-  persisted_dongle_id_path = _starpilot_persist_root() / "comma" / "dongle_id"
-  if not persisted_dongle_id_path.is_file():
-    return None
-  return _normalize_dongle_id(persisted_dongle_id_path.read_text())
-
-
-def _ensure_stock_dongle_id_fast(params):
-  current_dongle_id = _normalize_dongle_id(params.get("DongleId"))
-  konik_dongle_id = _normalize_dongle_id(params.get("KonikDongleId"))
-  stock_dongle_id = _normalize_dongle_id(params.get("StockDongleId"))
-
-  if stock_dongle_id not in (None, konik_dongle_id):
-    return stock_dongle_id
-
-  candidate = _read_persisted_stock_dongle_id()
-  if candidate in (None, konik_dongle_id):
-    candidate = current_dongle_id if current_dongle_id != konik_dongle_id else None
-
-  if candidate is not None and candidate != stock_dongle_id:
-    params.put("StockDongleId", candidate)
-
-  return candidate
-
-
-def _sync_cached_konik_dongle_id(params):
-  current_dongle_id = _normalize_dongle_id(params.get("DongleId"))
-  konik_dongle_id = _normalize_dongle_id(params.get("KonikDongleId"))
-  stock_dongle_id = _ensure_stock_dongle_id_fast(params)
-
-  if params.get_bool("UseKonikServer"):
-    if konik_dongle_id is not None and current_dongle_id != konik_dongle_id:
-      params.put("DongleId", konik_dongle_id)
-  elif current_dongle_id == konik_dongle_id and stock_dongle_id is not None:
-    params.put("DongleId", stock_dongle_id)
-
-
-def _boot_logo_cache_key(selected_logo, source_logo):
-  try:
-    source_stat = source_logo.stat()
-    source_path = source_logo.resolve()
-  except OSError:
-    return None
-
-  selected = selected_logo.decode("utf-8", "ignore") if isinstance(selected_logo, (bytes, bytearray)) else str(selected_logo or "")
-  return "\n".join([
-    selected.strip().lower(),
-    str(source_path),
-    str(source_stat.st_mtime_ns),
-    str(source_stat.st_size),
-    "",
-  ])
-
-
-def _boot_logo_cache_matches(cache_key):
-  if cache_key is None:
-    return False
-  try:
-    return BOOT_LOGO_STATE_PATH.read_text() == cache_key
-  except OSError:
-    return False
-
-
-def _write_boot_logo_cache(cache_key):
-  if cache_key is None:
-    return
-  try:
-    BOOT_LOGO_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    BOOT_LOGO_STATE_PATH.write_text(cache_key)
-  except OSError:
-    pass
 
 
 def seed_desktop_theme_assets():
-  from openpilot.starpilot.assets.theme_manager import ThemeManager
-
   params = Params()
   params_memory = Params(memory=True)
   params_defaults = Params(return_defaults=True)
@@ -231,41 +59,7 @@ def seed_desktop_theme_assets():
 
 
 def starpilot_boot_functions(build_metadata, params):
-  params.put("BuildMetadata", json.dumps(dataclasses.asdict(build_metadata)))
-  _sync_cached_konik_dongle_id(params)
-
-  def boot_thread():
-    try:
-      _finish_starpilot_boot(build_metadata)
-    except Exception as error:
-      print(f"StarPilot boot functions failed: {error}")
-
-  if _active_theme_ready():
-    threading.Thread(target=boot_thread, daemon=True).start()
-    return
-
-  # Brand-new or partially migrated installs need basic active theme links
-  # before UI starts. Use stock links here and let the full theme refresh run
-  # off the manager hot path.
-  _ensure_minimal_active_theme()
-  threading.Thread(target=boot_thread, daemon=True).start()
-
-
-def _refresh_active_theme(params):
-  from openpilot.starpilot.assets.theme_manager import ThemeManager
-  from openpilot.starpilot.common.starpilot_variables import StarPilotVariables
-
   params_memory = Params(memory=True)
-  starpilot_toggles = StarPilotVariables().starpilot_toggles
-  ThemeManager(params, params_memory, boot_run=True).update_active_theme(time_validated=system_time_valid(), starpilot_toggles=starpilot_toggles, boot_run=True)
-
-
-def _finish_starpilot_boot(build_metadata):
-  from openpilot.starpilot.common.connect_server import sync_konik_dongle_id
-  from openpilot.starpilot.common.maps_catalog import sanitize_selected_locations_csv
-  from openpilot.starpilot.common.starpilot_backups import backup_starpilot
-
-  params = Params()
 
   maps_selected_raw = params.get("MapsSelected")
   maps_selected = sanitize_selected_locations_csv(maps_selected_raw)
@@ -276,24 +70,28 @@ def _finish_starpilot_boot(build_metadata):
 
   params.put("BuildMetadata", json.dumps(dataclasses.asdict(build_metadata)))
 
-  _refresh_active_theme(params)
+  StarPilotVariables()
+  ThemeManager(params, params_memory, boot_run=True).update_active_theme(time_validated=system_time_valid(), starpilot_toggles=get_starpilot_toggles(), boot_run=True)
+
   sync_konik_dongle_id(params)
 
-  while not system_time_valid():
-    print("Waiting for system time to become valid...")
-    time.sleep(1)
+  def boot_thread():
+    while not system_time_valid():
+      print("Waiting for system time to become valid...")
+      time.sleep(1)
 
-  backup_starpilot(build_metadata, params)
+    backup_starpilot(build_metadata, params)
+
+  threading.Thread(target=boot_thread, daemon=True).start()
 
 
 def install_starpilot(build_metadata, params):
-  data_root = _starpilot_data_root()
   paths = [
-    data_root / "error_logs",
-    data_root / "media/0/realdata_HD",
-    data_root / "media/0/realdata_konik",
-    data_root / "media/0/osm/offline",
-    _theme_save_path()
+    ERROR_LOGS_PATH,
+    HD_LOGS_PATH,
+    KONIK_LOGS_PATH,
+    MAPS_PATH,
+    THEME_SAVE_PATH
   ]
   for path in paths:
     path.mkdir(parents=True, exist_ok=True)
@@ -302,27 +100,15 @@ def install_starpilot(build_metadata, params):
 
   update_boot_logo(starpilot=True, selected_logo=params.get("BootLogo"))
 
-  frogs_go_moo_path = _starpilot_persist_root() / "frogsgomoo.py"
-  if frogs_go_moo_path.is_file():
-    mount_options = _run_cmd(["findmnt", "-n", "-o", "OPTIONS", "/persist"], "Successfully retrieved mount options", "Failed to retrieve mount options")
-    _run_cmd(["sudo", "mount", "-o", "remount,rw", "/persist"], "Successfully remounted /persist as read-write", "Failed to remount /persist")
-    _run_cmd(["sudo", "python3", frogs_go_moo_path], "Successfully ran frogsgomoo.py", "Failed to run frogsgomoo.py")
-    _run_cmd(["sudo", "mount", "-o", f"remount,{mount_options}", "/persist"], "Successfully restored /persist mount options", "Failed to restore /persist mount options")
+  if is_FrogsGoMoo():
+    mount_options = run_cmd(["findmnt", "-n", "-o", "OPTIONS", "/persist"], "Successfully retrieved mount options", "Failed to retrieve mount options")
+    run_cmd(["sudo", "mount", "-o", "remount,rw", "/persist"], "Successfully remounted /persist as read-write", "Failed to remount /persist")
+    run_cmd(["sudo", "python3", FROGS_GO_MOO_PATH], "Successfully ran frogsgomoo.py", "Failed to run frogsgomoo.py")
+    run_cmd(["sudo", "mount", "-o", f"remount,{mount_options}", "/persist"], "Successfully restored /persist mount options", "Failed to restore /persist mount options")
 
 
 def register_device(build_metadata, params):
   def register_thread():
-    import requests
-
-    def is_url_pingable(url):
-      if not url:
-        return False
-      try:
-        response = requests.head(url, timeout=10, allow_redirects=True, headers={"User-Agent": "starpilot-ping-test/1.0 (https://github.com/FrogAi/StarPilot)"})
-        return response.ok
-      except Exception:
-        return False
-
     dongle_id = params.get("DongleId")
     if isinstance(dongle_id, bytes):
       dongle_id = dongle_id.decode("utf-8", errors="ignore")
@@ -377,9 +163,7 @@ def update_boot_logo(starpilot=False, stock=False, selected_logo=None):
       selected = selected_logo.decode("utf-8", "ignore") if isinstance(selected_logo, (bytes, bytearray)) else str(selected_logo)
       selected = selected.strip()
       if selected.lower() not in {"", "stock", "default"}:
-        from openpilot.starpilot.common.theme_asset_names import find_matching_theme_asset_file
-
-        matched_logo = find_matching_theme_asset_file(_theme_save_path() / "bootlogos", selected)
+        matched_logo = find_matching_theme_asset_file(THEME_SAVE_PATH / "bootlogos", selected)
         if matched_logo is not None:
           target_logo = matched_logo
   elif stock:
@@ -390,10 +174,6 @@ def update_boot_logo(starpilot=False, stock=False, selected_logo=None):
 
   if not target_logo.is_file():
     print(f"Error: Target logo file not found at {target_logo}")
-    return
-
-  cache_key = _boot_logo_cache_key(selected_logo, target_logo)
-  if boot_logo_location.is_file() and _boot_logo_cache_matches(cache_key):
     return
 
   source_logo = target_logo
@@ -416,18 +196,13 @@ def update_boot_logo(starpilot=False, stock=False, selected_logo=None):
   current_logo = boot_logo_location.read_bytes() if boot_logo_location.is_file() else b""
   desired_logo = source_logo.read_bytes()
   if current_logo != desired_logo:
-    mount_options = _run_cmd(["findmnt", "-n", "-o", "OPTIONS", "/"], "Successfully retrieved mount options", "Failed to retrieve mount options")
-    _run_cmd(["sudo", "mount", "-o", "remount,rw", "/"], "Successfully remounted / as read-write", "Failed to remount /")
-    if _run_cmd(["sudo", "cp", source_logo, boot_logo_location], "Successfully replaced boot logo", "Failed to replace boot logo") is None:
-      return
-    _run_cmd(["sudo", "mount", "-o", f"remount,{mount_options}", "/"], "Successfully restored / mount options", "Failed to restore / mount options")
-  _write_boot_logo_cache(cache_key)
+    mount_options = run_cmd(["findmnt", "-n", "-o", "OPTIONS", "/"], "Successfully retrieved mount options", "Failed to retrieve mount options")
+    run_cmd(["sudo", "mount", "-o", "remount,rw", "/"], "Successfully remounted / as read-write", "Failed to remount /")
+    run_cmd(["sudo", "cp", source_logo, boot_logo_location], "Successfully replaced boot logo", "Failed to replace boot logo")
+    run_cmd(["sudo", "mount", "-o", f"remount,{mount_options}", "/"], "Successfully restored / mount options", "Failed to restore / mount options")
 
 
 def update_maps(now, params, params_memory, manual_update=False):
-  from cereal import messaging
-  from openpilot.starpilot.common.maps_catalog import normalize_schedule_value, sanitize_selected_locations_csv
-
   maps_selected_raw = params.get("MapsSelected")
   maps_selected = sanitize_selected_locations_csv(maps_selected_raw)
   if not maps_selected:
@@ -442,8 +217,7 @@ def update_maps(now, params, params_memory, manual_update=False):
   is_sunday = now.weekday() == 6
   schedule = normalize_schedule_value(params.get("PreferredSchedule"))
 
-  maps_path = _maps_path()
-  maps_downloaded = maps_path.exists() and any(path.is_file() for path in maps_path.rglob("*"))
+  maps_downloaded = MAPS_PATH.exists() and any(path.is_file() for path in MAPS_PATH.rglob("*"))
   if maps_downloaded and (schedule == 0 or (schedule == 1 and not is_sunday) or (schedule == 2 and not is_first)) and not manual_update:
     return
 
@@ -491,7 +265,7 @@ def update_maps(now, params, params_memory, manual_update=False):
 
 def update_openpilot(thread_manager, params):
   def update_available():
-    _run_cmd(["pkill", "-SIGUSR1", "-f", "system.updated.updated"], "Checking for updates...", "Failed to check for update...", report=False)
+    run_cmd(["pkill", "-SIGUSR1", "-f", "system.updated.updated"], "Checking for updates...", "Failed to check for update...", report=False)
 
     while params.get("UpdaterState") != "checking...":
       time.sleep(1)
@@ -505,7 +279,7 @@ def update_openpilot(thread_manager, params):
     while params.get_bool("IsOnroad") or thread_manager.is_thread_alive("lock_doors"):
       time.sleep(60)
 
-    _run_cmd(["pkill", "-SIGHUP", "-f", "system.updated.updated"], "Update available, downloading...", "Failed to download update...", report=False)
+    run_cmd(["pkill", "-SIGHUP", "-f", "system.updated.updated"], "Update available, downloading...", "Failed to download update...", report=False)
 
     while not params.get_bool("UpdateAvailable"):
       time.sleep(60)

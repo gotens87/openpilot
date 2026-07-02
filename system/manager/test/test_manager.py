@@ -6,16 +6,10 @@ from pathlib import Path
 import json
 
 from cereal import car
-from openpilot.common.params import Params, ParamKeyFlag
+from openpilot.common.params import Params
 import openpilot.system.manager.manager as manager
 from openpilot.system.manager.process import ensure_running
-from openpilot.system.manager.process import PythonProcess
-from openpilot.system.manager.process_config import (
-  managed_processes,
-  procs,
-  python_ui_enabled,
-  python_ui_process_start_method,
-)
+from openpilot.system.manager.process_config import managed_processes, procs
 from openpilot.system.hardware import HARDWARE
 
 os.environ['FAKEUPLOAD'] = "1"
@@ -25,28 +19,14 @@ BLACKLIST_PROCS = ['manage_athenad', 'pandad', 'pigeond']
 
 
 class FileBackedFakeParams:
-  def __init__(
-    self,
-    root: Path,
-    values: dict[str, object] | None = None,
-    keys: set[str] | None = None,
-    flags: dict[str, ParamKeyFlag] | None = None,
-  ):
+  def __init__(self, root: Path, values: dict[str, object] | None = None):
     self.root = root
-    self.keys = set(keys or [])
-    self.flags = dict(flags or {})
     self.root.mkdir(parents=True, exist_ok=True)
     for key, value in (values or {}).items():
       self.put(key, value)
 
-  def get_param_path(self, key=""):
+  def get_param_path(self, key):
     return str(self.root / (key.decode() if isinstance(key, bytes) else str(key)))
-
-  def all_keys(self):
-    return sorted(self.keys)
-
-  def get_key_flag(self, key):
-    return self.flags.get(key.decode() if isinstance(key, bytes) else str(key), ParamKeyFlag.PERSISTENT)
 
   def get(self, key):
     path = Path(self.get_param_path(key))
@@ -68,7 +48,6 @@ class FileBackedFakeParams:
     return str(value).strip().lower() in ("1", "true", "yes", "on")
 
   def put(self, key, value):
-    self.keys.add(key.decode() if isinstance(key, bytes) else str(key))
     path = Path(self.get_param_path(key))
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -116,83 +95,6 @@ class TestManager:
 
     assert names.index("the_galaxy") < ui_idx
     assert names.index("galaxy") < ui_idx
-
-  def test_python_ui_process_start_method_follows_ui_implementation(self):
-    assert python_ui_process_start_method(False, False) == "fork"
-    assert python_ui_process_start_method(True, False) == "subprocess"
-    assert python_ui_process_start_method(True, True) == "fork"
-
-  def test_python_ui_subprocess_is_scoped_to_ui(self):
-    ui_proc = managed_processes["ui"]
-    uses_python_ui = python_ui_enabled(HARDWARE.get_device_type())
-    subprocess_scoped_procs = {"the_galaxy", "updated"}
-
-    assert isinstance(ui_proc, PythonProcess) == uses_python_ui
-    if uses_python_ui:
-      assert ui_proc.start_method == python_ui_process_start_method(uses_python_ui)
-    for proc in procs:
-      if isinstance(proc, PythonProcess) and proc.name not in subprocess_scoped_procs | {"ui"}:
-        assert proc.start_method is None
-
-  def test_python_ui_env_override(self, monkeypatch):
-    monkeypatch.setenv("USE_RAYLIB_UI", "1")
-    assert python_ui_enabled("tici") is True
-
-    monkeypatch.setenv("USE_RAYLIB_UI", "0")
-    assert python_ui_enabled("mici") is False
-
-  def test_manager_startup_toggles_use_params_only(self, tmp_path, monkeypatch):
-    monkeypatch.setenv("GIT_BRANCH", "StarPilot")
-    params = FileBackedFakeParams(tmp_path / "params", {
-      "DeviceManagement": True,
-      "NoLogging": True,
-      "NoUploads": True,
-      "DisableOnroadUploads": True,
-      "SpeedLimitFiller": True,
-      "VisionSpeedLimitDetection": True,
-      "ForceOffroad": True,
-      "ForceOnroad": False,
-    })
-
-    toggles = manager._get_manager_startup_toggles(params)
-
-    assert toggles.no_logging is True
-    assert toggles.no_uploads is True
-    assert toggles.no_onroad_uploads is True
-    assert toggles.speed_limit_filler is True
-    assert toggles.vision_speed_limit_detection is True
-    assert toggles.force_offroad is True
-    assert toggles.force_onroad is False
-
-  def test_restore_missing_params_from_cache_preserves_live_values(self, tmp_path):
-    params = FileBackedFakeParams(
-      tmp_path / "params",
-      {"ExistingParam": "live"},
-      keys={"ExistingParam", "RestoredParam", "MissingParam", "TransientParam"},
-      flags={"TransientParam": ParamKeyFlag.CLEAR_ON_MANAGER_START},
-    )
-    params_cache = FileBackedFakeParams(
-      tmp_path / "cache",
-      {"ExistingParam": "cached", "RestoredParam": "restored", "TransientParam": "stale"},
-    )
-
-    restored_keys = manager._restore_missing_params_from_cache(params, params_cache)
-
-    assert restored_keys == ["RestoredParam"]
-    assert params.get("ExistingParam") == "live"
-    assert params.get("RestoredParam") == "restored"
-    assert params.get("MissingParam") is None
-    assert params.get("TransientParam") is None
-
-  def test_iter_param_store_keys_skips_lock_and_temp_files(self, tmp_path):
-    store_path = tmp_path / "params"
-    store_path.mkdir()
-    (store_path / "GoodParam").write_text("1")
-    (store_path / ".lock").write_text("")
-    (store_path / ".tmp_value_abc").write_text("stale")
-    (store_path / "nested").mkdir()
-
-    assert manager._iter_param_store_keys(store_path) == {"GoodParam"}
 
   def test_blacklisted_procs(self):
     # TODO: ensure there are blacklisted procs until we have a dedicated test

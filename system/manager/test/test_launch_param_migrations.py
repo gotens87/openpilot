@@ -50,9 +50,7 @@ class FileBackedFakeParams:
 
 
 def marker_path(tmp_path: Path, marker_name: str) -> Path:
-  path = tmp_path / MARKER_DIRNAME / "params" / marker_name
-  path.parent.mkdir(parents=True, exist_ok=True)
-  return path
+  return tmp_path / MARKER_DIRNAME / "params" / marker_name
 
 
 def test_apply_launch_param_migrations_sets_branch_defaults_once(tmp_path):

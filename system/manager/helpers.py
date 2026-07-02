@@ -1,11 +1,18 @@
+import errno
+import fcntl
 import os
+import sys
+import pathlib
+import shutil
+import signal
+import subprocess
+import tempfile
+import threading
+
+from openpilot.common.basedir import BASEDIR
+from openpilot.common.params import Params
 
 def unblock_stdout() -> None:
-  import errno
-  import fcntl
-  import signal
-  import sys
-
   # get a non-blocking stdout
   child_pid, child_pty = os.forkpty()
   if child_pid != 0:  # parent
@@ -44,30 +51,17 @@ def write_onroad_params(started, params):
 
 
 def save_bootlog():
-  import threading
+  # copy current params
+  tmp = tempfile.mkdtemp()
+  params_dirname = pathlib.Path(Params().get_param_path()).name
+  params_dir = os.path.join(tmp, params_dirname)
+  shutil.copytree(Params().get_param_path(), params_dir, dirs_exist_ok=True)
 
-  def fn():
-    import pathlib
-    import shutil
-    import subprocess
-    import tempfile
-
-    from openpilot.common.basedir import BASEDIR
-    from openpilot.common.params import Params
-
-    tmpdir = tempfile.mkdtemp()
+  def fn(tmpdir):
     env = os.environ.copy()
     env['PARAMS_COPY_PATH'] = tmpdir
-
-    try:
-      params = Params()
-      params_dirname = pathlib.Path(params.get_param_path()).name
-      params_dir = os.path.join(tmpdir, params_dirname)
-      shutil.copytree(params.get_param_path(), params_dir, dirs_exist_ok=True)
-      subprocess.call("./bootlog", cwd=os.path.join(BASEDIR, "system/loggerd"), env=env)
-    finally:
-      shutil.rmtree(tmpdir, ignore_errors=True)
-
-  t = threading.Thread(target=fn)
+    subprocess.call("./bootlog", cwd=os.path.join(BASEDIR, "system/loggerd"), env=env)
+    shutil.rmtree(tmpdir)
+  t = threading.Thread(target=fn, args=(tmp, ))
   t.daemon = True
   t.start()

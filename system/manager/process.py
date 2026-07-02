@@ -6,8 +6,6 @@ import struct
 import threading
 import time
 import subprocess
-import multiprocessing
-import sys
 from pathlib import Path
 from collections.abc import Callable, ValuesView
 from abc import ABC, abstractmethod
@@ -18,6 +16,7 @@ from setproctitle import setproctitle
 
 from cereal import car, log
 import cereal.messaging as messaging
+import openpilot.system.sentry as sentry
 from openpilot.common.basedir import BASEDIR
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
@@ -430,6 +429,7 @@ def launcher(proc: str, name: str, nice: int | None = None) -> None:
 
     # add daemon name tag to logs
     cloudlog.bind(daemon=name)
+    sentry.set_tag("daemon", name)
 
     # exec the process
     mod.main()
@@ -438,13 +438,7 @@ def launcher(proc: str, name: str, nice: int | None = None) -> None:
   except Exception:
     # can't install the crash handler because sys.excepthook doesn't play nice
     # with threads, so catch it here.
-    try:
-      import openpilot.system.sentry as sentry
-
-      sentry.set_tag("daemon", name)
-      sentry.capture_exception()
-    except Exception:
-      cloudlog.exception(f"failed to capture exception for child {proc}")
+    sentry.capture_exception()
     raise
 
 
@@ -467,33 +461,11 @@ def join_process(process: Process, timeout: float) -> None:
     time.sleep(0.001)
 
 
-class SubprocessProcess:
-  def __init__(self, proc: subprocess.Popen):
-    self._proc = proc
-
-  @property
-  def pid(self) -> int | None:
-    return self._proc.pid
-
-  @property
-  def exitcode(self) -> int | None:
-    return self._proc.poll()
-
-  def is_alive(self) -> bool:
-    return self._proc.poll() is None
-
-  def join(self, timeout: float | None = None) -> None:
-    try:
-      self._proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-      pass
-
-
 class ManagerProcess(ABC):
   daemon = False
   sigkill = False
   should_run: Callable[[bool, Params, car.CarParams, SimpleNamespace], bool]
-  proc: Process | SubprocessProcess | None = None
+  proc: Process | None = None
   enabled = True
   name = ""
 
@@ -643,7 +615,7 @@ class NativeProcess(ManagerProcess):
 
 
 class PythonProcess(ManagerProcess):
-  def __init__(self, name, module, should_run, enabled=True, sigkill=False, watchdog_max_dt=None, nice=None, start_method=None):
+  def __init__(self, name, module, should_run, enabled=True, sigkill=False, watchdog_max_dt=None, nice=None):
     self.name = name
     self.module = module
     self.should_run = should_run
@@ -651,7 +623,6 @@ class PythonProcess(ManagerProcess):
     self.sigkill = sigkill
     self.watchdog_max_dt = watchdog_max_dt
     self.nice = nice
-    self.start_method = start_method
     self.launcher = launcher
 
   def prepare(self) -> None:
@@ -682,20 +653,8 @@ class PythonProcess(ManagerProcess):
     name = self.name if "modeld" not in self.name else "MainProcess"
 
     cloudlog.info(f"starting python {self.module}")
-    start_method = self.start_method or os.getenv("PYTHON_PROCESS_START_METHOD", "fork")
-    if start_method == "subprocess":
-      launcher_code = (
-        "from openpilot.system.manager.process import launcher; "
-        f"launcher({self.module!r}, {self.name!r}, {self.nice!r})"
-      )
-      self.proc = SubprocessProcess(subprocess.Popen([sys.executable, "-c", launcher_code]))
-    else:
-      self.proc = multiprocessing.get_context(start_method).Process(
-        name=name,
-        target=self.launcher,
-        args=(self.module, self.name, self.nice),
-      )
-      self.proc.start()
+    self.proc = Process(name=name, target=self.launcher, args=(self.module, self.name, self.nice))
+    self.proc.start()
     self.last_watchdog_time = 0
     self.watchdog_seen = False
     self.shutting_down = False

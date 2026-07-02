@@ -1,9 +1,10 @@
 from pathlib import Path
 
 from openpilot.common.params import Params
-from openpilot.common.api import use_konik_server
 from openpilot.system.athena.registration import register
 from openpilot.system.hardware.hw import Paths
+
+from openpilot.starpilot.common.starpilot_utilities import use_konik_server
 
 
 def _cache_params_path() -> str:

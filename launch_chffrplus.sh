@@ -6,7 +6,6 @@ source "$DIR/launch_env.sh"
 
 export SP_BOOT_TIMING_LOG="${SP_BOOT_TIMING_LOG:-/tmp/starpilot_boot_timing.log}"
 : > "$SP_BOOT_TIMING_LOG" 2>/dev/null || true
-PREBUILT_COMPAT_CACHE="${SP_PREBUILT_COMPAT_CACHE:-/cache/starpilot_prebuilt_runtime_compatible_v1}"
 SP_LAUNCH_LAST_SECONDS=$SECONDS
 
 function sp_boot_timing_line {
@@ -19,54 +18,6 @@ function sp_launch_timing {
   local delta=$((now - SP_LAUNCH_LAST_SECONDS))
   sp_boot_timing_line "SP_BOOT_TIMING launch $1 +${delta}s total=${now}s"
   SP_LAUNCH_LAST_SECONDS=$now
-}
-
-function launch_param_migrations_needed {
-  local marker_dir="/data/params/.starpilot_param_migrations/${OPENPILOT_PREFIX:-d}"
-  [ ! -f "$marker_dir/.starpilot_launch_param_migrations_v2" ] && return 0
-  [ ! -f "$marker_dir/.starpilot_branch_defaults_migrations_v1" ] && return 0
-  [ ! -f "$marker_dir/.starpilot_acceleration_profile_default_v1" ] && return 0
-  return 1
-}
-
-function prebuilt_runtime_artifacts {
-  printf '%s\n' \
-    "$DIR/common/params_pyx.so" \
-    "$DIR/msgq/ipc_pyx.so" \
-    "$DIR/msgq/visionipc/visionipc_pyx.so" \
-    "$DIR/common/transformations/transformations.so" \
-    "$DIR/selfdrive/modeld/models/driving_tinygrad.pkl" \
-    "$DIR/selfdrive/modeld/models/dmonitoring_model_metadata.pkl" \
-    "$DIR/selfdrive/modeld/models/dmonitoring_model_tinygrad.pkl" \
-    "$DIR/selfdrive/modeld/models/dm_warp_1928x1208_tinygrad.pkl" \
-    "$DIR/selfdrive/modeld/models/dm_warp_1344x760_tinygrad.pkl" \
-    "$DIR/selfdrive/pandad/pandad_api_impl.so" \
-    "$DIR/selfdrive/controls/lib/lateral_mpc_lib/c_generated_code/acados_ocp_solver_pyx.so" \
-    "$DIR/selfdrive/controls/lib/lateral_mpc_lib/c_generated_code/libacados_ocp_solver_lat.so" \
-    "$DIR/selfdrive/controls/lib/longitudinal_mpc_lib/c_generated_code/acados_ocp_solver_pyx.so" \
-    "$DIR/selfdrive/controls/lib/longitudinal_mpc_lib/c_generated_code/libacados_ocp_solver_long.so" \
-    "$DIR/opendbc_repo/opendbc/dbc/gm_global_a_powertrain_generated.dbc"
-}
-
-function prebuilt_compat_cache_valid {
-  [ -f "$PREBUILT_COMPAT_CACHE" ] || return 1
-  [ -f "$DIR/prebuilt" ] || return 1
-  [ "$DIR/prebuilt" -nt "$PREBUILT_COMPAT_CACHE" ] && return 1
-
-  while IFS= read -r artifact; do
-    [ -e "$artifact" ] || return 1
-    [ "$artifact" -nt "$PREBUILT_COMPAT_CACHE" ] && return 1
-  done < <(prebuilt_runtime_artifacts)
-
-  return 0
-}
-
-function prebuilt_artifacts_present {
-  while IFS= read -r artifact; do
-    [ -e "$artifact" ] || return 1
-  done < <(prebuilt_runtime_artifacts)
-
-  return 0
 }
 
 function agnos_init {
@@ -175,15 +126,11 @@ function launch {
   # start manager
   cd system/manager
 
-  if launch_param_migrations_needed; then
-    sp_launch_timing "launch_param_migrations_start"
-    if ! python3 ./launch_param_migrations.py; then
-      echo "Launch param migrations failed; continuing boot."
-    fi
-    sp_launch_timing "launch_param_migrations_done"
-  else
-    sp_launch_timing "launch_param_migrations_skipped"
+  sp_launch_timing "launch_param_migrations_start"
+  if ! python3 ./launch_param_migrations.py; then
+    echo "Launch param migrations failed; continuing boot."
   fi
+  sp_launch_timing "launch_param_migrations_done"
 
   # Bootstrap runtime (e.g. /usr/comma after reset/uninstall) must go straight
   # to manager/setup flow. Do not run StarPilot prebuilt checks/builds here.
@@ -266,21 +213,9 @@ PY
   fi
 
   sp_launch_timing "prebuilt_decision_done"
-  if [ "$USE_PREBUILT" = "1" ] && [ -f $DIR/prebuilt ]; then
-    if prebuilt_compat_cache_valid; then
-      sp_launch_timing "prebuilt_compat_cache_hit"
-    elif [ "${SP_STRICT_PREBUILT_CHECK:-0}" != "1" ] && prebuilt_artifacts_present; then
-      sp_launch_timing "prebuilt_compat_fast_path"
-      mkdir -p "$(dirname "$PREBUILT_COMPAT_CACHE")" 2>/dev/null || true
-      touch "$PREBUILT_COMPAT_CACHE" 2>/dev/null || true
-    elif prebuilt_runtime_compatible; then
-      mkdir -p "$(dirname "$PREBUILT_COMPAT_CACHE")" 2>/dev/null || true
-      touch "$PREBUILT_COMPAT_CACHE" 2>/dev/null || true
-    else
-      echo "Prebuilt runtime artifacts are incompatible on this device; rebuilding locally."
-      rm -f "$PREBUILT_COMPAT_CACHE" 2>/dev/null || true
-      USE_PREBUILT=0
-    fi
+  if [ "$USE_PREBUILT" = "1" ] && [ -f $DIR/prebuilt ] && ! prebuilt_runtime_compatible; then
+    echo "Prebuilt runtime artifacts are incompatible on this device; rebuilding locally."
+    USE_PREBUILT=0
   fi
   sp_launch_timing "prebuilt_compat_done"
 

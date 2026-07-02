@@ -7,42 +7,10 @@ from types import SimpleNamespace
 from cereal import car
 from openpilot.common.params import Params
 from openpilot.system.hardware import HARDWARE, PC, TICI
+from openpilot.system.manager.process import PythonProcess, NativeProcess, DaemonProcess
 
 WEBCAM = os.getenv("USE_WEBCAM") is not None
 UI_WATCHDOG_MAX_DT = int(os.getenv("UI_WATCHDOG_MAX_DT", "10"))
-device_type = HARDWARE.get_device_type()
-
-
-def _env_bool(name: str) -> bool | None:
-  value = os.getenv(name)
-  if value is None:
-    return None
-  return value.strip().lower() in ("1", "true", "yes", "on")
-
-
-def python_ui_enabled(device_type: str) -> bool:
-  for env_name in ("USE_PYTHON_UI", "USE_RAYLIB_UI"):
-    enabled = _env_bool(env_name)
-    if enabled is not None:
-      return enabled
-
-  native_ui = _env_bool("USE_NATIVE_UI")
-  if native_ui is not None:
-    return not native_ui
-
-  return device_type not in ("tici", "tizi")
-
-
-def python_ui_process_start_method(uses_python_ui: bool, is_pc: bool = PC) -> str:
-  return "fork" if is_pc or not uses_python_ui else "subprocess"
-
-
-PYTHON_UI = python_ui_enabled(device_type)
-PYTHON_UI_PROCESS_START_METHOD = python_ui_process_start_method(PYTHON_UI)
-THE_GALAXY_PROCESS_START_METHOD = "fork" if PC else "subprocess"
-UPDATED_PROCESS_START_METHOD = "fork" if PC else "subprocess"
-
-from openpilot.system.manager.process import PythonProcess, NativeProcess, DaemonProcess
 
 def driverview(started: bool, params: Params, CP: car.CarParams, starpilot_toggles: SimpleNamespace) -> bool:
   return started or params.get_bool("IsDriverViewEnabled")
@@ -157,13 +125,7 @@ procs = [
   PythonProcess("radard", "selfdrive.controls.radard", only_onroad),
   PythonProcess("hardwared", "system.hardware.hardwared", always_run),
   PythonProcess("tombstoned", "system.tombstoned", always_run, enabled=not PC),
-  PythonProcess(
-    "updated",
-    "system.updated.updated",
-    always_run,
-    enabled=not PC,
-    start_method=UPDATED_PROCESS_START_METHOD,
-  ),
+  PythonProcess("updated", "system.updated.updated", always_run, enabled=not PC),
   PythonProcess("uploader", "system.loggerd.uploader", allow_uploads),
   PythonProcess("statsd", "system.statsd", always_run),
   PythonProcess("feedbackd", "selfdrive.ui.feedback.feedbackd", only_onroad),
@@ -177,26 +139,16 @@ procs = [
 
 # StarPilot variables
 procs += [
-  PythonProcess(
-    "the_galaxy",
-    "starpilot.system.the_galaxy.the_galaxy",
-    always_run,
-    nice=19,
-    start_method=THE_GALAXY_PROCESS_START_METHOD,
-  ),
+  PythonProcess("the_galaxy", "starpilot.system.the_galaxy.the_galaxy", always_run, nice=19),
   PythonProcess("galaxy", "starpilot.system.galaxy.galaxy", always_run, nice=19),
 ]
 
-if PYTHON_UI:
-  procs.append(PythonProcess(
-    "ui",
-    "selfdrive.ui.ui",
-    always_run,
-    watchdog_max_dt=UI_WATCHDOG_MAX_DT,
-    start_method=PYTHON_UI_PROCESS_START_METHOD,
-  ))
-else:
+device_type = HARDWARE.get_device_type()
+if device_type in ("tici", "tizi"):
   procs.append(NativeProcess("ui", "selfdrive/ui", ["./ui"], always_run, watchdog_max_dt=UI_WATCHDOG_MAX_DT))
+else:
+  # C4 (mici) runs the Python raylib UI path.
+  procs.append(PythonProcess("ui", "selfdrive.ui.ui", always_run, watchdog_max_dt=UI_WATCHDOG_MAX_DT))
 
 procs += [
   PythonProcess("device_syncd", "starpilot.system.device_syncd", always_run),

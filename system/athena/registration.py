@@ -1,55 +1,27 @@
 #!/usr/bin/env python3
 import time
+import json
+import jwt
+import random
+import string
+from typing import cast
 from pathlib import Path
 
+from datetime import datetime, timedelta, UTC
+from openpilot.common.api import api_get, get_key_pair
 from openpilot.common.params import Params
+from openpilot.common.spinner import Spinner
+from openpilot.selfdrive.selfdrived.alertmanager import set_offroad_alert
 from openpilot.system.hardware import HARDWARE, PC
 from openpilot.system.hardware.hw import Paths
 from openpilot.common.swaglog import cloudlog
 
 
 UNREGISTERED_DONGLE_ID = "UnregisteredDevice"
-OFFROAD_UNREGISTERED_ALERT = "Offroad_UnregisteredHardware"
-KEYS = {"id_rsa": "RS256",
-        "id_ecdsa": "ES256"}
-
-
-def api_get(*args, **kwargs):
-  from openpilot.common.api import api_get as api_get_impl
-
-  return api_get_impl(*args, **kwargs)
-
-
-def get_key_pair() -> tuple[str, str, str] | tuple[None, None, None]:
-  for key, algorithm in KEYS.items():
-    private_path = Path(Paths.persist_root()) / "comma" / key
-    public_path = Path(Paths.persist_root()) / "comma" / f"{key}.pub"
-    if private_path.is_file() and public_path.is_file():
-      return algorithm, private_path.read_text(), public_path.read_text()
-  return None, None, None
-
-
-def _has_key_pair() -> bool:
-  for key in KEYS:
-    private_path = Path(Paths.persist_root()) / "comma" / key
-    public_path = Path(Paths.persist_root()) / "comma" / f"{key}.pub"
-    if private_path.is_file() and public_path.is_file():
-      return True
-  return False
 
 def is_registered_device() -> bool:
   dongle = Params().get("DongleId")
   return dongle not in (None, UNREGISTERED_DONGLE_ID)
-
-
-def _set_registration_alert(params: Params, dongle_id: str | None) -> None:
-  show_alert = (dongle_id == UNREGISTERED_DONGLE_ID) and not PC
-  if show_alert:
-    from openpilot.selfdrive.selfdrived.alertmanager import set_offroad_alert
-
-    set_offroad_alert(OFFROAD_UNREGISTERED_ALERT, True)
-  else:
-    params.remove(OFFROAD_UNREGISTERED_ALERT)
 
 
 def register(show_spinner=False, register_konik=False) -> str | None:
@@ -70,18 +42,13 @@ def register(show_spinner=False, register_konik=False) -> str | None:
     with open(Paths.persist_root()+"/comma/dongle_id") as f:
       dongle_id = f.read().strip()
 
-  if not _has_key_pair() and not register_konik:
+  # Create registration token, in the future, this key will make JWTs directly
+  jwt_algo, private_key, public_key = get_key_pair()
+
+  if not public_key and not register_konik:
     dongle_id = UNREGISTERED_DONGLE_ID
     cloudlog.warning("missing public key")
   elif dongle_id is None or register_konik:
-    import json
-    import jwt
-    from datetime import datetime, timedelta, UTC
-    from openpilot.common.spinner import Spinner
-
-    # Create registration token, in the future, this key will make JWTs directly
-    jwt_algo, private_key, public_key = get_key_pair()
-
     if show_spinner:
       spinner = Spinner()
       spinner.update("registering device")
@@ -106,14 +73,14 @@ def register(show_spinner=False, register_konik=False) -> str | None:
     while True:
       try:
         register_token = jwt.encode({'register': True, 'exp': datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=1)},
-                                    private_key, algorithm=jwt_algo)
+                                    cast(str, private_key), algorithm=jwt_algo)
         cloudlog.info("getting pilotauth")
         resp = api_get("v2/pilotauth/", method='POST', timeout=15,
                        imei=imei1, imei2=imei2, serial=serial, public_key=public_key, register_token=register_token)
 
         if resp.status_code in (402, 403):
           cloudlog.info(f"Unable to register device, got {resp.status_code}")
-          dongle_id = UNREGISTERED_DONGLE_ID
+          dongle_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=16))
         else:
           dongleauth = json.loads(resp.text)
           dongle_id = dongleauth["dongle_id"]
@@ -132,7 +99,7 @@ def register(show_spinner=False, register_konik=False) -> str | None:
   if not register_konik and dongle_id != params.get("KonikDongleId"):
     params.put("DongleId", dongle_id)
     params.put("StockDongleId", dongle_id)
-    _set_registration_alert(params, dongle_id)
+    set_offroad_alert("Offroad_UnregisteredHardware", (dongle_id == UNREGISTERED_DONGLE_ID) and not PC)
   return dongle_id
 
 

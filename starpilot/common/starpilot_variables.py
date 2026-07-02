@@ -15,7 +15,6 @@ import numpy as np
 from cereal import car, custom, log
 from opendbc.car import gen_empty_fingerprint
 from opendbc.car.car_helpers import interfaces
-from opendbc.car.chrysler.values import JEEPS as CHRYSLER_JEEPS
 from opendbc.car.gm.values import CAR as GM_CAR, EV_CAR as GM_EV_CAR, GMFlags
 from opendbc.car.hyundai.values import CAR as HYUNDAI_CAR, EV_CAR as HYUNDAI_EV_CAR, HyundaiFlags, HyundaiStarPilotSafetyFlags
 from opendbc.car.interfaces import TORQUE_SUBSTITUTE_PATH, CarInterfaceBase, GearShifter
@@ -317,12 +316,7 @@ def default_ev_tuning_enabled(CP):
   ev_vehicle |= getattr(CP, "transmissionType", None) == car.CarParams.TransmissionType.direct
   return bool(ev_vehicle)
 
-def get_starpilot_toggles(sm=None):
-  if sm is None:
-    if not hasattr(get_starpilot_toggles, "_sm"):
-      get_starpilot_toggles._sm = messaging.SubMaster(["starpilotPlan"])
-    sm = get_starpilot_toggles._sm
-
+def get_starpilot_toggles(sm=messaging.SubMaster(["starpilotPlan"])):
   toggles_text = sm["starpilotPlan"].starpilotToggles
   if toggles_text:
     get_starpilot_toggles._last_toggles_text = toggles_text
@@ -1413,7 +1407,6 @@ class StarPilotVariables:
     toggle.volt_one_pedal_mode = self.get_value("VoltOnePedalMode", condition=gm_auto_hold_supported)
 
     toggle.volt_sng = self.get_value("VoltSNG", condition=toggle.car_model in LEGACY_VOLT_STOCK_ACC_CARS)
-    toggle.jeep_brake_hold = self.get_value("JeepBrakeHold", condition=toggle.car_model in CHRYSLER_JEEPS)
 
     process_starpilot_toggles.cache_clear()
     self.params_memory.remove("StarPilotTogglesUpdated")
