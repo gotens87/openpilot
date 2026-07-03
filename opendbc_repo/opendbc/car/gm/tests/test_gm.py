@@ -11,6 +11,7 @@ from opendbc.car.gm import gmcan
 from opendbc.car.gm.carstate import CarState as GMCarState, get_hard_cruise_buttons, update_auto_hold_drive_timers
 from opendbc.car.gm.carcontroller import (
   VisualAlert,
+  get_acc_dashboard_always_one,
   get_acc_dashboard_fcw_alert,
   get_volt_one_pedal_lift_brake,
   should_send_acc_dashboard_status,
@@ -556,9 +557,37 @@ class TestGMCarController:
 
     values = parser.vl["ASCMActiveCruiseControlStatus"]
 
+    assert values["ACCAlwaysOne"] == 1
+    assert values["ACCAlwaysOne2"] == 1
     assert values["ACCCruiseState"] == 2
     assert values["ACCCmdActive"] == 1
     assert values["FCWAlert"] == 2
+
+  def test_acc_dashboard_command_allows_camera_acc_zero_reserved_bits(self):
+    packer = CANPacker(DBC[CAR.CHEVROLET_TRAILBLAZER][Bus.pt])
+    parser = CANParser(DBC[CAR.CHEVROLET_TRAILBLAZER][Bus.pt], [("ASCMActiveCruiseControlStatus", 0)], 0)
+    msg = gmcan.create_acc_dashboard_command(
+      packer,
+      0,
+      True,
+      67.1875,
+      SimpleNamespace(leadDistanceBars=1, leadVisible=False),
+      0,
+      acc_always_one=0,
+    )
+
+    parser.update([0, [msg]])
+    values = parser.vl["ASCMActiveCruiseControlStatus"]
+
+    assert msg[1] == b"\x00\x02\x94\x33\x00\x00"
+    assert values["ACCAlwaysOne"] == 0
+    assert values["ACCAlwaysOne2"] == 0
+    assert values["ACCCruiseState"] == 2
+    assert values["ACCCmdActive"] == 1
+
+  def test_acc_dashboard_always_one_matches_camera_acc_platforms(self):
+    assert get_acc_dashboard_always_one(SimpleNamespace(carFingerprint=CAR.CHEVROLET_TRAILBLAZER)) == 0
+    assert get_acc_dashboard_always_one(SimpleNamespace(carFingerprint=CAR.CHEVROLET_BOLT_ACC_2022_2023)) == 1
 
   def test_acc_dashboard_command_uses_openpilot_hud_when_disengaged(self):
     packer = CANPacker(DBC[CAR.CHEVROLET_VOLT_ASCM][Bus.pt])

@@ -96,8 +96,7 @@ def create_steering_messages(packer, CP, CAN, enabled, lat_active, apply_torque,
                              lfa_base_values=None, lkas_base_values=None, lka_icon=None):
   if lka_icon is None:
     lka_icon = 2 if enabled else 1
-  ev9_angle_lkas_alt = str(CP.carFingerprint) == "KIA_EV9" and CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING and \
-    CP.flags & HyundaiFlags.CANFD_LKA_STEERING_ALT
+  angle_lkas_alt = CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING and CP.flags & HyundaiFlags.CANFD_LKA_STEERING_ALT
 
   control_values = {
     "LKA_MODE": 2,
@@ -130,26 +129,59 @@ def create_steering_messages(packer, CP, CAN, enabled, lat_active, apply_torque,
     lkas_values["ADAS_StrAnglReqVal"] = apply_angle
     lkas_values["LKAS_ANGLE_ACTIVE"] = 2 if lat_active else 1
     lkas_values["ADAS_ACIAnglTqRedcGainVal"] = apply_torque if lat_active else 0.0
-    if ev9_angle_lkas_alt:
-      lkas_values = {
-        "LKA_OptUsmSta": 0,
-        "LKA_RcgSta": 3 if lat_active else 0,
-        "LKA_LHLnWrnSta": 0,
-        "LKA_RHLnWrnSta": 0,
-        "LKA_HndsoffSnd": 0,
-        "LKA_StrSnd": 0,
-        "LKA_SysIndReq": 2 if enabled or lat_active else 1,
-        "StrTqReqVal": 0,
-        "ActToiSta": 0,
-        "ToiFltSta": 0,
-        "LFA_BUTTON": 0,
-        "LKA_SysWrn": 0,
-        "Damping_Gain": 100,
-        "LKAS_ANGLE_ACTIVE": 2 if lat_active else 1,
-        "LKA_UsmMod": 0,
-        "ADAS_StrAnglReqVal": apply_angle,
-        "ADAS_ACIAnglTqRedcGainVal": apply_torque if lat_active else 0.0,
-      }
+    if angle_lkas_alt:
+      if lat_active:
+        lkas_values = {
+          "LKA_OptUsmSta": 0,
+          "LKA_RcgSta": 3,
+          "LKA_LHLnWrnSta": 0,
+          "LKA_RHLnWrnSta": 0,
+          "LKA_HndsoffSnd": 0,
+          "LKA_StrSnd": 0,
+          "LKA_SysIndReq": 2,
+          "StrTqReqVal": 0,
+          "ActToiSta": 0,
+          "ToiFltSta": 0,
+          "LFA_BUTTON": 0,
+          "LKA_SysWrn": 0,
+          "Damping_Gain": 100,
+          "LKAS_ANGLE_ACTIVE": 2,
+          "LKA_UsmMod": 0,
+          "ADAS_StrAnglReqVal": apply_angle,
+          "ADAS_ACIAnglTqRedcGainVal": apply_torque,
+        }
+      else:
+        lkas_values.update({
+          "LKA_OptUsmSta": 0,
+          "LKA_MODE": 0,
+          "LKA_RcgSta": 0,
+          "LKA_AVAILABLE": 0,
+          "LKA_LHLnWrnSta": 0,
+          "LKA_RHLnWrnSta": 0,
+          "LKA_WARNING": 0,
+          "LKA_HndsoffSnd": 0,
+          "LKA_StrSnd": 2,
+          "LKA_SysIndReq": 1,
+          "LKA_ICON": 1,
+          "FCA_SYSWARN": 0,
+          "StrTqReqVal": 0,
+          "TORQUE_REQUEST": 0,
+          "ActToiSta": 0,
+          "STEER_REQ": 0,
+          "ToiFltSta": 0,
+          "LFA_BUTTON": 0,
+          "LKA_SysWrn": 0,
+          "LKA_ASSIST": 0,
+          "Damping_Gain": 0,
+          "STEER_MODE": 0,
+          "NEW_SIGNAL_2": 0,
+          "LKAS_ANGLE_ACTIVE": 1,
+          "LKA_UsmMod": 0,
+          "HAS_LANE_SAFETY": 0,
+          "ADAS_ACIAnglTqRedcGainVal": 0.0,
+          "DAMP_FACTOR": 0,
+        })
+        lkas_values["ADAS_StrAnglReqVal"] = lkas_base_values.get("ADAS_StrAnglReqVal", apply_angle) if lkas_base_values else apply_angle
 
   ret = []
   if CP.flags & HyundaiFlags.CANFD_LKA_STEERING:

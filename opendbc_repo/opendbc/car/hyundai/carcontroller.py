@@ -651,22 +651,30 @@ class CarController(CarControllerBase):
 
     # steering control
     preserve_stock_lkas = bool(self.CP.flags & HyundaiFlags.CANFD_LKA_STEERING) and not self.long_active_ecu
+    angle_lkas_alt = bool(self.CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING and
+                          self.CP.flags & HyundaiFlags.CANFD_LKA_STEERING_ALT)
     steering_msg_active = apply_steer_req
-    if self.CP.carFingerprint == CAR.KIA_EV9 and self.CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING:
-      # EV9 faults if the angle-steering status drops inactive during torque limiting.
+    if angle_lkas_alt:
+      # Angle LKAS_ALT cars fault if the angle-steering status drops inactive during torque limiting.
       # Hold the angle status active while lateral is active; VM/safety limits handle actuation.
       steering_msg_active = CC.latActive
 
-    can_sends.extend(hyundaicanfd.create_steering_messages(self.packer, self.CP, self.CAN, CC.enabled,
-                                                           steering_msg_active, apply_torque, apply_angle,
-                                                           CS.stock_lfa_msg,
-                                                           CS.stock_lkas_msg if preserve_stock_lkas else None,
-                                                           lka_icon=lka_icon))
+    gear = getattr(getattr(CS, "out", None), "gearShifter", None)
+    drive_gear = gear == structs.CarState.GearShifter.drive
+    if angle_lkas_alt:
+      steering_msg_active = bool(steering_msg_active and drive_gear)
+    forward_stock_lkas = angle_lkas_alt and not (drive_gear and (CC.latActive or CC.enabled))
+    if not forward_stock_lkas:
+      can_sends.extend(hyundaicanfd.create_steering_messages(self.packer, self.CP, self.CAN, CC.enabled,
+                                                             steering_msg_active, apply_torque, apply_angle,
+                                                             CS.stock_lfa_msg,
+                                                             CS.stock_lkas_msg if preserve_stock_lkas else None,
+                                                             lka_icon=lka_icon))
 
     # prevent LFA from activating on LKA steering cars by sending "no lane lines detected" to ADAS ECU
     suppress_lfa = bool(lka_steering)
-    if self.CP.carFingerprint == CAR.KIA_EV9 and self.CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING:
-      suppress_lfa = bool(lka_steering and CC.latActive)
+    if angle_lkas_alt:
+      suppress_lfa = bool(lka_steering and CC.latActive and drive_gear)
     if self.frame % 5 == 0 and suppress_lfa:
       can_sends.append(hyundaicanfd.create_suppress_lfa(self.packer, self.CAN, CS.lfa_block_msg,
                                                         self.CP.flags & HyundaiFlags.CANFD_LKA_STEERING_ALT))

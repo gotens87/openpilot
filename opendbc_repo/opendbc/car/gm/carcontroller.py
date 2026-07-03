@@ -66,6 +66,13 @@ TRUCK_LONG_SMOOTH_CARS = {
   CAR.CHEVROLET_SILVERADO,
   CAR.CHEVROLET_SILVERADO_CC,
 }
+ACC_DASHBOARD_ZERO_RESERVED_CARS = {
+  CAR.CHEVROLET_BLAZER,
+  CAR.CHEVROLET_EQUINOX,
+  CAR.CHEVROLET_SILVERADO,
+  CAR.CHEVROLET_TRAILBLAZER,
+  CAR.CHEVROLET_TRAX,
+}
 
 
 def get_stock_cc_active_for_cancel(CP, CS):
@@ -118,6 +125,10 @@ def get_acc_dashboard_status_active(CP, CC):
     return True
 
   return CP.carFingerprint == CAR.BUICK_LACROSSE_ASCM and CC.latActive
+
+
+def get_acc_dashboard_always_one(CP):
+  return 0 if CP.carFingerprint in ACC_DASHBOARD_ZERO_RESERVED_CARS else 1
 
 
 def get_acc_dashboard_fcw_alert(hud_alert, CS):
@@ -1111,8 +1122,10 @@ class CarController(CarControllerBase):
         if should_send_acc_dashboard_status(self.CP, dash_speed_spoof_active):
           fcw_alert = get_acc_dashboard_fcw_alert(hud_alert, CS)
           acc_dashboard_status_active = get_acc_dashboard_status_active(self.CP, CC)
+          acc_dashboard_always_one = get_acc_dashboard_always_one(self.CP)
           can_sends.append(gmcan.create_acc_dashboard_command(self.packer_pt, CanBus.POWERTRAIN, acc_dashboard_status_active,
-                                                              hud_v_cruise * CV.MS_TO_KPH, hud_control, fcw_alert))
+                                                              hud_v_cruise * CV.MS_TO_KPH, hud_control, fcw_alert,
+                                                              acc_dashboard_always_one))
 
       # Radar needs to know current speed and yaw rate (50hz),
       # and that ADAS is alive (10hz)
