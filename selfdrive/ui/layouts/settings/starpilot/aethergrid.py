@@ -3280,7 +3280,7 @@ class AetherSettingsView(PanelManagerView):
           row_rect = rl.Rectangle(rect.x + col_w + self.COLUMN_GAP, y + j * right_section.row_height, col_w, right_section.row_height)
           self._draw_row(row_rect, row, is_last=(j == len(right_rows) - 1))
         y += max(section_h, right_h) + SECTION_GAP
-        i += 1
+        i += 2
       else:
         y = self._draw_section(y, rect.x, width, section, visible_rows)
         y += SECTION_GAP

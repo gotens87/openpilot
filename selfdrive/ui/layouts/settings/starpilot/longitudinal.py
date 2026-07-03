@@ -34,7 +34,7 @@ from openpilot.starpilot.common.accel_profile import (
   normalize_acceleration_profile,
   normalize_deceleration_profile,
 )
-from openpilot.starpilot.common.experimental_state import sync_persist_experimental_state
+from openpilot.starpilot.common.experimental_state import sync_persist_experimental_state, sync_persist_chill_state
 
 
 PANEL_STYLE = DEFAULT_PANEL_STYLE
@@ -66,8 +66,8 @@ class AdaptiveSpeedView(Widget):
     self._child(self._grid)
 
     self._grid.add_tile(HubTile(
-      title=tr("Conditional Experimental"),
-      desc=tr("Configure triggers and threshold speeds for automated Experimental Mode switching."),
+      title=tr("Conditional Drive Mode"),
+      desc=tr("Configure automated switching between Experimental and Chill Modes based on set conditions."),
       icon_key="steering",
       on_click=lambda: controller._navigate_to("ce"),
       bg_color="#8B5CF6",
@@ -234,6 +234,7 @@ class StarPilotLongitudinalLayout(_SettingsPage):
   def _build_view(self):
     ol = lambda: starpilot_state.car_state.hasOpenpilotLongitudinal
     ce_on = lambda: self._params.get_bool("ConditionalExperimental")
+    cc_on = lambda: self._params.get_bool("ConditionalChill")
     ce_lead = lambda: ce_on() and self._params.get_bool("CELead")
     csc_on = lambda: self._params.get_bool("CurveSpeedController")
     confirmation_on = lambda: self._params.get_bool("SLCConfirmation")
@@ -404,73 +405,111 @@ class StarPilotLongitudinalLayout(_SettingsPage):
         on_click=lambda k=key: self._show_slider(k, *self._speed_range(), unit=self._speed_unit()),
       ))
 
-    # ── 4. Adaptive Speed Controls Rows (CES + CSC) ──
+    # ── 4. Adaptive Speed Controls Rows (CES + CSC + CCM) ──
     self._conditional_experimental_rows = [
       SettingRow("PersistExp", "toggle", tr_noop("Persist Experimental State"),
-                 subtitle=tr_noop("Keep override through reboots until manually cleared."),
+                 subtitle=tr_noop("Keep your manual Conditional Experimental override through reboots until manually cleared."),
                  get_state=lambda: self._params.get_bool("PersistExperimentalState"),
                  set_state=self._set_persist_experimental_state,
                  visible=ce_on),
       SettingRow("CESpeed", "value", tr_noop("Below Speed"),
-                 subtitle="",
-                 get_value=lambda: f"{self._params.get_int('CESpeed')} mph",
-                 on_click=lambda: self._show_slider("CESpeed", 0, 100, unit=" mph"),
+                 subtitle=tr_noop("Switch to Experimental Mode when driving below this speed without a lead to handle low-speed situations smoothly."),
+                 get_value=lambda: f"{self._params.get_int('CESpeed')}{self._speed_unit()}",
+                 on_click=lambda: self._show_slider("CESpeed", 0, 150 if self._is_metric() else 100, unit=self._speed_unit()),
                  visible=ce_on),
-      SettingRow("CECurves", "toggle", tr_noop("Curves"),
-                 subtitle="",
+      SettingRow("CESpeedLead", "value", tr_noop("Speed With Lead"),
+                 subtitle=tr_noop("Switch to Experimental Mode when driving below this speed with a lead to handle low-speed situations smoothly."),
+                 get_value=lambda: f"{self._params.get_int('CESpeedLead')}{self._speed_unit()}",
+                 on_click=lambda: self._show_slider("CESpeedLead", 0, 150 if self._is_metric() else 100, unit=self._speed_unit()),
+                 visible=ce_on),
+      SettingRow("CECurves", "toggle", tr_noop("Curve Detected Ahead"),
+                 subtitle=tr_noop("Switch to Experimental Mode when a curve is detected to allow the model to select an appropriate speed."),
                  get_state=lambda: self._params.get_bool("CECurves"),
                  set_state=lambda s: self._params.put_bool("CECurves", s),
                  visible=ce_on),
-      SettingRow("CECurvesLead", "toggle", tr_noop("Curves Lead"),
-                 subtitle="",
+      SettingRow("CECurvesLead", "toggle", tr_noop("Curves With Lead"),
+                 subtitle=tr_noop("Switch to Experimental Mode on curves even when following a lead vehicle."),
                  get_state=lambda: self._params.get_bool("CECurvesLead"),
                  set_state=lambda s: self._params.put_bool("CECurvesLead", s),
                  visible=lambda: ce_on() and self._params.get_bool("CECurves")),
-      SettingRow("CEStopLights", "toggle", tr_noop("Stop Lights"),
-                 subtitle="",
+      SettingRow("CEStopLights", "toggle", tr_noop("Detected Stop Lights/Signs"),
+                 subtitle=tr_noop("Switch to Experimental Mode whenever the driving model predicts a stop or detects a stop sign."),
                  get_state=lambda: self._params.get_bool("CEStopLights"),
                  set_state=lambda s: self._params.put_bool("CEStopLights", s),
                  visible=ce_on),
-      SettingRow("CELead", "toggle", tr_noop("Lead Detected"),
-                 subtitle="",
+      SettingRow("CEModelStopTime", "value", tr_noop("Predicted Stop In"),
+                 subtitle=tr_noop("Switch to Experimental Mode when openpilot predicts a stop within the set time."),
+                 get_value=lambda: tr("Off") if self._params.get_int('CEModelStopTime') == 0 else f"{self._params.get_int('CEModelStopTime')}s",
+                 on_click=lambda: self._show_slider("CEModelStopTime", 0, 10, unit="s"),
+                 visible=lambda: ce_on() and self._params.get_bool("CEStopLights")),
+      SettingRow("CELead", "toggle", tr_noop("Lead Detected Ahead"),
+                 subtitle=tr_noop("Switch to Experimental Mode when a slower or stopped vehicle is detected ahead."),
                  get_state=lambda: self._params.get_bool("CELead"),
                  set_state=lambda s: self._params.put_bool("CELead", s),
                  visible=ce_on),
       SettingRow("CESlowerLead", "toggle", tr_noop("Slower Lead"),
-                 subtitle="",
+                 subtitle=tr_noop("Switch to Experimental Mode specifically when a slower lead vehicle is detected."),
                  get_state=lambda: self._params.get_bool("CESlowerLead"),
                  set_state=lambda s: self._params.put_bool("CESlowerLead", s),
                  visible=ce_lead),
       SettingRow("CEStoppedLead", "toggle", tr_noop("Stopped Lead"),
-                 subtitle="",
+                 subtitle=tr_noop("Switch to Experimental Mode specifically when a stopped lead vehicle is detected."),
                  get_state=lambda: self._params.get_bool("CEStoppedLead"),
                  set_state=lambda s: self._params.put_bool("CEStoppedLead", s),
                  visible=ce_lead),
-      SettingRow("CEModelStopTime", "value", tr_noop("Predicted Stop"),
-                 subtitle="",
-                 get_value=lambda: f"{self._params.get_int('CEModelStopTime')}s",
-                 on_click=lambda: self._show_slider("CEModelStopTime", 0, 10, unit="s"),
-                 visible=ce_on),
-      SettingRow("CESignalSpeed", "value", tr_noop("Signal Below"),
-                 subtitle="",
-                 get_value=lambda: f"{self._params.get_int('CESignalSpeed')} mph",
-                 on_click=lambda: self._show_slider("CESignalSpeed", 0, 100, unit=" mph"),
-                 visible=ce_on),
-      SettingRow("CESpeedLead", "value", tr_noop("Speed Lead"),
-                 subtitle="",
-                 get_value=lambda: f"{self._params.get_int('CESpeedLead')} mph",
-                 on_click=lambda: self._show_slider("CESpeedLead", 0, 100, unit=" mph"),
+      SettingRow("CESignalSpeed", "value", tr_noop("Turn Signal Below"),
+                 subtitle=tr_noop("Switch to Experimental Mode when turn signal is on below this speed for smoother turns."),
+                 get_value=lambda: tr("Off") if self._params.get_int('CESignalSpeed') == 0 else f"{self._params.get_int('CESignalSpeed')}{self._speed_unit()}",
+                 on_click=lambda: self._show_slider("CESignalSpeed", 0, 150 if self._is_metric() else 100, unit=self._speed_unit()),
                  visible=ce_on),
       SettingRow("CESignalLaneDetection", "toggle", tr_noop("Signal Lane Detection"),
-                 subtitle="",
+                 subtitle=tr_noop("Do not trigger turn signal Experimental Mode if clear lane lines are detected."),
                  get_state=lambda: self._params.get_bool("CESignalLaneDetection"),
                  set_state=lambda s: self._params.put_bool("CESignalLaneDetection", s),
                  visible=lambda: ce_on() and self._params.get_int("CESignalSpeed") > 0),
       SettingRow("ShowCEMStatus", "toggle", tr_noop("Status Widget"),
-                 subtitle="",
+                 subtitle=tr_noop("Show which condition triggered Experimental Mode on the driving screen."),
                  get_state=lambda: self._params.get_bool("ShowCEMStatus"),
                  set_state=lambda s: self._params.put_bool("ShowCEMStatus", s),
                  visible=ce_on),
+    ]
+
+    self._conditional_chill_rows = [
+      SettingRow("PersistChill", "toggle", tr_noop("Persist Chill State"),
+                 subtitle=tr_noop("Keep your manual Conditional Chill override through reboots until manually cleared."),
+                 get_state=lambda: self._params.get_bool("PersistChillState"),
+                 set_state=self._set_persist_chill_state,
+                 visible=cc_on),
+      SettingRow("CCMSpeed", "value", tr_noop("Above Speed"),
+                 subtitle=tr_noop("Switch to Chill Mode on open roads above this speed when no lead is detected and the car is below the set speed."),
+                 get_value=lambda: f"{self._params.get_int('CCMSpeed')}{self._speed_unit()}",
+                 on_click=lambda: self._show_slider("CCMSpeed", 0, 150 if self._is_metric() else 100, unit=self._speed_unit()),
+                 visible=cc_on),
+      SettingRow("CCMSpeedLead", "value", tr_noop("Speed With Lead"),
+                 subtitle=tr_noop("Switch to Chill Mode when a stable lead is being followed above this speed."),
+                 get_value=lambda: f"{self._params.get_int('CCMSpeedLead')}{self._speed_unit()}",
+                 on_click=lambda: self._show_slider("CCMSpeedLead", 0, 150 if self._is_metric() else 100, unit=self._speed_unit()),
+                 visible=cc_on),
+      SettingRow("CCMSetSpeedMargin", "value", tr_noop("Set Speed Margin"),
+                 subtitle=tr_noop("How far below the set speed the car must be before open-road Conditional Chill can engage."),
+                 get_value=lambda: f"{self._params.get_int('CCMSetSpeedMargin')}{self._speed_unit()}",
+                 on_click=lambda: self._show_slider("CCMSetSpeedMargin", 0, 30 if self._is_metric() else 15, unit=self._speed_unit()),
+                 visible=cc_on),
+      SettingRow("CCMLead", "toggle", tr_noop("Stable Lead Ahead"),
+                 subtitle=tr_noop("Switch to Chill Mode when following a steady, well-tracked lead vehicle at cruising speeds."),
+                 get_state=lambda: self._params.get_bool("CCMLead"),
+                 set_state=lambda s: self._params.put_bool("CCMLead", s),
+                 visible=cc_on),
+      SettingRow("CCMLaunchAssist", "toggle", tr_noop("Launch Assist"),
+                 subtitle=tr_noop("Temporarily switch to Chill Mode when starting from a stop if the planner is allowing throttle. Useful for sluggish takeoffs."),
+                 get_state=lambda: self._params.get_bool("CCMLaunchAssist"),
+                 set_state=lambda s: self._params.put_bool("CCMLaunchAssist", s),
+                 visible=cc_on),
+      SettingRow("ShowCCMStatus", "toggle", tr_noop("Status Widget"),
+                 subtitle=tr_noop("Show which condition triggered Chill Mode on the driving screen."),
+                 get_state=lambda: self._params.get_bool("ShowCCMStatus"),
+                 set_state=lambda s: self._params.put_bool("ShowCCMStatus", s),
+                 visible=cc_on),
     ]
 
     self._curve_speed_controller_rows = [
@@ -623,21 +662,53 @@ class StarPilotLongitudinalLayout(_SettingsPage):
     pt_daily = self._make_parent("QOLLongitudinal", "Quality of Life")
     pt_slc = self._make_parent("SpeedLimitController", "Speed Limit Controller",
       "Limit the car's maximum speed to the current speed limit.")
-    pt_ce = self._make_parent("ConditionalExperimental", "Conditional Experimental",
-      "Configure triggers and threshold speeds for automated Experimental Mode switching.")
     pt_csc = self._make_parent("CurveSpeedController", "Curve Speed Controller",
       "Configure speed control on curves and reset collected calibration data.")
 
     ce_rows = self._conditional_experimental_rows
+    cc_rows = self._conditional_chill_rows
+    cond_mode_row = SettingRow(
+      "ConditionalDriveMode", "value", tr_noop("Conditional Drive Mode"),
+      subtitle=tr_noop("Select your preferred conditional driving mode: OFF, Conditional Experimental, or Conditional Chill."),
+      get_value=self._get_conditional_mode_label,
+      on_click=self._show_conditional_mode_selector
+    )
     self._sub_panels["ce"] = AetherSettingsView(
       self,
       [
-        SettingSection(tr("Conditional Experimental"), [x for x in ce_rows if x.type != "toggle"], column_pair="1"),
-        SettingSection(tr("Conditional Experimental"), [x for x in ce_rows if x.type == "toggle"], column_pair="1"),
+        SettingSection(
+          tr("Conditional Drive Mode"),
+          [cond_mode_row],
+          visible=lambda: not ce_on() and not cc_on()
+        ),
+        SettingSection(
+          tr("Conditional Experimental Settings"),
+          [cond_mode_row] + [x for x in ce_rows if x.type != "toggle"],
+          visible=ce_on,
+          column_pair="cem"
+        ),
+        SettingSection(
+          tr("Conditional Experimental Triggers"),
+          [x for x in ce_rows if x.type == "toggle"],
+          visible=ce_on,
+          column_pair="cem"
+        ),
+        SettingSection(
+          tr("Conditional Chill Settings"),
+          [cond_mode_row] + [x for x in cc_rows if x.type != "toggle"],
+          visible=cc_on,
+          column_pair="ccm"
+        ),
+        SettingSection(
+          tr("Conditional Chill Triggers"),
+          [x for x in cc_rows if x.type == "toggle"],
+          visible=cc_on,
+          column_pair="ccm"
+        ),
       ],
-      header_title=tr("Conditional Experimental"),
-      header_subtitle=tr("Configure triggers and threshold speeds for automated Experimental Mode switching."),
-      parent_toggle=pt_ce,
+      header_title=tr("Conditional Drive Mode"),
+      header_subtitle=tr("Configure automated switching between Experimental and Chill Modes based on set conditions."),
+      parent_toggle=None,
       panel_style=PANEL_STYLE,
     )
 
@@ -769,6 +840,36 @@ class StarPilotLongitudinalLayout(_SettingsPage):
 
   def _set_persist_experimental_state(self, state: bool):
     sync_persist_experimental_state(self._params, self._params_memory, state)
+
+  def _set_persist_chill_state(self, state: bool):
+    sync_persist_chill_state(self._params, self._params_memory, state)
+
+  def _get_conditional_mode_label(self) -> str:
+    if self._params.get_bool("ConditionalExperimental"):
+      return tr("Conditional Experimental")
+    elif self._params.get_bool("ConditionalChill"):
+      return tr("Conditional Chill")
+    else:
+      return tr("OFF")
+
+  def _show_conditional_mode_selector(self):
+    options = ["OFF", "Conditional Experimental", "Conditional Chill"]
+    current = self._get_conditional_mode_label()
+
+    def on_select(res):
+      if res == DialogResult.CONFIRM and dialog.selection:
+        if dialog.selection == "OFF":
+          self._params.put_bool("ConditionalExperimental", False)
+          self._params.put_bool("ConditionalChill", False)
+        elif dialog.selection == "Conditional Experimental":
+          self._params.put_bool("ConditionalExperimental", True)
+          self._params.put_bool("ConditionalChill", False)
+        elif dialog.selection == "Conditional Chill":
+          self._params.put_bool("ConditionalExperimental", False)
+          self._params.put_bool("ConditionalChill", True)
+
+    dialog = MultiOptionDialog(tr("Conditional Drive Mode"), options, current, callback=on_select)
+    gui_app.push_widget(dialog)
 
   def _reset_curve_data(self):
     def on_close(res):

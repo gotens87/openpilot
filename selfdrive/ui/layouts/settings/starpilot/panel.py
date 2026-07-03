@@ -58,22 +58,32 @@ class FrameCachedParams:
   def put(self, key, val, **kwargs):
     self._params.put(key, val, **kwargs)
     self._cache.clear()
+    from openpilot.starpilot.common.starpilot_variables import update_starpilot_toggles
+    update_starpilot_toggles()
 
   def put_bool(self, key, val, **kwargs):
     self._params.put_bool(key, val, **kwargs)
     self._cache.clear()
+    from openpilot.starpilot.common.starpilot_variables import update_starpilot_toggles
+    update_starpilot_toggles()
 
   def put_int(self, key, val, **kwargs):
     self._params.put_int(key, val, **kwargs)
     self._cache.clear()
+    from openpilot.starpilot.common.starpilot_variables import update_starpilot_toggles
+    update_starpilot_toggles()
 
   def put_float(self, key, val, **kwargs):
     self._params.put_float(key, val, **kwargs)
     self._cache.clear()
+    from openpilot.starpilot.common.starpilot_variables import update_starpilot_toggles
+    update_starpilot_toggles()
 
   def remove(self, key):
     self._params.remove(key)
     self._cache.clear()
+    from openpilot.starpilot.common.starpilot_variables import update_starpilot_toggles
+    update_starpilot_toggles()
 
   def __getattr__(self, name):
     return getattr(self._params, name)
