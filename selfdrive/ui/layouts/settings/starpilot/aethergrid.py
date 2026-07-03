@@ -1189,7 +1189,7 @@ class BreadcrumbController:
 
     mouse_pos = gui_app.last_mouse_event.pos
 
-    has_overflow = alpha > FADE_THRESH and len(path) > 4
+    has_overflow = alpha > FADE_THRESH and len(path) > 6
 
     if has_overflow and alpha >= EXPAND_THRESH:
       display_path = list(path)
@@ -1200,7 +1200,7 @@ class BreadcrumbController:
       overflow_alpha = 1.0 - (alpha / EXPAND_THRESH)
       middle_alpha = 0.0
     else:
-      display_path = list(path) if len(path) <= 4 else [path[0], ("...", "action:breadcrumb_history"), path[-1]]
+      display_path = list(path) if len(path) <= 6 else [path[0], ("...", "action:breadcrumb_history"), path[-1]]
       overflow_alpha = 1.0
       middle_alpha = 0.0
 
