@@ -1903,7 +1903,24 @@
         "description": "On-screen gas and brake indicators.\n\nDynamic: Opacity changes according to how much openpilot is accelerating or braking\nStatic: Full when active, dim when not",
         "data_type": "bool",
         "ui_type": "toggle",
+        "is_parent_toggle": true,
         "parent_key": "CustomUI"
+      },
+      {
+        "key": "DynamicPedalsOnUI",
+        "label": "Dynamic",
+        "description": "Fade the gas and brake indicators based on how much openpilot is accelerating or braking.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "PedalsOnUI"
+      },
+      {
+        "key": "StaticPedalsOnUI",
+        "label": "Static",
+        "description": "Show full-strength gas and brake indicators when active, and dim them when inactive.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "PedalsOnUI"
       },
       {
         "key": "RotatingWheel",
