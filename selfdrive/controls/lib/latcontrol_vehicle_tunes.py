@@ -434,6 +434,13 @@ IONIQ_5_CENTER_TAPER_LAT = 0.16
 IONIQ_5_CENTER_TAPER_LAT_WIDTH = 0.04
 IONIQ_5_CENTER_TAPER_SPEED = 15.0
 IONIQ_5_CENTER_TAPER_SPEED_WIDTH = 2.2
+IONIQ_5_SUSTAINED_TURN_IN_FF_BOOST_LEFT = 0.10
+IONIQ_5_SUSTAINED_TURN_IN_FF_BOOST_RIGHT = 0.16
+IONIQ_5_SUSTAINED_TURN_IN_FF_SPEED = 13.5
+IONIQ_5_SUSTAINED_TURN_IN_FF_SPEED_WIDTH = 1.8
+IONIQ_5_SUSTAINED_TURN_IN_FF_LAT_START = 1.10
+IONIQ_5_SUSTAINED_TURN_IN_FF_LAT_END = 3.60
+IONIQ_5_SUSTAINED_TURN_IN_FF_LAT_WIDTH = 0.30
 
 IONIQ_EV_OLD_BASE_LAT_ACCEL_FACTOR_MULT = 1.16
 IONIQ_EV_OLD_FF_REDUCTION_LEFT = 0.16
@@ -1633,13 +1640,26 @@ def get_ioniq_5_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: flo
   turn_in_weight = max(phase, 0.0)
   unwind_weight = max(-phase, 0.0)
   low_speed_factor = _ioniq_5_low_speed_factor(v_ego)
+  abs_lateral_accel = abs(desired_lateral_accel)
 
   base_reduction = _ioniq_5_side_value(desired_lateral_accel, IONIQ_5_FF_REDUCTION_LEFT, IONIQ_5_FF_REDUCTION_RIGHT) * envelope
   turn_in_boost = 1.0 + (_ioniq_5_side_value(desired_lateral_accel, IONIQ_5_TURN_IN_BOOST_LEFT, IONIQ_5_TURN_IN_BOOST_RIGHT) *
                           turn_in_weight * (0.35 + 0.65 * low_speed_factor))
   unwind_taper = 1.0 - (_ioniq_5_side_value(desired_lateral_accel, IONIQ_5_UNWIND_TAPER_LEFT, IONIQ_5_UNWIND_TAPER_RIGHT) *
                          unwind_weight * (0.35 + 0.65 * low_speed_factor))
-  return (1.0 - base_reduction) * turn_in_boost * max(unwind_taper, 0.0)
+  sustained_turn_in_scale = 0.0
+  if desired_lateral_accel * desired_lateral_jerk > 0.0:
+    sustained_speed_weight = _ioniq_5_sigmoid((max(v_ego, 0.0) - IONIQ_5_SUSTAINED_TURN_IN_FF_SPEED) /
+                                              IONIQ_5_SUSTAINED_TURN_IN_FF_SPEED_WIDTH)
+    sustained_lat_onset = _ioniq_5_sigmoid((abs_lateral_accel - IONIQ_5_SUSTAINED_TURN_IN_FF_LAT_START) /
+                                           IONIQ_5_SUSTAINED_TURN_IN_FF_LAT_WIDTH)
+    sustained_lat_cutoff = _ioniq_5_sigmoid((IONIQ_5_SUSTAINED_TURN_IN_FF_LAT_END - abs_lateral_accel) /
+                                            IONIQ_5_SUSTAINED_TURN_IN_FF_LAT_WIDTH)
+    sustained_turn_in_scale = (_ioniq_5_side_value(desired_lateral_accel,
+                                                   IONIQ_5_SUSTAINED_TURN_IN_FF_BOOST_LEFT,
+                                                   IONIQ_5_SUSTAINED_TURN_IN_FF_BOOST_RIGHT) *
+                               sustained_speed_weight * sustained_lat_onset * sustained_lat_cutoff)
+  return (1.0 + sustained_turn_in_scale) * (1.0 - base_reduction) * turn_in_boost * max(unwind_taper, 0.0)
 
 
 def get_ioniq_5_friction_threshold(v_ego: float, desired_lateral_accel: float = 0.0, desired_lateral_jerk: float = 0.0) -> float:
