@@ -48,6 +48,9 @@ SIGN_TYPE_TO_CLASS_ID = {
   "school_zone_speed_limit": 2,
 }
 
+MANUAL_SKIP_STATUSES = {"ignore", "ignored", "needs_later"}
+MANUAL_SKIP_SIGN_TYPES = {"not_speed_limit", "not_speed", "none", "no_sign"}
+
 
 def parse_args() -> argparse.Namespace:
   parser = argparse.ArgumentParser(description="Build a detector dataset that preserves current-correct reviews while adding manual box fixes.")
@@ -60,8 +63,12 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--manual-queue", action="append", dest="manual_queues", default=[], help="Manual detector-box review queue name to include. Repeatable.")
   parser.add_argument("--manual-repeat", type=int, default=2, help="Train-time repeats for manual box positives outside 30-65 mph.")
   parser.add_argument("--manual-important-repeat", type=int, default=3, help="Train-time repeats for manual box positives in 30-65 mph.")
+  parser.add_argument("--manual-negative-repeat", type=int, default=0, help="Train-time repeats for ignored/not-speed-limit manual review rows as empty-label negatives.")
   parser.add_argument("--pseudo-repeat", type=int, default=1, help="Train-time repeats for current-tree exact pseudo positives.")
   parser.add_argument("--negative-repeat", type=int, default=1, help="Train-time repeats for old reviewed negatives.")
+  parser.add_argument("--hard-negative-eval", action="append", default=[], type=Path, help="Runtime eval CSV whose false positives should be repeated as train negatives.")
+  parser.add_argument("--hard-negative-repeat", type=int, default=1, help="Train-time repeats for false positives from --hard-negative-eval.")
+  parser.add_argument("--include-val-hard-negatives", action="store_true", help="Also train on false positives whose source split was val.")
   parser.add_argument("--copy", action="store_true", help="Copy images/labels instead of symlinking.")
   return parser.parse_args()
 
@@ -345,6 +352,7 @@ def add_manual_box_samples(
   copy_files: bool,
   manual_repeat: int,
   manual_important_repeat: int,
+  manual_negative_repeat: int,
   stats: Counter[str],
   class_stats: Counter[str],
 ) -> None:
@@ -364,8 +372,20 @@ def add_manual_box_samples(
     merged.update(manifest_row)
     merged.update({key: value for key, value in label_row.items() if value.strip()})
 
-    if merged.get("review_status", "").strip().lower() == "ignored":
+    review_status = merged.get("review_status", "").strip().lower()
+    review_sign_type = merged.get("review_sign_type", "").strip().lower()
+    if review_status in MANUAL_SKIP_STATUSES or review_sign_type in MANUAL_SKIP_SIGN_TYPES:
       stats["manual_ignored"] += 1
+      if manual_negative_repeat > 0:
+        image_text = first_present(merged, ("frame_path", "dataset_image", "source_frame"))
+        if not image_text:
+          stats["manual_ignored_missing_image"] += 1
+          continue
+        image_path = Path(image_text).expanduser().resolve()
+        for repeat_index in range(manual_negative_repeat):
+          name = sanitize_name(f"manual_ignored_negative_{queue_name}_{row_index:05d}_{repeat_index}_{record_key}")
+          if add_sample(output_root, "train", name, image_path, "", copy_files):
+            stats["manual_ignored_negative_train"] += 1
       continue
 
     speed = expected_value(merged)
@@ -406,6 +426,50 @@ def add_manual_box_samples(
         class_stats[f"manual_{DETECTOR_CLASS_NAMES[class_id]}_{split}"] += 1
         if speed in IMPORTANT_SPEEDS:
           stats[f"manual_important_{split}"] += 1
+
+
+def add_hard_negative_samples(
+  output_root: Path,
+  eval_path: Path,
+  copy_files: bool,
+  hard_negative_repeat: int,
+  include_val_hard_negatives: bool,
+  stats: Counter[str],
+) -> None:
+  rows = load_csv(eval_path)
+  if not rows:
+    stats["hard_negative_missing_eval"] += 1
+    return
+
+  seen_images: set[str] = set()
+  for row_index, row in enumerate(rows):
+    expected = int_value(row.get("expected_speed_limit_mph", ""))
+    predicted = int_value(row.get("predicted_speed_limit_mph", ""))
+    negative = parse_bool(row.get("negative", "False")) or expected is None
+    if not negative or predicted is None:
+      continue
+
+    source_split = row.get("split", "train").strip() or "train"
+    if source_split == "val" and not include_val_hard_negatives:
+      stats["hard_negative_skipped_val"] += 1
+      continue
+
+    image_text = first_present(row, ("image_path", "dataset_image", "frame_path", "source_frame"))
+    if not image_text:
+      stats["hard_negative_missing_image"] += 1
+      continue
+    image_path = Path(image_text).expanduser().resolve()
+    image_key = str(image_path)
+    if image_key in seen_images:
+      stats["hard_negative_duplicate"] += 1
+      continue
+    seen_images.add(image_key)
+
+    repeats = max(hard_negative_repeat, 1)
+    for repeat_index in range(repeats):
+      name = sanitize_name(f"hard_negative_{eval_path.stem}_{row_index:05d}_{repeat_index}_{row.get('record_key', '')}")
+      if add_sample(output_root, "train", name, image_path, "", copy_files):
+        stats["hard_negative_train"] += 1
 
 
 def print_stats(output_root: Path, stats: Counter[str], class_stats: Counter[str]) -> None:
@@ -464,8 +528,19 @@ def main() -> int:
       args.copy,
       args.manual_repeat,
       args.manual_important_repeat,
+      args.manual_negative_repeat,
       stats,
       class_stats,
+    )
+
+  for eval_path in args.hard_negative_eval:
+    add_hard_negative_samples(
+      output_root,
+      eval_path.expanduser().resolve(),
+      args.copy,
+      args.hard_negative_repeat,
+      args.include_val_hard_negatives,
+      stats,
     )
 
   remove_appledouble_files(output_root)
