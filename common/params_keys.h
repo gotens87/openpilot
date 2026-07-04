@@ -561,7 +561,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"SpeedLimitSources", {PERSISTENT, BOOL, "0", "0", 3}},
     {"VisionSpeedLimitAutoBookmark", {PERSISTENT, BOOL, "0", "0", 0}},
     {"VisionSpeedLimitAutoPreserveSegment", {PERSISTENT, BOOL, "0", "0", 0}},
-    {"VisionSpeedLimitDetection", {PERSISTENT, BOOL, "1", "0", 0}},
+    {"VisionSpeedLimitDetection", {PERSISTENT, BOOL, "0", "0", 0}},
     {"VisionSpeedLimitTrainingCollector", {PERSISTENT, BOOL, "1", "1", 0}},
     {"StandardFollow", {PERSISTENT, FLOAT, "1.45", "1.45", 2}},
     {"StandardFollowHigh", {PERSISTENT, FLOAT, "1.2", "1.2", 2}},

@@ -39,17 +39,17 @@ add_panda_targets() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --params)
+    --params|-params|-param)
       shortcut_targets+=("common/params_pyx.so")
       ;;
-    --panda)
+    --panda|-panda)
       shortcut_includes_panda=1
       add_panda_targets
       ;;
-    --ui)
+    --ui|-ui)
       shortcut_targets+=("selfdrive/ui/ui")
       ;;
-    --cereal)
+    --cereal|-cereal)
       shortcut_targets+=(
         "cereal/libcereal.a"
         "cereal/libsocketmaster.a"
@@ -69,8 +69,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "${#shortcut_targets[@]}" -gt 0 ]]; then
+  scons_args=("--no-scrub")
+  scons_args+=("${shortcut_targets[@]}")
+  if [[ "${#passthrough_args[@]}" -gt 0 ]]; then
+    scons_args+=("${passthrough_args[@]}")
+  fi
+
   if [[ "${shortcut_includes_panda}" -eq 1 ]]; then
-    exec "${ROOT_DIR}/scripts/laptop_device_build.sh" scons --no-scrub "${shortcut_targets[@]}" "${passthrough_args[@]}"
+    exec "${ROOT_DIR}/scripts/laptop_device_build.sh" scons "${scons_args[@]}"
   fi
 
   tmpdir="$(mktemp -d)"
@@ -82,7 +88,7 @@ if [[ "${#shortcut_targets[@]}" -gt 0 ]]; then
     fi
   done
 
-  if "${ROOT_DIR}/scripts/laptop_device_build.sh" scons --no-scrub "${shortcut_targets[@]}" "${passthrough_args[@]}"; then
+  if "${ROOT_DIR}/scripts/laptop_device_build.sh" scons "${scons_args[@]}"; then
     status=0
   else
     status=$?
