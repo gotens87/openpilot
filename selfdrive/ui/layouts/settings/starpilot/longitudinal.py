@@ -45,6 +45,7 @@ from openpilot.starpilot.common.accel_profile import (
   normalize_deceleration_profile,
 )
 from openpilot.starpilot.common.experimental_state import sync_persist_experimental_state, sync_persist_chill_state
+from openpilot.common.constants import CV
 
 
 PANEL_STYLE = DEFAULT_PANEL_STYLE
@@ -547,7 +548,11 @@ class StarPilotLongitudinalLayout(_SettingsPage):
   def __init__(self):
     super().__init__()
     self._keyboard = Keyboard(min_text_size=1)
+    # Track metric↔imperial transitions so we can rescale speed- and
+    # distance-typed params to the new unit when it flips.
+    self._last_is_metric: bool | None = None
     self._build_view()
+    self._last_is_metric = self._is_metric()
 
   def _longitudinal_enabled(self) -> bool:
     return self._params.get_bool("LongitudinalTune")
@@ -710,10 +715,11 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                  subtitle="",
                  get_value=lambda: f"{self._params.get_int('SLCLookaheadLower')}s",
                  on_click=lambda: self._show_slider("SLCLookaheadLower", 0, 30, unit="s")),
-      SettingRow("SLCMapbox", "toggle", tr_noop("Mapbox Fallback"),
+      SettingRow("SLCMapboxFiller", "toggle", tr_noop("Mapbox Fallback"),
                  subtitle="",
                  get_state=lambda: self._params.get_bool("SLCMapboxFiller"),
-                 set_state=lambda s: self._params.put_bool("SLCMapboxFiller", s)),
+                 set_state=lambda s: self._params.put_bool("SLCMapboxFiller", s),
+                 visible=self._mapbox_available),
       SettingRow("VisionSpeedLimit", "toggle", tr_noop("Vision Detection"),
                  subtitle=tr_noop("Use the road camera to detect speed limit signs for SLC."),
                  get_state=lambda: self._params.get_bool("VisionSpeedLimitDetection"),
@@ -722,10 +728,20 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                  subtitle="",
                  get_state=lambda: self._params.get_bool("ShowSLCOffset"),
                  set_state=lambda s: self._params.put_bool("ShowSLCOffset", s)),
-      SettingRow("ShowSources", "toggle", tr_noop("Show Sources"),
+      SettingRow("SpeedLimitSources", "toggle", tr_noop("Show Sources"),
                  subtitle="",
                  get_state=lambda: self._params.get_bool("SpeedLimitSources"),
                  set_state=lambda s: self._params.put_bool("SpeedLimitSources", s)),
+      SettingRow("SLCAbbreviatedSources", "toggle", tr_noop("Abbreviated Sources"),
+                 subtitle=tr_noop("Render speed-limit sources as compact text labels (e.g. Dash-45)."),
+                 get_state=lambda: self._params.get_bool("SLCAbbreviatedSources"),
+                 set_state=lambda s: self._params.put_bool("SLCAbbreviatedSources", s),
+                 visible=self._sources_visible),
+      SettingRow("SLCActiveSourcesOnly", "toggle", tr_noop("Active Sources Only"),
+                 subtitle=tr_noop("Hide source rows that have no current speed limit reading."),
+                 get_state=lambda: self._params.get_bool("SLCActiveSourcesOnly"),
+                 set_state=lambda s: self._params.put_bool("SLCActiveSourcesOnly", s),
+                 visible=self._sources_visible),
       SettingRow("ConfigureOffsets", "value", tr_noop("SLC Offsets"),
                  subtitle=tr_noop("Per-limit speed adjustments for the Speed Limit Controller."),
                  get_value=lambda: tr_noop("Configure"),
@@ -792,14 +808,16 @@ class StarPilotLongitudinalLayout(_SettingsPage):
     self._daily_rows = [
       SettingRow("CustomCruise", "value", tr_noop("Cruise Interval"),
                  subtitle="",
-                 get_value=lambda: f"{max(1, self._params.get_int('CustomCruise'))} mph",
-                 on_click=lambda: self._show_slider("CustomCruise", 1, 100, unit=" mph",
+                 get_value=lambda: f"{max(1, self._params.get_int('CustomCruise'))}{self._speed_unit()}",
+                 on_click=lambda: self._show_slider("CustomCruise", 1, 150 if self._is_metric() else 99,
+                                                    unit=self._speed_unit(),
                                                     current_value=max(1, self._params.get_int("CustomCruise"))),
                  visible=lambda: self._params.get_bool("QOLLongitudinal")),
       SettingRow("CustomCruiseLong", "value", tr_noop("Cruise Long"),
                  subtitle="",
-                 get_value=lambda: f"{max(1, self._params.get_int('CustomCruiseLong'))} mph",
-                 on_click=lambda: self._show_slider("CustomCruiseLong", 1, 100, unit=" mph",
+                 get_value=lambda: f"{max(1, self._params.get_int('CustomCruiseLong'))}{self._speed_unit()}",
+                 on_click=lambda: self._show_slider("CustomCruiseLong", 1, 150 if self._is_metric() else 99,
+                                                    unit=self._speed_unit(),
                                                     current_value=max(1, self._params.get_int("CustomCruiseLong"))),
                  visible=lambda: self._params.get_bool("QOLLongitudinal")),
       SettingRow("ForceStops", "toggle", tr_noop("Force Stops"),
@@ -824,13 +842,15 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                  visible=lambda: self._params.get_bool("QOLLongitudinal")),
       SettingRow("IncStoppedDist", "value", tr_noop("Stopped Distance"),
                  subtitle="",
-                 get_value=lambda: f"{self._params.get_int('IncreasedStoppedDistance')} ft",
-                 on_click=lambda: self._show_slider("IncreasedStoppedDistance", 0, 10, unit=" ft"),
+                 get_value=lambda: f"{self._params.get_int('IncreasedStoppedDistance')}{self._distance_unit()}",
+                 on_click=lambda: self._show_slider("IncreasedStoppedDistance", *self._distance_range(),
+                                                    unit=self._distance_unit()),
                  visible=lambda: self._params.get_bool("QOLLongitudinal")),
       SettingRow("SetSpeedOffset", "value", tr_noop("Set Speed Offset"),
                  subtitle="",
-                 get_value=lambda: f"+{self._params.get_int('SetSpeedOffset')} mph",
-                 on_click=lambda: self._show_slider("SetSpeedOffset", 0, 99, unit=" mph"),
+                 get_value=lambda: f"+{self._params.get_int('SetSpeedOffset')}{self._speed_unit()}",
+                 on_click=lambda: self._show_slider("SetSpeedOffset", 0, 150 if self._is_metric() else 99,
+                                                    unit=self._speed_unit()),
                  visible=lambda: self._params.get_bool("QOLLongitudinal")),
       SettingRow("MapGears", "toggle", tr_noop("Map Gears"),
                  subtitle="",
@@ -1079,11 +1099,66 @@ class StarPilotLongitudinalLayout(_SettingsPage):
   def _is_metric(self) -> bool:
     return self._params.get_bool("IsMetric")
 
+  # Speed-typed int params stored in the current unit (mph or km/h); rescaled
+  # when IsMetric flips so the numeric value stays correct in the new unit.
+  _SPEED_RESCALE_KEYS = (
+    "Offset1", "Offset2", "Offset3", "Offset4", "Offset5", "Offset6", "Offset7",
+    "CustomCruise", "CustomCruiseLong", "SetSpeedOffset",
+    "CESpeed", "CESpeedLead", "CESignalSpeed",
+    "CCMSpeed", "CCMSpeedLead", "CCMSetSpeedMargin",
+  )
+
+  # Distance-typed int params stored in the current unit (ft or m); rescaled
+  # when IsMetric flips so the numeric value stays correct in the new unit.
+  _DISTANCE_RESCALE_KEYS = (
+    "IncreasedStoppedDistance",
+    "IncreasedStoppedDistanceLowVisibility",
+    "IncreasedStoppedDistanceRain",
+    "IncreasedStoppedDistanceRainStorm",
+    "IncreasedStoppedDistanceSnow",
+  )
+
+  def _maybe_rescale_on_metric_change(self) -> None:
+    """When IsMetric flips, recompute stored speed- and distance-typed int
+    params so they read correctly in the new unit. The first call (no prior
+    state) is a no-op so the user's saved values aren't rewritten on boot."""
+    current = self._is_metric()
+    last = self._last_is_metric
+    self._last_is_metric = current
+    if last is None or last == current:
+      return
+    speed_factor = CV.MPH_TO_KPH if current else CV.KPH_TO_MPH
+    for key in self._SPEED_RESCALE_KEYS:
+      self._params.put_int(key, int(round(self._params.get_int(key) * speed_factor)))
+    distance_factor = CV.FOOT_TO_METER if current else CV.METER_TO_FOOT
+    for key in self._DISTANCE_RESCALE_KEYS:
+      self._params.put_int(key, int(round(self._params.get_int(key) * distance_factor)))
+
+  def _mapbox_available(self) -> bool:
+    """SLCMapboxFiller is only meaningful when a Mapbox key is configured."""
+    return bool(self._params.get("MapboxSecretKey", encoding="utf-8"))
+
+  def _sources_visible(self) -> bool:
+    """Abbreviated/Active-Only sub-toggles only make sense when sources are shown."""
+    return self._params.get_bool("SpeedLimitSources")
+
   def _speed_unit(self) -> str:
+    self._maybe_rescale_on_metric_change()
     return " km/h" if self._is_metric() else " mph"
 
   def _speed_range(self) -> tuple[int, int]:
+    self._maybe_rescale_on_metric_change()
     return (-150, 150) if self._is_metric() else (-99, 99)
+
+  # IncreasedStoppedDistance* sliders use 0..3 m in metric and 0..10 ft in
+  # imperial, reflecting the unit they're stored in.
+  def _distance_unit(self) -> str:
+    self._maybe_rescale_on_metric_change()
+    return " m" if self._is_metric() else " ft"
+
+  def _distance_range(self) -> tuple[int, int]:
+    self._maybe_rescale_on_metric_change()
+    return (0, 3) if self._is_metric() else (0, 10)
 
   def _show_slc_offsets_category(self):
     self._sub_panels["slc_offsets"] = AetherSettingsView(
@@ -1177,8 +1252,9 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                  on_click=lambda: self._show_slider("IncreaseFollowing" + s, 0, 3, step=0.5, unit="s")),
       SettingRow(f"StoppedDist{s}", "value", tr_noop("Stopped Distance"),
                  subtitle="",
-                 get_value=lambda: f"+{self._params.get_int('IncreasedStoppedDistance' + s)} ft",
-                 on_click=lambda: self._show_slider("IncreasedStoppedDistance" + s, 0, 10, unit=" ft")),
+                 get_value=lambda: f"+{self._params.get_int('IncreasedStoppedDistance' + s)}{self._distance_unit()}",
+                 on_click=lambda: self._show_slider("IncreasedStoppedDistance" + s, *self._distance_range(),
+                                                    unit=self._distance_unit())),
       SettingRow(f"ReduceAccel{s}", "value", tr_noop("Reduce Accel"),
                  subtitle="",
                  get_value=lambda: f"{self._params.get_int('ReduceAcceleration' + s)}%",
