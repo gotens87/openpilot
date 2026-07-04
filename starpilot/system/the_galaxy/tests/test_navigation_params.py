@@ -35,6 +35,10 @@ class FakeParamsBackend:
     self.writes.append((key, value))
     self.values[key] = value
 
+  def put_bool(self, key, value):
+    self.writes.append((key, bool(value)))
+    self.values[key] = bool(value)
+
   def get(self, key, block=False):
     return self.values.get(key)
 
@@ -49,6 +53,24 @@ def test_params_compat_accepts_json_strings_for_json_keys():
   compat.put("FavoriteDestinations", json.dumps([{"name": "Home"}]))
 
   assert backend.writes == [("FavoriteDestinations", [{"name": "Home"}])]
+
+
+def test_params_compat_syncs_lead_indicator_inverse_key():
+  backend = FakeParamsBackend()
+  compat = the_galaxy.ParamsCompat(backend)
+
+  compat.put_bool("LeadIndicator", True)
+
+  assert backend.writes == [("LeadIndicator", True), ("HideLeadMarker", False)]
+
+
+def test_params_compat_syncs_hide_lead_marker_inverse_key():
+  backend = FakeParamsBackend()
+  compat = the_galaxy.ParamsCompat(backend)
+
+  compat.put_bool("HideLeadMarker", True)
+
+  assert backend.writes == [("HideLeadMarker", True), ("LeadIndicator", False)]
 
 
 def test_navigation_last_position_uses_recent_persisted_fix(monkeypatch):

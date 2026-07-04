@@ -123,14 +123,16 @@ class ModelRenderer(Widget):
     radar_state = sm['radarState'] if sm.valid['radarState'] else None
     lead_one = radar_state.leadOne if radar_state else None
 
-    # StarPilot lead indicator visibility conditions
-    hide_lead_marker = self._params.get_bool("HideLeadMarker")
     self._lead_info_enabled = self._params.get_bool("LeadInfo")
     self._use_rainbow = self._params.get_bool('RainbowPath', default=False)
     self._use_accel_path = self._params.get_bool('AccelerationPath', default=True)
     self._is_metric = self._params.get_bool('IsMetric')
     lead_info_enabled = self._lead_info_enabled
-    render_lead_indicator = (self._longitudinal_control or lead_info_enabled) and radar_state is not None and not hide_lead_marker
+    render_lead_indicator = (
+      (self._longitudinal_control or lead_info_enabled)
+      and radar_state is not None
+      and lead_indicator_enabled(self._params)
+    )
 
     # Update model data when needed
     model_updated = sm.updated['modelV2']

@@ -398,6 +398,18 @@ class ParamsCompat:
     self._put_single(self._key(key), value)
 
   def put_bool(self, key, value):
+    if key == "LeadIndicator":
+      enabled = bool(value)
+      self._params.put_bool("LeadIndicator", enabled)
+      self._params.put_bool("HideLeadMarker", not enabled)
+      return
+
+    if key == "HideLeadMarker":
+      hidden = bool(value)
+      self._params.put_bool("HideLeadMarker", hidden)
+      self._params.put_bool("LeadIndicator", not hidden)
+      return
+
     self._params.put_bool(self._key(key), bool(value))
 
   def remove(self, key):
@@ -2332,6 +2344,9 @@ def _get_current_param_value(key, value_type, defaults_lookup=None):
   if key == CUSTOM_ACCEL_PROFILE_INITIALIZED_KEY:
     return _get_custom_accel_profile_initialized()
 
+  if key == "LeadIndicator":
+    return _get_lead_indicator_enabled(defaults_lookup)
+
   if key == "IsRHD" and not _safe_params_get_bool("IsRHDOverride"):
     return _safe_params_get_bool("IsRhdDetected")
 
@@ -2349,6 +2364,21 @@ def _get_current_param_value(key, value_type, defaults_lookup=None):
   if key in ("Model", "DrivingModel") and isinstance(value, str):
     return canonical_model_key(value)
   return value
+
+
+def _get_lead_indicator_enabled(defaults_lookup=None):
+  if defaults_lookup is None:
+    defaults_lookup = _get_default_param_values()
+
+  lead_raw = _safe_params_get_live_raw("LeadIndicator")
+  if _is_blank_param_raw(lead_raw):
+    lead_raw = defaults_lookup.get("LeadIndicator", "0")
+
+  hide_raw = _safe_params_get_live_raw("HideLeadMarker")
+  if _is_blank_param_raw(hide_raw):
+    hide_raw = defaults_lookup.get("HideLeadMarker", "0")
+
+  return _coerce_param_value(lead_raw, bool) and not _coerce_param_value(hide_raw, bool)
 
 
 def _get_custom_accel_profile_initialized():
@@ -3976,6 +4006,21 @@ def setup(app):
       if key in PANDA_FIRMWARE_TOGGLE_KEYS and data.get(PANDA_FIRMWARE_CONFIRMATION_FIELD) is not True:
         return jsonify({"error": "Panda firmware changes require confirmation before flashing."}), 409
 
+      if key in {"LeadIndicator", "HideLeadMarker"}:
+        enabled = str_val.strip() in ("1", "true", "True")
+        if key == "LeadIndicator":
+          params.put_bool("LeadIndicator", enabled)
+          updated = {"LeadIndicator": enabled, "HideLeadMarker": not enabled}
+        else:
+          params.put_bool("HideLeadMarker", enabled)
+          updated = {"HideLeadMarker": enabled, "LeadIndicator": not enabled}
+
+        update_starpilot_toggles()
+        return jsonify({
+          "message": f"Parameter '{key}' updated successfully.",
+          "updated": updated,
+        }), 200
+
       if key == "AllowImpossibleAcceleration":
         enabled = str_val.strip() in ("1", "true", "True")
         params.put_bool(key, enabled)
@@ -4251,6 +4296,8 @@ def setup(app):
       return _serialize_param_write_value(defaults_lookup.get(request_key)), 200
     if request_key == CUSTOM_ACCEL_PROFILE_INITIALIZED_KEY:
       return _serialize_param_write_value(_get_custom_accel_profile_initialized()), 200
+    if request_key == "LeadIndicator":
+      return _serialize_param_write_value(_get_lead_indicator_enabled()), 200
     if request_key == "IsRHD" and not params.get_bool("IsRHDOverride"):
       return ("1" if params.get_bool("IsRhdDetected") else "0"), 200
     value = params.get(request_key) or ""

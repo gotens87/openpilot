@@ -1779,12 +1779,11 @@
         "parent_key": "AdvancedCustomUI"
       },
       {
-        "key": "HideLeadMarker",
-        "label": "Hide Lead Marker",
-        "description": "Hide the lead-vehicle marker from the driving screen.",
+        "key": "LeadIndicator",
+        "label": "Lead Indicator",
+        "description": "Show the lead-vehicle marker on the driving screen.",
         "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "AdvancedCustomUI"
+        "ui_type": "toggle"
       },
       {
         "key": "HideMaxSpeed",
