@@ -16,13 +16,14 @@ from openpilot.common.constants import CV
 from openpilot.common.realtime import set_core_affinity
 from openpilot.system.hardware import PC
 
-INFERENCE_INTERVAL = 0.5
+INFERENCE_INTERVAL = 0.25
 FOLLOWUP_INFERENCE_INTERVAL = 0.2
 FOLLOWUP_WINDOW_SECONDS = 2.0
 BUSY_INFERENCE_INTERVAL = 1.0
 LIVE_POSE_RECOVERY_THROTTLE_SECONDS = 2.0
 LIVE_POSE_RECOVERY_INFERENCE_INTERVAL = 1.0
-DEVICE_BUSY_CPU_USAGE_PERCENT = 88.0
+DEVICE_BUSY_AVG_CPU_USAGE_PERCENT = 78.0
+DEVICE_BUSY_MAX_CPU_USAGE_PERCENT = 92.0
 MIN_DETECTION_CONFIDENCE = 0.2
 STRONG_DETECTION_CONFIDENCE = 0.72
 OCR_MIN_CONFIDENCE = 0.35
@@ -131,10 +132,10 @@ US_CLASSIFIER_SPEED_VALUES = (15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75
 SCHOOL_ZONE_SPEED_VALUES = frozenset((15, 20, 25))
 US_DETECTOR_MIN_CONFIDENCE = 0.10
 US_CLASSIFIER_MIN_CONFIDENCE = 0.50
-US_CLASSIFIER_REJECT_MIN_CONFIDENCE = 0.45
-US_REJECT_CLASSIFIER_MIN_CONFIDENCE = 0.60
+US_CLASSIFIER_REJECT_MIN_CONFIDENCE = 0.85
+US_REJECT_CLASSIFIER_MIN_CONFIDENCE = 0.85
 DETECTOR_CLASSIFIER_EXPANSIONS = (
-  (0.00, 0.00, 0.00, 0.00, 0.60),
+  (0.00, 0.00, 0.00, 0.00, 1.10),
   (0.10, 0.06, 0.10, 0.12, 1.00),
   (0.06, 0.00, 0.10, 0.10, 0.75),
   (0.00, 0.00, 0.18, 0.18, 0.55),
@@ -703,7 +704,10 @@ class SpeedLimitVisionDaemon:
     cpu_usage = list(self.sm["deviceState"].cpuUsagePercent)
     if not cpu_usage:
       return False
-    return sum(cpu_usage) / len(cpu_usage) >= DEVICE_BUSY_CPU_USAGE_PERCENT
+    return (
+      sum(cpu_usage) / len(cpu_usage) >= DEVICE_BUSY_AVG_CPU_USAGE_PERCENT or
+      max(cpu_usage) >= DEVICE_BUSY_MAX_CPU_USAGE_PERCENT
+    )
 
   def _inference_interval(self, now):
     in_followup = now < self.followup_until
