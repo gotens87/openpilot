@@ -16,7 +16,6 @@ StarPilotAlertStatus = custom.StarPilotSelfdriveState.AlertStatus
 
 ALERT_MARGIN = 40
 ALERT_PADDING = 60
-ALERT_BORDER_RADIUS = 30
 
 ALERT_HEIGHTS = {
   AlertSize.small: 271,
@@ -177,12 +176,26 @@ class AlertRenderer(Widget):
                                    int(bg_height - solid_height), color, translucent_color)
     else:
       bg_height = int(self._rect.height)
-      solid_height = round(bg_height * 0.2)
-      roundness = ALERT_BORDER_RADIUS / (min(self._rect.width, self._rect.height) / 2)
-      rl.draw_rectangle_rounded(rl.Rectangle(self._rect.x, self._rect.y, self._rect.width, solid_height),
-                                roundness, 10, color)
-      rl.draw_rectangle_gradient_v(int(self._rect.x), int(self._rect.y + solid_height),
-                                   int(self._rect.width), int(bg_height - solid_height),
+
+      font_size = SMALL_FONT_SIZE if alert.size == AlertSize.small else MID_FONT_SIZE_1
+      self._alert_text1_label.set_text(alert.text1)
+      self._alert_text1_label.set_font_size(font_size)
+      content_h = self._alert_text1_label.get_content_height(int(self._rect.width - ALERT_PADDING * 2))
+
+      # Center the plateau on text1's rendered position with a 2px buffer on each
+      # side to guarantee int-truncated draw calls fully cover text1's float render.
+      plateau_y = round(self._alert_y_filter.x + (self._rect.height - content_h) / 2) - 2
+      plateau_h = round(content_h) + 4
+      top_fade_h = plateau_y - int(self._rect.y)
+      bottom_fade_h = bg_height - top_fade_h - plateau_h
+
+      rl.draw_rectangle_gradient_v(int(self._rect.x), int(self._rect.y),
+                                   int(self._rect.width), top_fade_h,
+                                   translucent_color, color)
+      rl.draw_rectangle(int(self._rect.x), plateau_y,
+                        int(self._rect.width), plateau_h, color)
+      rl.draw_rectangle_gradient_v(int(self._rect.x), plateau_y + plateau_h,
+                                   int(self._rect.width), bottom_fade_h,
                                    color, translucent_color)
 
   def _draw_text(self, alert: Alert) -> None:
