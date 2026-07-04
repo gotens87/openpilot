@@ -27,7 +27,6 @@ HISTORY_SECONDS = 2.0
 CONSISTENT_DETECTIONS = 2
 CHANGE_CONSISTENT_DETECTIONS = 3
 MODEL_DETECTION_SHORT_CIRCUIT_CONFIDENCE = 0.65
-PUBLISHED_HOLD_SECONDS = 12.0
 PUBLISHED_CHANGE_COOLDOWN_SECONDS = 1.4
 PUBLISHED_REVERT_CONFIDENCE = 0.97
 AUTO_BOOKMARK_CONFIRM_DELAY_SECONDS = 0.9
@@ -667,9 +666,6 @@ class SpeedLimitVisionDaemon:
     self.last_map_transition_miss_at = now
     self.last_map_transition_miss_speed_limit_mph = current_speed_limit_mph
     self._record_map_transition_miss(current_speed_limit_mph, previous_speed_limit_mph)
-
-  def _published_detection_stale(self, now):
-    return self.published_speed_limit_mph > 0 and now - self.last_detection_at > PUBLISHED_HOLD_SECONDS
 
   def _load_model(self):
     self.net = None
@@ -1753,12 +1749,6 @@ class SpeedLimitVisionDaemon:
       if not self._connect_camera():
         status = "Waiting for camera stream"
         if self.published_speed_limit_mph > 0:
-          now = time.monotonic()
-          if self._published_detection_stale(now):
-            self._write_debug_event("stale_clear", reason="stream_unavailable")
-            self._publish_status("Waiting for camera stream", clear_speed=True)
-            ratekeeper.keep_time()
-            continue
           status = f"{status}, holding {self.published_speed_limit_mph} mph"
         self._publish_status(status, clear_speed=False)
         ratekeeper.keep_time()
@@ -1768,11 +1758,7 @@ class SpeedLimitVisionDaemon:
       inference_interval = FOLLOWUP_INFERENCE_INTERVAL if now < self.followup_until else INFERENCE_INTERVAL
       if now - self.last_inference_at < inference_interval:
         if self.published_speed_limit_mph > 0:
-          if self._published_detection_stale(now):
-            self._write_debug_event("stale_clear", reason="hold_timeout")
-            self._publish_status(f"Scanning {self.stream_name}", clear_speed=True)
-          else:
-            self._publish_detection(self.published_speed_limit_mph, self.published_confidence, "Holding")
+          self._publish_detection(self.published_speed_limit_mph, self.published_confidence, "Holding")
         else:
           self._publish_status(f"Scanning {self.stream_name}", clear_speed=False)
         ratekeeper.keep_time()
@@ -1781,9 +1767,8 @@ class SpeedLimitVisionDaemon:
       buffer = self.client.recv() if self.client is not None else None
       self.last_inference_at = now
       if buffer is None or not buffer.data.any():
-        if self._published_detection_stale(now):
-          self._write_debug_event("stale_clear", reason="empty_frame")
-          self._publish_status(f"Waiting for {self.stream_name}", clear_speed=True)
+        if self.published_speed_limit_mph > 0:
+          self._publish_status(f"Waiting for {self.stream_name}, holding {self.published_speed_limit_mph} mph", clear_speed=False)
         else:
           self._publish_status(f"Waiting for {self.stream_name}", clear_speed=False)
         ratekeeper.keep_time()
@@ -1797,11 +1782,7 @@ class SpeedLimitVisionDaemon:
       if detection is not None:
         self._update_detection(detection)
       elif self.published_speed_limit_mph > 0:
-        if self._published_detection_stale(now):
-          self._write_debug_event("stale_clear", reason="no_detection")
-          self._publish_status(f"Scanning {self.stream_name}", clear_speed=True)
-        else:
-          self._publish_detection(self.published_speed_limit_mph, self.published_confidence, "Holding")
+        self._publish_detection(self.published_speed_limit_mph, self.published_confidence, "Holding")
       else:
         self._publish_status(f"Scanning {self.stream_name}", clear_speed=False)
 
