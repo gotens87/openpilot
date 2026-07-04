@@ -368,8 +368,8 @@ class NavigationCardRenderer(Widget):
 
   def _render_collapsed_default(self, rect: rl.Rectangle) -> None:
     chip_size = 94
-    chip_x = int(rect.x + rect.width - chip_size - 32)
-    chip_y = int(rect.y + 82)
+    chip_x = int(rect.x + rect.width - 126 - chip_size / 2)  # center-aligned with steering wheel icon horizontally
+    chip_y = int(rect.y + (rect.height - chip_size) / 2)  # half way down vertically
     chip_rect = rl.Rectangle(chip_x, chip_y, chip_size, chip_size)
     self._interactive_rect = chip_rect
 
