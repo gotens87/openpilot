@@ -346,10 +346,10 @@ class TestGmCameraNoCameraSafety(TestGmCameraSafety):
 
 
 class TestGmCameraLongitudinalSafety(GmLongitudinalBase, TestGmCameraSafetyBase):
-  TX_MSGS = [[0x180, 0], [0x315, 0], [0x2CB, 0], [0x370, 0], [0x200, 0], [0x1E1, 0], [0x3D1, 0], [0xBD, 0], [0x1F5, 0],  # pt bus
+  TX_MSGS = [[0x180, 0], [0x315, 0], [0x2CB, 0], [0x2CD, 0], [0x370, 0], [0x200, 0], [0x1E1, 0], [0x3D1, 0], [0xBD, 0], [0x1F5, 0],  # pt bus
              [0x184, 2]]  # camera bus
-  FWD_BLACKLISTED_ADDRS = {2: [0x180, 0x2CB, 0x370, 0x315], 0: [0x184]}  # block LKAS, ACC messages and PSCMStatus
-  RELAY_MALFUNCTION_ADDRS = {0: (0x180, 0x2CB, 0x370, 0x315), 2: (0x184,)}
+  FWD_BLACKLISTED_ADDRS = {2: [0x180, 0x2CB, 0x2CD, 0x370, 0x315], 0: [0x184]}  # block LKAS, ACC messages and PSCMStatus
+  RELAY_MALFUNCTION_ADDRS = {0: (0x180, 0x2CB, 0x2CD, 0x370, 0x315), 2: (0x184,)}
   BUTTONS_BUS = 0  # rx only
 
   MAX_GAS = 2698

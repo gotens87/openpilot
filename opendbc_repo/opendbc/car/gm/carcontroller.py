@@ -6,7 +6,7 @@ from opendbc.car.lateral import apply_driver_steer_torque_limits
 from opendbc.car.gm import gmcan
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.gm.values import (
-  ASCM_INT, CAR, CC_ONLY_CAR, CC_REGEN_PADDLE_CAR, DBC, EV_CAR, SDGM_CAR, AccState, CanBus, CarControllerParams,
+  ASCM_INT, CAMERA_ACC_CAR, CAR, CC_ONLY_CAR, CC_REGEN_PADDLE_CAR, DBC, EV_CAR, SDGM_CAR, AccState, CanBus, CarControllerParams,
   CruiseButtons, GMFlags, GMSafetyFlags,
 )
 from opendbc.car.interfaces import CarControllerBase
@@ -192,6 +192,15 @@ def should_send_adas_status(CP, is_kaofui_car):
     return False
 
   return CP.networkLocation != NetworkLocation.fwdCamera and CP.carFingerprint not in SDGM_CAR
+
+
+def should_send_acc_2cd(CP):
+  return (
+    CP.networkLocation == NetworkLocation.fwdCamera and
+    CP.carFingerprint in CAMERA_ACC_CAR and
+    CP.carFingerprint not in (CC_ONLY_CAR | SDGM_CAR) and
+    not bool(getattr(CP, "flags", 0) & GMFlags.NO_CAMERA.value)
+  )
 
 
 def get_testing_ground_1_brake_switch_bias(v_ego: float) -> int:
@@ -1078,6 +1087,8 @@ class CarController(CarControllerBase):
           # TODO: can we always check the longControlState?
           if self.CP.networkLocation == NetworkLocation.fwdCamera:
             at_full_stop = at_full_stop and stopping
+          if should_send_acc_2cd(self.CP):
+            can_sends.append(gmcan.create_acc_2cd_command(CanBus.POWERTRAIN, idx))
 
           if self.CP.autoResumeSng:
             resume = actuators.longControlState != LongCtrlState.starting or CC.cruiseControl.resume

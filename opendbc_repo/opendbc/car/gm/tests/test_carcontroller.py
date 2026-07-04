@@ -58,6 +58,7 @@ from opendbc.car.gm.carcontroller import (
   should_use_fixed_stopping_brake,
   should_activate_auto_hold,
   should_activate_volt_one_pedal,
+  should_send_acc_2cd,
   should_send_adas_status,
   should_send_stock_long_cancel,
   should_spoof_dash_speed,
@@ -354,6 +355,19 @@ def test_live_camera_path_does_not_send_pt_keepalive():
   cp = SimpleNamespace(networkLocation=CarParams.NetworkLocation.fwdCamera, flags=0)
 
   assert get_adas_keepalive_step(cp, is_kaofui_car=True) is None
+
+
+def test_acc_2cd_replacement_only_used_with_live_camera_path():
+  assert should_send_acc_2cd(SimpleNamespace(
+    carFingerprint=CAR.CHEVROLET_TRAILBLAZER, networkLocation=CarParams.NetworkLocation.fwdCamera, flags=0))
+  assert not should_send_acc_2cd(SimpleNamespace(
+    carFingerprint=CAR.CHEVROLET_TRAILBLAZER, networkLocation=CarParams.NetworkLocation.fwdCamera, flags=GMFlags.NO_CAMERA.value))
+  assert not should_send_acc_2cd(SimpleNamespace(
+    carFingerprint=CAR.CHEVROLET_TRAILBLAZER, networkLocation=CarParams.NetworkLocation.gateway, flags=0))
+  assert not should_send_acc_2cd(SimpleNamespace(
+    carFingerprint=CAR.CHEVROLET_TRAILBLAZER_CC, networkLocation=CarParams.NetworkLocation.fwdCamera, flags=0))
+  assert not should_send_acc_2cd(SimpleNamespace(
+    carFingerprint=CAR.CHEVROLET_BLAZER, networkLocation=CarParams.NetworkLocation.fwdCamera, flags=0))
 
 
 def test_ascm_int_cars_do_not_send_radar_status():

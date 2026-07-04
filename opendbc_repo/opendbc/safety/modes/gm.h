@@ -517,13 +517,14 @@ static bool gm_fwd_hook(int bus_num, int addr) {
       bool is_lkas_msg = addr == 0x180U;
       bool is_acc_status_msg = addr == 0x370U;
       bool is_acc_actuation_msg = (addr == 0x315U) || (addr == 0x2CBU);
+      bool is_acc_counter_msg = addr == 0x2CDU;
 
       block_msg = is_lkas_msg;
       if (gm_cam_long || gm_pedal_long) {
         block_msg |= is_acc_status_msg;
       }
       if (gm_cam_long) {
-        block_msg |= is_acc_actuation_msg;
+        block_msg |= is_acc_actuation_msg || is_acc_counter_msg;
       }
     }
   }
@@ -579,7 +580,7 @@ static safety_config gm_init(uint16_t param) {
   };
 
   // block PSCMStatus (0x184); forwarded through openpilot to hide an alert from the camera
-  static const CanMsg GM_CAM_LONG_TX_MSGS[] = {{0x180, 0, 4, .check_relay = true}, {0x315, 0, 5, .check_relay = true}, {0x2CB, 0, 8, .check_relay = true}, {0x370, 0, 6, .check_relay = true}, {0x3D1, 0, 8, .check_relay = false},  // pt bus
+  static const CanMsg GM_CAM_LONG_TX_MSGS[] = {{0x180, 0, 4, .check_relay = true}, {0x315, 0, 5, .check_relay = true}, {0x2CB, 0, 8, .check_relay = true}, {0x2CD, 0, 5, .check_relay = true}, {0x370, 0, 6, .check_relay = true}, {0x3D1, 0, 8, .check_relay = false},  // pt bus
                                                {0x184, 2, 8, .check_relay = true},  // camera bus
                                                {0x200, 0, 6, .check_relay = false}, {0x1E1, 0, 7, .check_relay = false},
                                                {0xBD, 0, 7, .check_relay = false}, {0x1F5, 0, 8, .check_relay = false}};  // pt bus
