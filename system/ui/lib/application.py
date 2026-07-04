@@ -872,8 +872,8 @@ class GuiApplication:
           rl.clear_background(rl.BLACK)
           self._mark_progress("gui_app.after_clear_background")
 
-        render_scale_x = self._scale * self._pixel_scale_x
-        render_scale_y = self._scale * self._pixel_scale_y
+        render_scale_x = self._scale * (self._pixel_scale_x if self._render_texture else 1.0)
+        render_scale_y = self._scale * (self._pixel_scale_y if self._render_texture else 1.0)
         needs_render_scale = render_scale_x != 1.0 or render_scale_y != 1.0
         if needs_render_scale:
           rl.rl_push_matrix()

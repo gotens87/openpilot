@@ -551,4 +551,10 @@ if [[ "${has_raylib}" == "1" ]]; then
   launch_control_bar
 fi
 
-wait "${UI_PIDS[@]}"
+ui_status=0
+for pid in "${UI_PIDS[@]-}"; do
+  if [[ -n "${pid}" ]]; then
+    wait "${pid}" || ui_status=$?
+  fi
+done
+exit "${ui_status}"
