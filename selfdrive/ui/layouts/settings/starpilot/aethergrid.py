@@ -1113,7 +1113,7 @@ class BreadcrumbController:
     from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import StarPilotPanelType
     layout = getattr(main_panel.StarPilotLayout, "active_instance", None)
 
-    path = [("Home", "action:home")]
+    path = [(tr("StarPilot"), "action:home")]
     if not layout:
         return path
 
