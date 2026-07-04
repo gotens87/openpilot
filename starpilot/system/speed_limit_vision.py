@@ -153,6 +153,8 @@ DETECTOR_CLASSIFIER_SUPPORT_BONUS = 0.06
 DETECTOR_CLASSIFIER_REGULATORY_BONUS = 0.05
 DETECTOR_CLASSIFIER_NON_REGULATORY_PENALTY = 0.03
 DETECTOR_CLASSIFIER_SMALL_BOX_AREA_RATIO = 0.004
+DETECTOR_CLASSIFIER_TINY_LOW_CONF_AREA_RATIO = 0.002
+DETECTOR_CLASSIFIER_TINY_LOW_CONF_MIN_CONFIDENCE = 0.14
 DETECTOR_CLASSIFIER_MIN_ACCEPT_WIDTH = 28
 DETECTOR_CLASSIFIER_MIN_ACCEPT_HEIGHT = 40
 DETECTOR_CLASSIFIER_RESCUE_MIN_WIDTH = 14
@@ -161,6 +163,12 @@ DETECTOR_CLASSIFIER_RESCUE_MIN_X_RATIO = 0.52
 DETECTOR_CLASSIFIER_RESCUE_MIN_SUPPORT = 1
 DETECTOR_CLASSIFIER_RESCUE_MIN_CONFIDENCE = 0.90
 DETECTOR_CLASSIFIER_RESCUE_MAX_SCORE = 0.64
+DETECTOR_CLASSIFIER_TRUSTED_MODEL_MAX_HEIGHT = 55
+DETECTOR_CLASSIFIER_TRUSTED_MODEL_MAX_AREA_RATIO = 0.002
+DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_PROPOSAL_CONFIDENCE = 0.18
+DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_X_RATIO = 0.52
+DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_READ_CONFIDENCE = 0.98
+DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_SUPPORT = 2
 SCHOOL_ZONE_SPEED_PRIOR = 0.12
 SCHOOL_ZONE_SUPPORT_BONUS = 0.08
 SCHOOL_ZONE_MIN_SUPPORT = 2
@@ -1162,22 +1170,21 @@ class SpeedLimitVisionDaemon:
       return None
 
     normalized_mask = self._extract_value_template_mask(sign_crop)
-    if normalized_mask is None:
-      return None
-
-    classifier_input = cv2.cvtColor(normalized_mask, cv2.COLOR_GRAY2BGR)
-    padded_crop = self._square_resize(classifier_input, size=128)
-    blob = cv2.dnn.blobFromImage(padded_crop, scalefactor=1 / 255.0, size=(128, 128), swapRB=True, crop=False)
     speed_class_count = len(US_CLASSIFIER_SPEED_VALUES)
 
-    if self.reject_classifier_net is not None:
-      self.reject_classifier_net.setInput(blob)
+    if normalized_mask is not None and self.reject_classifier_net is not None:
+      reject_input = cv2.cvtColor(normalized_mask, cv2.COLOR_GRAY2BGR)
+      reject_crop = self._square_resize(reject_input, size=128)
+      reject_blob = cv2.dnn.blobFromImage(reject_crop, scalefactor=1 / 255.0, size=(128, 128), swapRB=True, crop=False)
+      self.reject_classifier_net.setInput(reject_blob)
       reject_scores = np.array(self.reject_classifier_net.forward()).reshape(-1)
       if reject_scores.size == speed_class_count + 1:
         reject_probabilities = self._normalize_classifier_output(reject_scores)
         if float(reject_probabilities[speed_class_count]) >= US_REJECT_CLASSIFIER_MIN_CONFIDENCE:
           return None
 
+    padded_crop = self._square_resize(sign_crop, size=128)
+    blob = cv2.dnn.blobFromImage(padded_crop, scalefactor=1 / 255.0, size=(128, 128), swapRB=True, crop=False)
     self.classifier_net.setInput(blob)
 
     scores = np.array(self.classifier_net.forward()).reshape(-1)
@@ -1219,6 +1226,13 @@ class SpeedLimitVisionDaemon:
         x1 < frame_width * DETECTOR_CLASSIFIER_RESCUE_MIN_X_RATIO
       ):
         continue
+
+      proposal_area_ratio = (box_width * box_height) / max(frame_width * frame_height, 1)
+      is_tiny_low_conf_box = (
+        class_id != 2 and
+        proposal_area_ratio < DETECTOR_CLASSIFIER_TINY_LOW_CONF_AREA_RATIO and
+        proposal_confidence < DETECTOR_CLASSIFIER_TINY_LOW_CONF_MIN_CONFIDENCE
+      )
 
       if class_id == 2:
         school_scores: dict[int, float] = {}
@@ -1275,11 +1289,11 @@ class SpeedLimitVisionDaemon:
               if score >= SCHOOL_ZONE_SHORT_CIRCUIT_CONFIDENCE:
                 return Detection(speed_limit_mph, score)
 
-      proposal_area_ratio = (box_width * box_height) / max(frame_width * frame_height, 1)
       speed_scores: dict[int, float] = {}
       speed_best_confidences: dict[int, float] = {}
       speed_support_counts: dict[int, int] = {}
       speed_regulatory_support: dict[int, int] = {}
+      speed_trusted_model_support: dict[int, int] = {}
 
       for expand_left, expand_top, expand_right, expand_bottom, expansion_weight in DETECTOR_CLASSIFIER_EXPANSIONS:
         expanded_x1 = max(int(x1 - box_width * expand_left), 0)
@@ -1297,7 +1311,16 @@ class SpeedLimitVisionDaemon:
 
         model_read = self._classify_speed_limit_from_model(sign_crop)
         ocr_read = None
-        needs_ocr_confirmation = class_id != 2 and not is_regulatory
+        trusted_model_read = (
+          class_id == 0 and
+          model_read is not None and
+          x1 >= frame_width * DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_X_RATIO and
+          box_height <= DETECTOR_CLASSIFIER_TRUSTED_MODEL_MAX_HEIGHT and
+          proposal_area_ratio <= DETECTOR_CLASSIFIER_TRUSTED_MODEL_MAX_AREA_RATIO and
+          proposal_confidence >= DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_PROPOSAL_CONFIDENCE and
+          model_read[1] >= DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_READ_CONFIDENCE
+        )
+        needs_ocr_confirmation = class_id != 2 and (not is_regulatory or is_tiny_low_conf_box) and not trusted_model_read
         if model_read is None or needs_ocr_confirmation:
           ocr_read = self._read_speed_limit_from_crop(sign_crop)
         read_result = model_read or ocr_read
@@ -1310,6 +1333,7 @@ class SpeedLimitVisionDaemon:
           read_result = (model_read[0], min(model_read[1], ocr_read[1]))
 
         speed_limit_mph, read_confidence = read_result
+        score_is_regulatory = is_regulatory or trusted_model_read
         if (
           class_id == 2 and
           proposal_confidence < SCHOOL_ZONE_FALLBACK_MIN_CONFIDENCE and
@@ -1318,7 +1342,7 @@ class SpeedLimitVisionDaemon:
           continue
 
         score = read_confidence * expansion_weight
-        if is_regulatory:
+        if score_is_regulatory:
           score += DETECTOR_CLASSIFIER_REGULATORY_BONUS
         elif proposal_area_ratio >= DETECTOR_CLASSIFIER_SMALL_BOX_AREA_RATIO:
           score -= DETECTOR_CLASSIFIER_NON_REGULATORY_PENALTY
@@ -1330,6 +1354,8 @@ class SpeedLimitVisionDaemon:
         speed_support_counts[speed_limit_mph] = speed_support_counts.get(speed_limit_mph, 0) + 1
         if is_regulatory or class_id == 2:
           speed_regulatory_support[speed_limit_mph] = speed_regulatory_support.get(speed_limit_mph, 0) + 1
+        if trusted_model_read:
+          speed_trusted_model_support[speed_limit_mph] = speed_trusted_model_support.get(speed_limit_mph, 0) + 1
 
       if not speed_scores:
         continue
@@ -1342,6 +1368,11 @@ class SpeedLimitVisionDaemon:
         ),
       )
       if class_id == 2 and speed_limit_mph not in SCHOOL_ZONE_SPEED_VALUES:
+        continue
+      if (
+        speed_regulatory_support.get(speed_limit_mph, 0) < 1 and
+        0 < speed_trusted_model_support.get(speed_limit_mph, 0) < DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_SUPPORT
+      ):
         continue
       if class_id != 2 and speed_limit_mph in SCHOOL_ZONE_SPEED_VALUES:
         competing_speed_limit_mph = max(
@@ -1371,7 +1402,10 @@ class SpeedLimitVisionDaemon:
         else:
           score = max(score - 0.06, 0.0)
       elif is_small_box:
-        if speed_regulatory_support.get(speed_limit_mph, 0) < 1:
+        if (
+          speed_regulatory_support.get(speed_limit_mph, 0) < 1 and
+          speed_trusted_model_support.get(speed_limit_mph, 0) < DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_SUPPORT
+        ):
           continue
         if support_count < DETECTOR_CLASSIFIER_RESCUE_MIN_SUPPORT:
           continue
