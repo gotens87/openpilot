@@ -31,7 +31,7 @@ Usage:
   scripts/laptop_device_build.sh setup-sysroot-agnos [manifest-path]
   scripts/laptop_device_build.sh build-image
   scripts/laptop_device_build.sh build [jobs] [scons args...]
-  scripts/laptop_device_build.sh scons [scons args...]
+  scripts/laptop_device_build.sh scons [--no-scrub] [scons args...]
   scripts/laptop_device_build.sh manager [jobs] [--no-build] [-- manager args...]
   scripts/laptop_device_build.sh shell
 
@@ -388,12 +388,19 @@ setup_sysroot_from_agnos() {
 run_larch64_scons() {
   local jobs="$1"
   shift || true
+  local scrub_mode="${SP_SCONS_SCRUB_MODE:-full}"
+  if [[ "${1:-}" == "--no-scrub" ]]; then
+    scrub_mode="none"
+    shift || true
+  fi
   local engine
   local started_at
   engine="$(detect_engine)"
   ensure_image_exists "${engine}"
   ensure_sysroot_layout
-  scrub_mixed_arch_artifacts
+  if [[ "${scrub_mode}" != "none" ]]; then
+    scrub_mixed_arch_artifacts
+  fi
   started_at="$(date +%s)"
 
   echo "==> Starting larch64 scons build"
