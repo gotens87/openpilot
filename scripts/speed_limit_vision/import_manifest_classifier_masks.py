@@ -44,6 +44,12 @@ def safe_stem(text: str) -> str:
   return cleaned.strip("._")[:180] or "sample"
 
 
+def short_stem(text: str, max_prefix: int = 80) -> str:
+  prefix = safe_stem(text)[:max_prefix].strip("._") or "sample"
+  digest = hashlib.sha1(text.encode("utf-8")).hexdigest()[:12]
+  return f"{prefix}_{digest}"
+
+
 def read_rows(path: Path) -> list[dict[str, str]]:
   with path.open("r", encoding="utf-8", newline="") as csv_file:
     return list(csv.DictReader(csv_file))
@@ -163,9 +169,9 @@ def load_crop(row: dict[str, str], manifest_path: Path, default_padding: float):
   return crop_box(image, boxes[bbox_index], padding)
 
 
-def write_mask(workspace: Path, split: str, speed_value: int, stem: str, image_bgr) -> None:
+def write_mask(workspace: Path, split: str, speed_value: int, stem: str, image_bgr) -> bool:
   output_dir = ensure_dir(workspace / "classifier" / split / str(speed_value))
-  cv2.imwrite(str(output_dir / f"{stem}.png"), image_bgr)
+  return cv2.imwrite(str(output_dir / f"{stem}.png"), image_bgr)
 
 
 def main() -> int:
@@ -178,6 +184,7 @@ def main() -> int:
   skipped_no_speed = 0
   skipped_no_crop = 0
   skipped_no_mask = 0
+  skipped_write_failed = 0
   written = 0
 
   for manifest_path in [path.expanduser().resolve() for path in args.manifest]:
@@ -207,25 +214,32 @@ def main() -> int:
         skipped_no_mask += 1
         continue
 
-      manifest_stem = safe_stem(manifest_path.stem)
-      source_stem = safe_stem(key_text)
+      manifest_stem = short_stem(manifest_path.stem, max_prefix=48)
+      source_stem = short_stem(key_text, max_prefix=72)
       base_stem = f"manifest_{manifest_stem}_{row_index:06d}_{source_stem}"
       base_mask = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
-      write_mask(workspace, split, speed_value, f"{base_stem}_base", base_mask)
-      written += 1
+      row_written = 0
+      if write_mask(workspace, split, speed_value, f"{base_stem}_base", base_mask):
+        written += 1
+        row_written += 1
 
       for variant_index in range(max(args.variants_per_example, 0)):
         augmented = augment_mask(mask, rng)
-        write_mask(workspace, split, speed_value, f"{base_stem}_var{variant_index:02d}", augmented)
-        written += 1
-      imported += 1
+        if write_mask(workspace, split, speed_value, f"{base_stem}_var{variant_index:02d}", augmented):
+          written += 1
+          row_written += 1
+      if row_written:
+        imported += 1
+      else:
+        skipped_write_failed += 1
     if args.max_rows > 0 and attempted >= args.max_rows:
       break
 
   print(
     "Imported manifest classifier masks: "
     f"attempted={attempted} imported={imported} written={written} "
-    f"skipped_no_speed={skipped_no_speed} skipped_no_crop={skipped_no_crop} skipped_no_mask={skipped_no_mask}"
+    f"skipped_no_speed={skipped_no_speed} skipped_no_crop={skipped_no_crop} skipped_no_mask={skipped_no_mask} "
+    f"skipped_write_failed={skipped_write_failed}"
   )
   return 0
 

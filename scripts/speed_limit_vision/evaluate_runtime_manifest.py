@@ -28,6 +28,7 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--detector-min-confidence", type=float, help="Override runtime US detector confidence threshold.")
   parser.add_argument("--classifier-min-confidence", type=float, help="Override runtime US classifier confidence threshold.")
   parser.add_argument("--classifier-reject-min-confidence", type=float, help="Override runtime reject-class confidence threshold.")
+  parser.add_argument("--include-uncertain", action="store_true", help="Include uncertain_positive review rows in positive metrics.")
   parser.add_argument("--strict-positive-recall", type=float, help="Exit non-zero if positive exact recall is below this value.")
   parser.add_argument("--strict-negative-fpr", type=float, help="Exit non-zero if negative false-positive rate is above this value.")
   return parser.parse_args()
@@ -89,6 +90,15 @@ def main() -> int:
     raise FileNotFoundError(classifier_path)
 
   rows = load_rows(args.manifest.expanduser().resolve(), set(args.split) if args.split else None)
+  uncertain_count = sum(
+    row.get("sample_type", "") == "uncertain_positive" or row.get("review_status", "") == "uncertain"
+    for row in rows
+  )
+  if not args.include_uncertain:
+    rows = [
+      row for row in rows
+      if row.get("sample_type", "") != "uncertain_positive" and row.get("review_status", "") != "uncertain"
+    ]
   if args.max_rows > 0 and len(rows) > args.max_rows:
     rng = random.Random(args.seed)
     rows = rng.sample(rows, args.max_rows)
@@ -159,6 +169,8 @@ def main() -> int:
   negative_fpr = negative_false_positive / negative_count if negative_count else 0.0
 
   print(f"Rows evaluated: {positive_count + negative_count}")
+  if uncertain_count and not args.include_uncertain:
+    print(f"Skipped uncertain rows: {uncertain_count}")
   print(f"Unreadable rows: {unreadable_count}")
   print(
     f"Positive exact: {positive_exact}/{positive_count} "

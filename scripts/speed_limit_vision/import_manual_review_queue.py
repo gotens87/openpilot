@@ -63,6 +63,7 @@ DETECTOR_MANIFEST_FIELDNAMES = [
 ]
 
 POSITIVE_STATUSES = {"accepted", "corrected"}
+UNCERTAIN_STATUS = "uncertain"
 NEGATIVE_STATUS = "ignore"
 SIGN_TYPE_CLASS_IDS = {
   "regulatory": 0,
@@ -226,6 +227,14 @@ def is_positive(row: dict[str, str]) -> bool:
   return Path(row.get("crop_path", "")).is_file() and Path(row.get("frame_path", "")).is_file()
 
 
+def is_uncertain_positive(row: dict[str, str]) -> bool:
+  if row.get("review_status") != UNCERTAIN_STATUS:
+    return False
+  if not parse_speed(row.get("review_speed_limit_mph", "")):
+    return False
+  return Path(row.get("frame_path", "")).is_file()
+
+
 def is_true_negative(row: dict[str, str]) -> bool:
   if row.get("review_status") != NEGATIVE_STATUS:
     return False
@@ -253,7 +262,7 @@ def positive_classifier_row(row: dict[str, str], split: str) -> dict[str, object
 
 
 def runtime_row(row: dict[str, str], split: str, sample_type: str) -> dict[str, object]:
-  speed = parse_speed(row.get("review_speed_limit_mph", "")) if sample_type == "positive" else 0
+  speed = parse_speed(row.get("review_speed_limit_mph", "")) if sample_type in ("positive", "uncertain_positive") else 0
   return {
     "record_key": row["record_key"],
     "split": split,
@@ -331,6 +340,7 @@ def main() -> int:
 
   rows = merged_review_rows(queue_path, labels_path)
   positive_rows = [row for row in rows if is_positive(row)]
+  uncertain_positive_rows = [row for row in rows if is_uncertain_positive(row)]
   true_negative_rows = [row for row in rows if is_true_negative(row)]
   if args.max_detector_negatives > 0:
     true_negative_rows = true_negative_rows[:args.max_detector_negatives]
@@ -346,6 +356,10 @@ def main() -> int:
     detector_row = import_detector_example(workspace, row, split, args.source_name, "positive", args.mode, args.overwrite)
     if detector_row is not None:
       detector_rows.append(detector_row)
+
+  for row in uncertain_positive_rows:
+    split = split_for_key(row["record_key"], args.val_modulo, args.val_remainder)
+    runtime_rows.append(runtime_row(row, split, "uncertain_positive"))
 
   for row in true_negative_rows:
     split = split_for_key(row["record_key"], args.val_modulo, args.val_remainder)
@@ -363,6 +377,7 @@ def main() -> int:
     "labels": str(labels_path),
     "reviewed_rows": len(rows),
     "positive_rows": len(positive_rows),
+    "uncertain_positive_rows": len(uncertain_positive_rows),
     "true_negative_rows": len(true_negative_rows),
     "classifier_manifest": str(classifier_manifest),
     "runtime_manifest": str(runtime_manifest),
@@ -374,7 +389,7 @@ def main() -> int:
 
   print(
     "Imported manual review queue: "
-    f"reviewed={len(rows)} positives={len(positive_rows)} true_negatives={len(true_negative_rows)} "
+    f"reviewed={len(rows)} positives={len(positive_rows)} uncertain_positives={len(uncertain_positive_rows)} true_negatives={len(true_negative_rows)} "
     f"detector_imported={len(detector_rows)}"
   )
   print(f"Classifier manifest: {classifier_manifest}")

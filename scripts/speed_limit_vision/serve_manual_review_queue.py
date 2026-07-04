@@ -79,7 +79,7 @@ HTML = r"""<!doctype html>
       <option value="negative">Negatives</option>
     </select>
     <span class="status" id="status"></span>
-    <span class="muted">Keys: Space/p accept model, type speed to correct, i/x ignore, Enter save correction, j/k next/prev, s school, r regulatory, a advisory</span>
+    <span class="muted">Keys: Space/p accept model, type speed to correct, u uncertain, i/x ignore, Enter save correction, j/k next/prev, s school, r regulatory, a advisory</span>
   </header>
   <main>
     <section class="images">
@@ -107,6 +107,7 @@ HTML = r"""<!doctype html>
       <h3>Action</h3>
       <div class="buttons" id="statusButtons">
         <button data-status="ignore" class="warn">Ignore / Bad Crop (i/x)</button>
+        <button data-status="uncertain">Uncertain (u)</button>
         <button data-status="needs_later">Needs Later</button>
       </div>
       <label>Box</label>
@@ -356,7 +357,7 @@ function render() {
 }
 
 function manualReviewStatus() {
-  if (draft.review_status === "ignore" || draft.review_status === "needs_later") return draft.review_status;
+  if (draft.review_status === "ignore" || draft.review_status === "needs_later" || draft.review_status === "uncertain") return draft.review_status;
   return "corrected";
 }
 
@@ -438,6 +439,17 @@ document.addEventListener("keydown", ev => {
     setActive("#statusButtons button", "status", "ignore");
     setActive("#typeButtons button", "type", "not_speed_limit");
     save(true, "ignore");
+    return;
+  }
+  if (key === "u") {
+    clearSpeedBuffer();
+    draft.review_status = "uncertain";
+    if (!draft.review_speed_limit_mph) draft.review_speed_limit_mph = current.candidate_speed_limit_mph || "";
+    ensureSpeedSignType();
+    setActive("#statusButtons button", "status", "uncertain");
+    setActive("#speedButtons button", "speed", draft.review_speed_limit_mph);
+    setActive("#typeButtons button", "type", draft.review_sign_type);
+    save(true, "uncertain");
     return;
   }
   if (key === "enter") { clearSpeedBuffer(); save(true); }
