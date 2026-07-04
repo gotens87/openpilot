@@ -27,6 +27,7 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--output-csv", type=Path, help="Optional per-row prediction output.")
   parser.add_argument("--detector-min-confidence", type=float, help="Override runtime US detector confidence threshold.")
   parser.add_argument("--classifier-min-confidence", type=float, help="Override runtime US classifier confidence threshold.")
+  parser.add_argument("--classifier-reject-min-confidence", type=float, help="Override runtime reject-class confidence threshold.")
   parser.add_argument("--strict-positive-recall", type=float, help="Exit non-zero if positive exact recall is below this value.")
   parser.add_argument("--strict-negative-fpr", type=float, help="Exit non-zero if negative false-positive rate is above this value.")
   return parser.parse_args()
@@ -81,6 +82,7 @@ def main() -> int:
   models_dir = args.models_dir.expanduser().resolve()
   detector_path = models_dir / "speed_limit_us_detector.onnx"
   classifier_path = models_dir / "speed_limit_us_value_classifier.onnx"
+  reject_classifier_path = models_dir / "speed_limit_us_reject_classifier.onnx"
   if not detector_path.is_file():
     raise FileNotFoundError(detector_path)
   if not classifier_path.is_file():
@@ -93,10 +95,14 @@ def main() -> int:
 
   slv.US_DETECTOR_MODEL_PATH = detector_path
   slv.US_CLASSIFIER_MODEL_PATH = classifier_path
+  slv.US_REJECT_CLASSIFIER_MODEL_PATH = reject_classifier_path
   if args.detector_min_confidence is not None:
     slv.US_DETECTOR_MIN_CONFIDENCE = args.detector_min_confidence
   if args.classifier_min_confidence is not None:
     slv.US_CLASSIFIER_MIN_CONFIDENCE = args.classifier_min_confidence
+  if args.classifier_reject_min_confidence is not None:
+    slv.US_CLASSIFIER_REJECT_MIN_CONFIDENCE = args.classifier_reject_min_confidence
+    slv.US_REJECT_CLASSIFIER_MIN_CONFIDENCE = args.classifier_reject_min_confidence
   daemon = slv.SpeedLimitVisionDaemon(use_runtime=False)
 
   output_rows: list[dict[str, str]] = []
