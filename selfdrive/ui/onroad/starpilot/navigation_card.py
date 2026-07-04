@@ -15,6 +15,7 @@ from openpilot.system.ui.widgets import Widget
 ASSETS_PATH = Path(__file__).resolve().parents[4] / "starpilot" / "assets" / "navigation"
 FALLBACK_ICON = "direction_turn_straight.png"
 NAV_CANCEL_HOLD_SECONDS = 0.65
+_LEFT_UI_EXTENT = 424  # left UI (DM icon + personality button) extent from content_rect.x: offset(126) + x_shift(202) + radius(96)
 
 
 def _format_distance(distance_m: float, is_metric: bool) -> str:
@@ -278,7 +279,7 @@ class NavigationCardRenderer(Widget):
       rl.draw_text_ex(self._font_bold, line, rl.Vector2(x, line_y), font_size, 0, rl.WHITE)
 
   def _render_default(self, rect: rl.Rectangle) -> None:
-    container_width = min(int(rect.width - 120), 1080)
+    container_width = min(int(rect.width - 2 * _LEFT_UI_EXTENT - 20), 1080)
     container_width = max(container_width, 760)
     container_height = 225 if rect.width >= 1200 else 195
     container_x = int(rect.x + (rect.width - container_width) / 2)
