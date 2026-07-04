@@ -27,6 +27,8 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
     PLATE_TAU,
     AetherListColors,
 )
+from openpilot.selfdrive.ui.layouts.settings.starpilot.simple_download_manager import SimpleDownloadManager
+from openpilot.starpilot.common.starpilot_variables import THEME_SAVE_PATH
 
 PANEL_STYLE = DEFAULT_PANEL_STYLE
 
@@ -445,7 +447,7 @@ class StarPilotAppearanceLayout(_SettingsPage):
             SettingRow("BootLogo", "value", tr_noop("Boot Logo"),
                        subtitle="",
                        get_value=lambda: self._get_theme_value("BootLogo"),
-                       on_click=lambda: self._show_theme_selector("BootLogo")),
+                       on_click=self._show_boot_logo_manager),
             SettingRow("StartupAlert", "value", tr_noop("Startup Alert"),
                        subtitle="",
                        get_value=self._get_startup_alert_display,
@@ -703,3 +705,21 @@ class StarPilotAppearanceLayout(_SettingsPage):
 
         dialog = MultiOptionDialog(tr("Startup Alert"), options, current, callback=on_select)
         gui_app.push_widget(dialog)
+
+    # ── Boot logo manager ──
+
+    def _show_boot_logo_manager(self):
+        def on_close(res, val):
+            pass
+
+        gui_app.push_widget(SimpleDownloadManager(
+            title=tr("Boot Logo"),
+            asset_type="boot logo",
+            directory=THEME_SAVE_PATH / "bootlogos",
+            asset_param="BootLogo",
+            download_param="BootLogoToDownload",
+            downloadable_list_param="DownloadableBootLogos",
+            params=self._params,
+            params_memory=self._params_memory,
+            on_close=on_close,
+        ))
