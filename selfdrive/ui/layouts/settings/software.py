@@ -1,3 +1,4 @@
+import dataclasses
 import os
 import subprocess
 import threading
@@ -35,7 +36,43 @@ _GIT_ENV = os.environ.copy() | {
   "GCM_INTERACTIVE": "Never",
 }
 
+class FastUpdateStage:
+  IDLE = "idle"
+  PREPARING = "preparing"
+  FETCHING = "fetching"
+  APPLYING = "applying"
+  SUBMODULES = "submodules"
+  REBOOTING = "rebooting"
+  ERROR = "error"
+
+
+@dataclasses.dataclass
+class _FastUpdateState:
+  stage: str = FastUpdateStage.IDLE
+  status: str = ""
+  error: str = ""
+
+
+_FAST_UPDATE_GIT_TIMEOUT_S = 15
+_FAST_UPDATE_FETCH_TIMEOUT_S = 120
+_FAST_UPDATE_RESET_TIMEOUT_S = 120
+_FAST_UPDATE_SUBMODULE_TIMEOUT_S = 300
+_FAST_UPDATE_REBOOT_NOTICE_S = 6.0
+
 _fast_update_lock = threading.Lock()
+_fast_update_state = _FastUpdateState()
+_fast_update_state_lock = threading.Lock()
+
+
+def _set_fast_update_state(**kwargs):
+  with _fast_update_state_lock:
+    for k, v in kwargs.items():
+      setattr(_fast_update_state, k, v)
+
+
+def _get_fast_update_state() -> _FastUpdateState:
+  with _fast_update_state_lock:
+    return dataclasses.replace(_fast_update_state)
 
 
 def time_ago(date: datetime.datetime | None) -> str:
@@ -89,9 +126,6 @@ class SoftwareLayout(Widget):
     # Track waiting-for-updater transition to avoid brief re-enable while still idle
     self._waiting_for_updater = False
     self._waiting_start_ts: float = 0.0
-    self._fast_update_active = False
-    self._fast_update_status: str = ""
-    self._fast_update_error: str = ""
 
     # Branch switcher
     self._branch_btn = button_item(lambda: tr("Target Branch"), lambda: tr("SELECT"), callback=self._on_select_branch)
@@ -135,22 +169,22 @@ class SoftwareLayout(Widget):
     self._download_btn.set_visible(ui_state.is_offroad())
 
     # ── Fast update progress (in-memory status from worker thread) ─
-    if self._fast_update_active:
-      if self._fast_update_status == "rebooting":
-        self._download_btn.action_item.set_enabled(False)
-        self._download_btn.action_item.set_text(tr("REBOOTING"))
-        self._download_btn.action_item.set_value(tr("Update applied, rebooting..."))
-      elif self._fast_update_error:
-        self._download_btn.action_item.set_enabled(True)
-        self._download_btn.action_item.set_text(tr("RETRY"))
-        self._download_btn.action_item.set_value(tr("Failed: {}").format(self._fast_update_error))
-      else:
-        self._download_btn.action_item.set_enabled(False)
-        self._download_btn.action_item.set_text(tr("FAST UPDATE"))
-        self._download_btn.action_item.set_value(self._fast_update_status or tr("Starting..."))
+    state = _get_fast_update_state()
+    if state.stage == FastUpdateStage.REBOOTING:
+      self._download_btn.action_item.set_enabled(False)
+      self._download_btn.action_item.set_text(tr("REBOOTING"))
+      self._download_btn.action_item.set_value(tr("Update applied, rebooting..."))
+    elif state.stage == FastUpdateStage.ERROR:
+      self._download_btn.action_item.set_enabled(True)
+      self._download_btn.action_item.set_text(tr("RETRY"))
+      self._download_btn.action_item.set_value(tr("Failed: {}").format(state.error))
+    elif state.stage != FastUpdateStage.IDLE:
+      self._download_btn.action_item.set_enabled(False)
+      self._download_btn.action_item.set_text(tr("FAST UPDATE"))
+      self._download_btn.action_item.set_value(state.status or tr("Starting..."))
 
     # ── Normal updater state (only when fast update NOT active) ───
-    if not self._fast_update_active:
+    if state.stage == FastUpdateStage.IDLE:
       updater_state = ui_state.params.get("UpdaterState") or "idle"
       failed_count = ui_state.params.get("UpdateFailedCount") or 0
       fetch_available = ui_state.params.get_bool("UpdaterFetchAvailable")
@@ -189,8 +223,8 @@ class SoftwareLayout(Widget):
     self._branch_btn.action_item.set_value(current_branch)
 
     # Update install button
-    self._install_btn.set_visible(ui_state.is_offroad() and update_available and not self._fast_update_active)
-    if update_available and not self._fast_update_active:
+    self._install_btn.set_visible(ui_state.is_offroad() and update_available and state.stage == FastUpdateStage.IDLE)
+    if update_available and state.stage == FastUpdateStage.IDLE:
       new_desc = starpilot_display_description(ui_state.params.get("UpdaterNewDescription"))
       new_release_notes = (ui_state.params.get("UpdaterNewReleaseNotes") or b"").decode("utf-8", "replace")
       self._install_btn.action_item.set_text(tr("INSTALL"))
@@ -201,11 +235,11 @@ class SoftwareLayout(Widget):
       self._install_btn.set_visible(False)
 
   def _on_download_update(self):
-    if self._fast_update_active:
-      if self._fast_update_error:
-        self._fast_update_active = False
-        self._fast_update_error = ""
-        self._fast_update_status = ""
+    state = _get_fast_update_state()
+    if state.stage == FastUpdateStage.ERROR:
+      _set_fast_update_state(stage=FastUpdateStage.IDLE, status="", error="")
+      return
+    if state.stage != FastUpdateStage.IDLE:
       return
     self._download_btn.action_item.set_enabled(False)
     if self._download_btn.action_item.text == tr("CHECK"):
@@ -219,7 +253,7 @@ class SoftwareLayout(Widget):
       os.system("pkill -SIGHUP -f system.updated.updated")
 
   def _on_long_press_fast_update(self):
-    if self._fast_update_active:
+    if _get_fast_update_state().stage != FastUpdateStage.IDLE:
       return
     def on_confirm(result):
       if result == DialogResult.CONFIRM:
@@ -235,65 +269,57 @@ class SoftwareLayout(Widget):
       return
     if not _fast_update_lock.acquire(blocking=False):
       return
-    self._fast_update_active = True
-    self._fast_update_status = tr("Starting fast update...")
-    self._fast_update_error = ""
+    _set_fast_update_state(stage=FastUpdateStage.PREPARING, status=tr("Starting fast update..."), error="")
     self._download_btn.action_item.set_enabled(False)
     self._download_btn.action_item.set_text(tr("FAST UPDATE"))
-    self._download_btn.action_item.set_value(self._fast_update_status)
-    os.system("pkill -f system.updated.updated")
+    self._download_btn.action_item.set_value(tr("Starting fast update..."))
+    subprocess.run(["pkill", "-f", "system.updated.updated"], check=False)
 
     def _run_worker():
       repo_path = str(Path(__file__).resolve().parents[4])
       try:
-        self._fast_update_status = tr("Preparing...")
         result = subprocess.run(
           ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_path,
-          capture_output=True, text=True, timeout=15, env=_GIT_ENV)
+          capture_output=True, text=True, timeout=_FAST_UPDATE_GIT_TIMEOUT_S, env=_GIT_ENV)
         if result.returncode != 0:
           raise RuntimeError(result.stderr.strip() or "failed to resolve HEAD branch")
         branch = result.stdout.strip()
+
         result = subprocess.run(
           ["git", "rev-parse", "HEAD"], cwd=repo_path,
-          capture_output=True, text=True, timeout=15, env=_GIT_ENV)
+          capture_output=True, text=True, timeout=_FAST_UPDATE_GIT_TIMEOUT_S, env=_GIT_ENV)
         if result.returncode != 0:
           raise RuntimeError(result.stderr.strip() or "failed to resolve HEAD commit")
-        current_commit = result.stdout.strip()
 
-        subprocess.run(["git", "update-ref", "refs/starpilot/rollback", current_commit],
-                       cwd=repo_path, capture_output=True, timeout=15, env=_GIT_ENV)
-        subprocess.run(["git", "config", "--local", "--replace-all", "starpilot.rollbackbranch", branch],
-                       cwd=repo_path, capture_output=True, timeout=15, env=_GIT_ENV)
-
-        self._fast_update_status = tr("Fetching latest commit...")
+        _set_fast_update_state(stage=FastUpdateStage.FETCHING, status=tr("Fetching latest commit..."))
         result = subprocess.run(
           ["git", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "fetch",
            "--progress", "--depth=1", "--no-recurse-submodules", "origin", branch],
-          cwd=repo_path, capture_output=True, text=True, timeout=120, env=_GIT_ENV)
+          cwd=repo_path, capture_output=True, text=True, timeout=_FAST_UPDATE_FETCH_TIMEOUT_S, env=_GIT_ENV)
         if result.returncode != 0:
           raise RuntimeError(result.stderr.strip() or "fetch failed")
 
-        self._fast_update_status = tr("Applying update...")
+        _set_fast_update_state(stage=FastUpdateStage.APPLYING, status=tr("Applying update..."))
         result = subprocess.run(["git", "reset", "--hard", "FETCH_HEAD"],
-                                cwd=repo_path, capture_output=True, text=True, timeout=120, env=_GIT_ENV)
+                                cwd=repo_path, capture_output=True, text=True, timeout=_FAST_UPDATE_RESET_TIMEOUT_S, env=_GIT_ENV)
         if result.returncode != 0:
           raise RuntimeError(result.stderr.strip() or "reset failed")
 
         gitmodules = Path(repo_path) / ".gitmodules"
         if gitmodules.is_file():
-          self._fast_update_status = tr("Updating submodules...")
+          _set_fast_update_state(stage=FastUpdateStage.SUBMODULES, status=tr("Updating submodules..."))
           result = subprocess.run(
             ["git", "submodule", "update", "--init", "--recursive", "--depth=1", "--progress"],
-            cwd=repo_path, capture_output=True, text=True, timeout=300, env=_GIT_ENV)
+            cwd=repo_path, capture_output=True, text=True, timeout=_FAST_UPDATE_SUBMODULE_TIMEOUT_S, env=_GIT_ENV)
           if result.returncode != 0:
             raise RuntimeError(result.stderr.strip() or "submodule update failed")
 
-        self._fast_update_status = "rebooting"
-        time.sleep(6)
+        _set_fast_update_state(stage=FastUpdateStage.REBOOTING, status=tr("Update applied, rebooting..."))
+        time.sleep(_FAST_UPDATE_REBOOT_NOTICE_S)
         HARDWARE.reboot()
 
       except Exception as e:
-        self._fast_update_error = str(e)[:200]
+        _set_fast_update_state(stage=FastUpdateStage.ERROR, error=str(e)[:1000], status="")
         cloudlog.exception("Fast update failed")
       finally:
         _fast_update_lock.release()
