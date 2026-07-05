@@ -16,21 +16,25 @@ from openpilot.common.constants import CV
 from openpilot.common.realtime import set_core_affinity
 from openpilot.system.hardware import PC
 
-INFERENCE_INTERVAL = 0.25
-FOLLOWUP_INFERENCE_INTERVAL = 0.2
+RUNTIME_LOOP_HZ = 20
+INFERENCE_INTERVAL = 0.15
+FOLLOWUP_INFERENCE_INTERVAL = 0.10
 FOLLOWUP_WINDOW_SECONDS = 2.0
 BUSY_INFERENCE_INTERVAL = 1.0
 LIVE_POSE_RECOVERY_THROTTLE_SECONDS = 2.0
 LIVE_POSE_RECOVERY_INFERENCE_INTERVAL = 1.0
 DEVICE_BUSY_AVG_CPU_USAGE_PERCENT = 78.0
 DEVICE_BUSY_MAX_CPU_USAGE_PERCENT = 92.0
+DEVICE_BUSY_HOT_CORE_COUNT = 4
 MIN_DETECTION_CONFIDENCE = 0.2
 STRONG_DETECTION_CONFIDENCE = 0.72
 OCR_MIN_CONFIDENCE = 0.35
-VALUE_TEMPLATE_MIN_CONFIDENCE = 0.62
+VALUE_TEMPLATE_MIN_CONFIDENCE = 0.55
 HISTORY_SECONDS = 2.0
 CONSISTENT_DETECTIONS = 2
-CHANGE_CONSISTENT_DETECTIONS = 3
+CHANGE_CONSISTENT_DETECTIONS = 10
+LOW_SPEED_CHANGE_CONSISTENT_DETECTIONS = 12
+LOW_SPEED_CHANGE_MIN_CONFIDENCE = 0.97
 MODEL_DETECTION_SHORT_CIRCUIT_CONFIDENCE = 0.65
 PUBLISHED_HOLD_SECONDS = 300.0
 PUBLISHED_CHANGE_COOLDOWN_SECONDS = 1.4
@@ -184,6 +188,16 @@ SNAPSHOT_JPEG_QUALITY = 85
 SPEED_LIMIT_VISION_AFFINITY_CORES = [0, 1, 2]
 
 
+def device_cpu_usage_busy(cpu_usage):
+  usage = list(cpu_usage)
+  if not usage:
+    return False
+  return (
+    sum(usage) / len(usage) >= DEVICE_BUSY_AVG_CPU_USAGE_PERCENT or
+    sum(core_usage >= DEVICE_BUSY_MAX_CPU_USAGE_PERCENT for core_usage in usage) >= DEVICE_BUSY_HOT_CORE_COUNT
+  )
+
+
 @dataclass
 class Detection:
   speed_limit_mph: int
@@ -232,9 +246,9 @@ class SpeedLimitVisionDaemon:
     self.classifier_net = None
     self.model_mode = "legacy"
     self.last_error = ""
-    self.last_inference_at = 0.0
+    self.last_inference_at = -float("inf")
     self.last_detection_at = 0.0
-    self.last_live_pose_inputs_not_ok_at = 0.0
+    self.last_live_pose_inputs_not_ok_at = -float("inf")
     self.last_road_name = ""
     self.followup_until = 0.0
     self.started_prev = False
@@ -701,20 +715,14 @@ class SpeedLimitVisionDaemon:
   def _device_cpu_busy(self):
     if self.sm is None:
       return False
-    cpu_usage = list(self.sm["deviceState"].cpuUsagePercent)
-    if not cpu_usage:
-      return False
-    return (
-      sum(cpu_usage) / len(cpu_usage) >= DEVICE_BUSY_AVG_CPU_USAGE_PERCENT or
-      max(cpu_usage) >= DEVICE_BUSY_MAX_CPU_USAGE_PERCENT
-    )
+    return device_cpu_usage_busy(self.sm["deviceState"].cpuUsagePercent)
 
   def _inference_interval(self, now):
     in_followup = now < self.followup_until
     interval = FOLLOWUP_INFERENCE_INTERVAL if in_followup else INFERENCE_INTERVAL
     if now - self.last_live_pose_inputs_not_ok_at < LIVE_POSE_RECOVERY_THROTTLE_SECONDS:
       interval = max(interval, LIVE_POSE_RECOVERY_INFERENCE_INTERVAL)
-    elif not in_followup and self._device_cpu_busy():
+    elif self._device_cpu_busy():
       interval = max(interval, BUSY_INFERENCE_INTERVAL)
     return interval
 
@@ -1696,7 +1704,12 @@ class SpeedLimitVisionDaemon:
     current_count = counts.get(current_speed_limit, 0) if current_speed_limit > 0 else 0
 
     if current_speed_limit > 0 and candidate_speed_limit != current_speed_limit:
-      if candidate_count < CHANGE_CONSISTENT_DETECTIONS:
+      required_count = CHANGE_CONSISTENT_DETECTIONS
+      if current_speed_limit >= 30 and candidate_speed_limit < 30:
+        required_count = LOW_SPEED_CHANGE_CONSISTENT_DETECTIONS
+        if best_confidence < LOW_SPEED_CHANGE_MIN_CONFIDENCE:
+          return None
+      if candidate_count < required_count:
         return None
       if candidate_count <= current_count:
         return None
@@ -1816,7 +1829,7 @@ class SpeedLimitVisionDaemon:
     if not self.use_runtime or self.sm is None:
       raise RuntimeError("SpeedLimitVisionDaemon runtime loop requires use_runtime=True")
 
-    ratekeeper = self.Ratekeeper(5, None)
+    ratekeeper = self.Ratekeeper(RUNTIME_LOOP_HZ, None)
 
     while True:
       self.sm.update(0)
