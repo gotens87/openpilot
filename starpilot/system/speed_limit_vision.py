@@ -26,7 +26,7 @@ LIVE_POSE_RECOVERY_INFERENCE_INTERVAL = 1.0
 RUNTIME_TELEMETRY_INTERVAL_SECONDS = 2.0
 DEBUG_HEARTBEAT_INTERVAL_SECONDS = 30.0
 DEFAULT_DETECTOR_INPUT_SIZE = 640
-DETECTOR_INPUT_SIZE_CANDIDATES = (640, 512, 448, 416, 384, 320)
+DETECTOR_INPUT_SIZE_CANDIDATES = (640, 512, 448, 416, 384, 320, 288, 256)
 FULL_FRAME_OCR_FALLBACK_ENABLED = False
 DETECTOR_CLASSIFIER_REGION_MODE = "right_roi"  # full, right_roi, full_and_right_roi
 DEVICE_BUSY_AVG_CPU_USAGE_PERCENT = 78.0
@@ -150,7 +150,7 @@ US_DETECTOR_CLASSES = {
 US_CLASSIFIER_SPEED_VALUES = (15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75)
 SCHOOL_ZONE_SPEED_VALUES = frozenset((15, 20, 25))
 US_DETECTOR_MIN_CONFIDENCE = 0.06
-US_CLASSIFIER_MIN_CONFIDENCE = 0.50
+US_CLASSIFIER_MIN_CONFIDENCE = 0.65
 US_CLASSIFIER_REJECT_MIN_CONFIDENCE = 0.85
 SEPARATE_REJECT_CLASSIFIER_ENABLED = False
 US_REJECT_CLASSIFIER_MIN_CONFIDENCE = 0.85
@@ -315,6 +315,11 @@ class SpeedLimitVisionDaemon:
     self.last_inference_interval = INFERENCE_INTERVAL
     self.last_inference_interval_reason = "steady"
     self.last_cpu_busy = False
+    self.last_frame_process_duration_s = 0.0
+    self.last_detector_forward_count = 0
+    self.last_detector_forward_duration_s = 0.0
+    self.last_classifier_forward_count = 0
+    self.last_classifier_forward_duration_s = 0.0
 
     self.digit_templates = self._build_digit_templates()
     self.speed_value_templates = self._build_speed_value_templates()
@@ -1195,7 +1200,10 @@ class SpeedLimitVisionDaemon:
     blob = cv2.dnn.blobFromImage(letterboxed, scalefactor=1 / 255.0, size=detector_shape, swapRB=True, crop=False)
     self.net.setInput(blob)
 
+    forward_started_at = time.monotonic()
     predictions = np.squeeze(self.net.forward())
+    self.last_detector_forward_count += 1
+    self.last_detector_forward_duration_s += time.monotonic() - forward_started_at
     if predictions.ndim != 2:
       return []
     if predictions.shape[0] < predictions.shape[1]:
@@ -1298,7 +1306,10 @@ class SpeedLimitVisionDaemon:
     blob = cv2.dnn.blobFromImage(padded_crop, scalefactor=1 / 255.0, size=(128, 128), swapRB=True, crop=False)
     self.classifier_net.setInput(blob)
 
+    forward_started_at = time.monotonic()
     scores = np.array(self.classifier_net.forward()).reshape(-1)
+    self.last_classifier_forward_count += 1
+    self.last_classifier_forward_duration_s += time.monotonic() - forward_started_at
     has_reject_class = scores.size == speed_class_count + 1
     if scores.size != speed_class_count and not has_reject_class:
       return None
@@ -1931,6 +1942,11 @@ class SpeedLimitVisionDaemon:
         "lastInferenceIntervalS": round(float(self.last_inference_interval), 3),
         "lastInferenceIntervalReason": self.last_inference_interval_reason,
         "cpuBusy": self.last_cpu_busy,
+        "lastFrameProcessDurationS": round(self.last_frame_process_duration_s, 3),
+        "lastDetectorForwardCount": self.last_detector_forward_count,
+        "lastDetectorForwardDurationS": round(self.last_detector_forward_duration_s, 3),
+        "lastClassifierForwardCount": self.last_classifier_forward_count,
+        "lastClassifierForwardDurationS": round(self.last_classifier_forward_duration_s, 3),
         "cpuUsagePercent": cpu_usage,
         "livePoseInputsOK": live_pose_inputs_ok,
         "publishedSpeedLimitMph": self.published_speed_limit_mph,
@@ -2128,6 +2144,12 @@ class SpeedLimitVisionDaemon:
       buffer = self.client.recv() if self.client is not None else None
       self.inference_count += 1
       self.last_inference_at = now
+      inference_started_at = time.monotonic()
+      self.last_frame_process_duration_s = 0.0
+      self.last_detector_forward_count = 0
+      self.last_detector_forward_duration_s = 0.0
+      self.last_classifier_forward_count = 0
+      self.last_classifier_forward_duration_s = 0.0
       if buffer is None or not buffer.data.any():
         self.empty_frame_count += 1
         stale_cleared = self._clear_published_detection_if_stale(now, "empty_frame")
@@ -2144,6 +2166,7 @@ class SpeedLimitVisionDaemon:
       self.current_frame_bgr = frame_bgr
 
       detection = self._detect_sign(frame_bgr)
+      self.last_frame_process_duration_s = time.monotonic() - inference_started_at
       if detection is not None:
         self.detection_count += 1
         self._update_detection(detection)
