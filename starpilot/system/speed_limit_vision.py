@@ -25,6 +25,10 @@ LIVE_POSE_RECOVERY_THROTTLE_SECONDS = 2.0
 LIVE_POSE_RECOVERY_INFERENCE_INTERVAL = 1.0
 RUNTIME_TELEMETRY_INTERVAL_SECONDS = 2.0
 DEBUG_HEARTBEAT_INTERVAL_SECONDS = 30.0
+DEFAULT_DETECTOR_INPUT_SIZE = 640
+DETECTOR_INPUT_SIZE_CANDIDATES = (640, 512, 448, 416, 384, 320)
+FULL_FRAME_OCR_FALLBACK_ENABLED = False
+DETECTOR_CLASSIFIER_REGION_MODE = "right_roi"  # full, right_roi, full_and_right_roi
 DEVICE_BUSY_AVG_CPU_USAGE_PERCENT = 78.0
 DEVICE_BUSY_MAX_CPU_USAGE_PERCENT = 92.0
 DEVICE_BUSY_HOT_CORE_COUNT = 4
@@ -66,7 +70,7 @@ ROI_WINDOWS = (
   {"bounds": (0.48, 0.00, 0.98, 0.42), "min_confidence": MIN_DETECTION_CONFIDENCE},
   {"bounds": (0.52, 0.02, 0.97, 0.58), "min_confidence": 0.22},
   {"bounds": (0.62, 0.02, 0.99, 0.68), "min_confidence": 0.18},
-  {"bounds": (0.72, 0.05, 1.00, 0.82), "min_confidence": 0.15},
+  {"bounds": (0.45, 0.00, 1.00, 0.82), "min_confidence": 0.10},
 )
 EDGE_MARGIN_RATIO = 0.03
 MAX_BOX_AREA_RATIO = 0.22
@@ -98,10 +102,18 @@ REGULATORY_RED_LOW_HUE_MAX = 12
 REGULATORY_RED_HIGH_HUE_MIN = 168
 REGULATORY_RED_SAT_MIN = 80
 REGULATORY_RED_VALUE_MIN = 60
+REGULATORY_GREEN_HUE_MIN = 45
+REGULATORY_GREEN_HUE_MAX = 90
+REGULATORY_BLUE_HUE_MIN = 90
+REGULATORY_BLUE_HUE_MAX = 135
+REGULATORY_COLORED_SAT_MIN = 70
+REGULATORY_COLORED_VALUE_MIN = 70
 REGULATORY_MIN_WHITE_RATIO = 0.08
 REGULATORY_MIN_DARK_RATIO = 0.01
 REGULATORY_MAX_YELLOW_RATIO = 0.12
 REGULATORY_MAX_RED_RATIO = 0.10
+REGULATORY_MAX_GREEN_RATIO = 0.35
+REGULATORY_MAX_BLUE_RATIO = 0.35
 REGULATORY_MIN_WHITE_COMPONENT_RATIO = 0.012
 REGULATORY_MIN_COMPONENT_FILL = 0.36
 REGULATORY_MIN_COMPONENT_HEIGHT_RATIO = 0.2
@@ -125,6 +137,7 @@ SPEED_LIMIT_CLASSES = {
 }
 
 VALID_SPEED_LIMITS_MPH = set(range(10, 125, 5))
+MIN_PUBLISHABLE_SPEED_LIMIT_MPH = 20
 LEGACY_MODEL_PATH = Path(__file__).resolve().parents[1] / "assets" / "vision_models" / "speed_limit_vision.onnx"
 US_DETECTOR_MODEL_PATH = Path(__file__).resolve().parents[1] / "assets" / "vision_models" / "speed_limit_us_detector.onnx"
 US_CLASSIFIER_MODEL_PATH = Path(__file__).resolve().parents[1] / "assets" / "vision_models" / "speed_limit_us_value_classifier.onnx"
@@ -248,6 +261,7 @@ class SpeedLimitVisionDaemon:
     self.net = None
     self.classifier_net = None
     self.model_mode = "legacy"
+    self.detector_input_size = DEFAULT_DETECTOR_INPUT_SIZE
     self.last_error = ""
     self.last_inference_at = -float("inf")
     self.last_detection_at = 0.0
@@ -749,14 +763,37 @@ class SpeedLimitVisionDaemon:
     self.last_inference_interval_reason = reason
     return interval
 
+  @staticmethod
+  def _read_onnx_square_input_size(model_path):
+    try:
+      import onnx
+
+      model = onnx.load(str(model_path), load_external_data=False)
+      if not model.graph.input:
+        return DEFAULT_DETECTOR_INPUT_SIZE
+
+      shape = model.graph.input[0].type.tensor_type.shape.dim
+      if len(shape) < 4:
+        return DEFAULT_DETECTOR_INPUT_SIZE
+
+      height = int(shape[2].dim_value)
+      width = int(shape[3].dim_value)
+      if height == width and height in DETECTOR_INPUT_SIZE_CANDIDATES:
+        return height
+    except Exception:
+      pass
+    return DEFAULT_DETECTOR_INPUT_SIZE
+
   def _load_model(self):
     self.net = None
     self.classifier_net = None
     self.reject_classifier_net = None
     self.model_mode = "legacy"
+    self.detector_input_size = DEFAULT_DETECTOR_INPUT_SIZE
 
     if US_DETECTOR_MODEL_PATH.is_file() and US_CLASSIFIER_MODEL_PATH.is_file():
       try:
+        self.detector_input_size = self._read_onnx_square_input_size(US_DETECTOR_MODEL_PATH)
         self.net = cv2.dnn.readNetFromONNX(str(US_DETECTOR_MODEL_PATH))
         self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
         self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
@@ -787,6 +824,7 @@ class SpeedLimitVisionDaemon:
       return
 
     try:
+      self.detector_input_size = self._read_onnx_square_input_size(LEGACY_MODEL_PATH)
       self.net = cv2.dnn.readNetFromONNX(str(LEGACY_MODEL_PATH))
       self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
       self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
@@ -917,23 +955,35 @@ class SpeedLimitVisionDaemon:
 
   def _detect_sign(self, frame_bgr):
     if self.net is None:
-      return self._detect_sign_from_ocr_candidates(frame_bgr)
+      if FULL_FRAME_OCR_FALLBACK_ENABLED:
+        return self._publishable_detection(self._detect_sign_from_ocr_candidates(frame_bgr))
+      return None
 
     if self.model_mode == "detector_classifier" and self.classifier_net is not None:
       detector_detection = self._detect_sign_from_detector_classifier(frame_bgr)
       if detector_detection is not None:
-        return detector_detection
-      return self._detect_sign_from_ocr_candidates(frame_bgr)
+        return self._publishable_detection(detector_detection)
+      if FULL_FRAME_OCR_FALLBACK_ENABLED:
+        return self._publishable_detection(self._detect_sign_from_ocr_candidates(frame_bgr))
+      return None
 
     model_detection = self._detect_sign_from_model_proposals(frame_bgr)
     if model_detection is not None and model_detection.confidence >= MODEL_DETECTION_SHORT_CIRCUIT_CONFIDENCE:
-      return model_detection
+      return self._publishable_detection(model_detection)
 
-    ocr_detection = self._detect_sign_from_ocr_candidates(frame_bgr)
-    if ocr_detection is not None and (model_detection is None or ocr_detection.confidence > model_detection.confidence):
-      return ocr_detection
+    if FULL_FRAME_OCR_FALLBACK_ENABLED:
+      ocr_detection = self._detect_sign_from_ocr_candidates(frame_bgr)
+      if ocr_detection is not None and (model_detection is None or ocr_detection.confidence > model_detection.confidence):
+        return self._publishable_detection(ocr_detection)
 
-    return model_detection
+    return self._publishable_detection(model_detection)
+
+  def _publishable_detection(self, detection):
+    if detection is None:
+      return None
+    if detection.speed_limit_mph < MIN_PUBLISHABLE_SPEED_LIMIT_MPH:
+      return None
+    return detection
 
   def _is_regulatory_speed_sign(self, sign_crop):
     if sign_crop.size == 0:
@@ -962,17 +1012,35 @@ class SpeedLimitVisionDaemon:
       (saturation >= REGULATORY_RED_SAT_MIN) &
       (value >= REGULATORY_RED_VALUE_MIN)
     ).astype(np.uint8)
+    green_mask = (
+      (hue >= REGULATORY_GREEN_HUE_MIN) &
+      (hue <= REGULATORY_GREEN_HUE_MAX) &
+      (saturation >= REGULATORY_COLORED_SAT_MIN) &
+      (value >= REGULATORY_COLORED_VALUE_MIN)
+    ).astype(np.uint8)
+    blue_mask = (
+      (hue >= REGULATORY_BLUE_HUE_MIN) &
+      (hue <= REGULATORY_BLUE_HUE_MAX) &
+      (saturation >= REGULATORY_COLORED_SAT_MIN) &
+      (value >= REGULATORY_COLORED_VALUE_MIN)
+    ).astype(np.uint8)
 
     white_ratio = float(white_mask.mean())
     dark_ratio = float(dark_mask.mean())
     yellow_ratio = float(yellow_mask.mean())
     red_ratio = float(red_mask.mean())
+    green_ratio = float(green_mask.mean())
+    blue_ratio = float(blue_mask.mean())
 
     if white_ratio < REGULATORY_MIN_WHITE_RATIO or dark_ratio < REGULATORY_MIN_DARK_RATIO:
       return False
     if yellow_ratio > REGULATORY_MAX_YELLOW_RATIO and yellow_ratio > white_ratio * 0.45:
       return False
     if red_ratio > REGULATORY_MAX_RED_RATIO and red_ratio > white_ratio * 0.35:
+      return False
+    if green_ratio > REGULATORY_MAX_GREEN_RATIO and green_ratio > white_ratio * 0.60:
+      return False
+    if blue_ratio > REGULATORY_MAX_BLUE_RATIO and blue_ratio > white_ratio * 0.60:
       return False
 
     white_binary = (white_mask * 255).astype(np.uint8)
@@ -1069,8 +1137,9 @@ class SpeedLimitVisionDaemon:
       return []
 
     frame_height, frame_width = frame_bgr.shape[:2]
-    letterboxed, ratio, pad_width, pad_height = self._letterbox(frame_bgr)
-    blob = cv2.dnn.blobFromImage(letterboxed, scalefactor=1 / 255.0, size=(640, 640), swapRB=True, crop=False)
+    detector_shape = (self.detector_input_size, self.detector_input_size)
+    letterboxed, ratio, pad_width, pad_height = self._letterbox(frame_bgr, shape=detector_shape)
+    blob = cv2.dnn.blobFromImage(letterboxed, scalefactor=1 / 255.0, size=detector_shape, swapRB=True, crop=False)
     self.net.setInput(blob)
 
     predictions = np.squeeze(self.net.forward())
@@ -1118,8 +1187,9 @@ class SpeedLimitVisionDaemon:
       return []
 
     region_height, region_width = frame_bgr.shape[:2]
-    letterboxed, ratio, pad_width, pad_height = self._letterbox(frame_bgr)
-    blob = cv2.dnn.blobFromImage(letterboxed, scalefactor=1 / 255.0, size=(640, 640), swapRB=True, crop=False)
+    detector_shape = (self.detector_input_size, self.detector_input_size)
+    letterboxed, ratio, pad_width, pad_height = self._letterbox(frame_bgr, shape=detector_shape)
+    blob = cv2.dnn.blobFromImage(letterboxed, scalefactor=1 / 255.0, size=detector_shape, swapRB=True, crop=False)
     self.net.setInput(blob)
 
     predictions = np.squeeze(self.net.forward())
@@ -1171,17 +1241,19 @@ class SpeedLimitVisionDaemon:
       return []
 
     frame_height, frame_width = frame_bgr.shape[:2]
-    candidates = self._collect_detector_classifier_proposals_from_region(
-      frame_bgr,
-      0,
-      0,
-      frame_width,
-      frame_height,
-      US_DETECTOR_MIN_CONFIDENCE,
-    )
+    candidates = []
+    if DETECTOR_CLASSIFIER_REGION_MODE in ("full", "full_and_right_roi"):
+      candidates.extend(self._collect_detector_classifier_proposals_from_region(
+        frame_bgr,
+        0,
+        0,
+        frame_width,
+        frame_height,
+        US_DETECTOR_MIN_CONFIDENCE,
+      ))
 
     # A second pass on a focused right-side ROI materially improves small U.S. sign reads.
-    if ROI_WINDOWS:
+    if DETECTOR_CLASSIFIER_REGION_MODE in ("right_roi", "full_and_right_roi") and ROI_WINDOWS:
       left_ratio, top_ratio, right_ratio, bottom_ratio = ROI_WINDOWS[-1]["bounds"]
       left = int(frame_width * left_ratio)
       top = int(frame_height * top_ratio)
@@ -1431,11 +1503,15 @@ class SpeedLimitVisionDaemon:
         max(support_count - 1, 0) * DETECTOR_CLASSIFIER_SUPPORT_BONUS,
         0.95,
       )
+      selection_score = score
+      published_score = score
       if class_id == 2:
         if speed_limit_mph in SCHOOL_ZONE_SPEED_VALUES:
-          score = min(score + 0.06, 0.95)
+          selection_score = min(score + 0.06, 0.95)
+          published_score = selection_score
         else:
-          score = max(score - 0.06, 0.0)
+          selection_score = max(score - 0.06, 0.0)
+          published_score = selection_score
       elif is_small_box:
         if (
           speed_regulatory_support.get(speed_limit_mph, 0) < 1 and
@@ -1446,11 +1522,13 @@ class SpeedLimitVisionDaemon:
           continue
         if read_confidence < DETECTOR_CLASSIFIER_RESCUE_MIN_CONFIDENCE:
           continue
-        score = min(score, DETECTOR_CLASSIFIER_RESCUE_MAX_SCORE)
-      if score > best_score:
-        best_score = score
-        best_detection = Detection(speed_limit_mph, score)
-      if best_score >= MODEL_DETECTION_SHORT_CIRCUIT_CONFIDENCE:
+        published_score = min(score, DETECTOR_CLASSIFIER_RESCUE_MAX_SCORE)
+        if speed_trusted_model_support.get(speed_limit_mph, 0) < DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_SUPPORT:
+          selection_score = published_score
+      if selection_score > best_score:
+        best_score = selection_score
+        best_detection = Detection(speed_limit_mph, published_score)
+      if best_detection is not None and best_detection.confidence >= MODEL_DETECTION_SHORT_CIRCUIT_CONFIDENCE:
         return best_detection
 
     return best_detection
@@ -1820,6 +1898,8 @@ class SpeedLimitVisionDaemon:
         "started": started,
         "startedPrev": self.started_prev,
         "modelMode": self.model_mode,
+        "detectorInputSize": self.detector_input_size,
+        "detectorRegionMode": DETECTOR_CLASSIFIER_REGION_MODE,
         "stream": self.stream_name,
         "cameraConnected": camera_connected,
         "debugSession": self.debug_session_id,

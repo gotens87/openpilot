@@ -61,9 +61,11 @@ class QlogRuntimeContext:
 
 
 class RouteReplayDaemon(slv.SpeedLimitVisionDaemon):
-  def __init__(self, runtime_context: QlogRuntimeContext | None):
+  def __init__(self, runtime_context: QlogRuntimeContext | None, measured_inference_seconds: float):
     super().__init__(use_runtime=False)
     self.runtime_context = runtime_context
+    self.measured_inference_seconds = max(float(measured_inference_seconds), 0.0)
+    self.next_available_at = -float("inf")
     self.now = 0.0
     self.sampled_frames = 0
     self.inference_frames = 0
@@ -116,16 +118,20 @@ class RouteReplayDaemon(slv.SpeedLimitVisionDaemon):
     self.sampled_frames += 1
     if not self.prepare_tick(now):
       return
+    if now < self.next_available_at:
+      return
     self.current_frame_bgr = frame_bgr
 
     inference_interval = self._inference_interval(now)
-    if now - self.last_inference_at < inference_interval:
+    next_due = max(self.next_available_at, self.last_inference_at + inference_interval)
+    if now < next_due:
       if self.published_speed_limit_mph > 0 and self._published_detection_stale(now):
         self._write_debug_event("stale_clear", reason="inference_interval")
         self._clear_detection()
       return
 
     self.last_inference_at = now
+    self.next_available_at = now + self.measured_inference_seconds
     self.inference_frames += 1
     detection = self._detect_sign(frame_bgr)
     if detection is not None:
@@ -146,6 +152,15 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--progress", action="store_true", help="Print a one-line progress update after each segment.")
   parser.add_argument("--fast-seek", action="store_true", help="Use VideoCapture seeks when skipping frames. Faster, but less faithful for HEVC.")
   parser.add_argument("--qlog-context", action="store_true", help="Replay with logged deviceState/livePose/mapdOut context for closer runtime cadence.")
+  parser.add_argument("--measured-inference-seconds", type=float, default=0.0, help="Simulate wall-clock time spent inside one runtime inference on the comma.")
+  parser.add_argument(
+    "--detector-region-mode",
+    choices=("full", "right_roi", "full_and_right_roi"),
+    help="Override the detector/classifier region mode used by speed_limit_vision.py.",
+  )
+  parser.add_argument("--right-roi-bounds", help="Override the right ROI as left,top,right,bottom ratios, for example 0.45,0,1,0.82.")
+  parser.add_argument("--right-roi-min-confidence", type=float, help="Override the right ROI detector minimum confidence.")
+  parser.add_argument("--full-frame-ocr", action="store_true", help="Enable the expensive full-frame OCR fallback during replay.")
   return parser.parse_args()
 
 
@@ -243,6 +258,36 @@ def configure_models(models_dir: Path) -> None:
   slv.US_REJECT_CLASSIFIER_MODEL_PATH = models_dir / "speed_limit_us_reject_classifier.onnx"
 
 
+def configure_runtime_options(args: argparse.Namespace) -> None:
+  if args.detector_region_mode:
+    slv.DETECTOR_CLASSIFIER_REGION_MODE = args.detector_region_mode
+
+  if args.full_frame_ocr:
+    slv.FULL_FRAME_OCR_FALLBACK_ENABLED = True
+
+  if args.right_roi_bounds:
+    parts = [float(part.strip()) for part in args.right_roi_bounds.split(",")]
+    if len(parts) != 4:
+      raise ValueError("--right-roi-bounds must contain four comma-separated ratios")
+    left, top, right, bottom = parts
+    if not (0.0 <= left < right <= 1.0 and 0.0 <= top < bottom <= 1.0):
+      raise ValueError("--right-roi-bounds must be normalized as 0 <= left < right <= 1 and 0 <= top < bottom <= 1")
+
+    min_confidence = args.right_roi_min_confidence
+    if min_confidence is None:
+      min_confidence = float(slv.ROI_WINDOWS[-1]["min_confidence"]) if slv.ROI_WINDOWS else slv.US_DETECTOR_MIN_CONFIDENCE
+    right_roi = {"bounds": (left, top, right, bottom), "min_confidence": float(min_confidence)}
+    slv.ROI_WINDOWS = (*slv.ROI_WINDOWS[:-1], right_roi) if slv.ROI_WINDOWS else (right_roi,)
+  elif args.right_roi_min_confidence is not None:
+    if not slv.ROI_WINDOWS:
+      right_roi = {"bounds": (0.72, 0.05, 1.00, 0.82), "min_confidence": float(args.right_roi_min_confidence)}
+      slv.ROI_WINDOWS = (right_roi,)
+    else:
+      right_roi = dict(slv.ROI_WINDOWS[-1])
+      right_roi["min_confidence"] = float(args.right_roi_min_confidence)
+      slv.ROI_WINDOWS = (*slv.ROI_WINDOWS[:-1], right_roi)
+
+
 def skip_to_frame(capture, frame_index: int, target_index: int, fast_seek: bool) -> int:
   if target_index <= frame_index:
     return frame_index
@@ -264,8 +309,9 @@ def replay_route(
   end_s: float | None,
   progress: bool,
   fast_seek: bool,
+  measured_inference_seconds: float,
 ) -> tuple[RouteSummary, list[dict[str, str]]]:
-  daemon = RouteReplayDaemon(runtime_context)
+  daemon = RouteReplayDaemon(runtime_context, measured_inference_seconds)
   for segment_path in segments:
     segment = segment_index(segment_path)
     capture = cv2.VideoCapture(str(segment_path))
@@ -291,8 +337,8 @@ def replay_route(
         continue
 
       inference_interval = daemon._inference_interval(now)
-      if now - daemon.last_inference_at < inference_interval:
-        next_due = daemon.last_inference_at + inference_interval
+      next_due = max(daemon.next_available_at, daemon.last_inference_at + inference_interval)
+      if now < next_due:
         target_index = max(frame_index + 1, int(round((next_due - segment_start_s) * fps)))
         if total_frames > 0:
           target_index = min(target_index, total_frames)
@@ -372,6 +418,7 @@ def publish_speed_changes(events: list[dict[str, str]]) -> list[tuple[float, str
 def main() -> int:
   args = parse_args()
   configure_models(args.models_dir)
+  configure_runtime_options(args)
   clip_root = args.clip_root.expanduser().resolve()
   all_events: list[tuple[str, dict[str, str]]] = []
 
@@ -390,12 +437,22 @@ def main() -> int:
       else:
         runtime_context = build_runtime_context(qlogs)
 
-    summary, events = replay_route(log_id, paths, runtime_context, args.start, args.end, args.progress, args.fast_seek)
+    summary, events = replay_route(
+      log_id,
+      paths,
+      runtime_context,
+      args.start,
+      args.end,
+      args.progress,
+      args.fast_seek,
+      args.measured_inference_seconds,
+    )
     all_events.extend((log_id, event) for event in events)
     print(
       f"{summary.route}: segments={summary.segments} qlog_context={int(summary.qlog_context)} sampled={summary.sampled_frames} "
       f"inference={summary.inference_frames} candidate={summary.candidate_events} "
-      f"publish={summary.publish_events} stale_clear={summary.stale_clear_events} road_change={summary.road_change_events}",
+      f"publish={summary.publish_events} stale_clear={summary.stale_clear_events} road_change={summary.road_change_events} "
+      f"measured_inference_s={args.measured_inference_seconds:.3f} region={slv.DETECTOR_CLASSIFIER_REGION_MODE}",
       flush=True,
     )
     publish_values = [event.get("speedLimitMph") for event in events if event["event"] == "publish"]
