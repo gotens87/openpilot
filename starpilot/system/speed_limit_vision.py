@@ -23,6 +23,8 @@ FOLLOWUP_WINDOW_SECONDS = 2.0
 BUSY_INFERENCE_INTERVAL = 1.0
 LIVE_POSE_RECOVERY_THROTTLE_SECONDS = 2.0
 LIVE_POSE_RECOVERY_INFERENCE_INTERVAL = 1.0
+RUNTIME_TELEMETRY_INTERVAL_SECONDS = 2.0
+DEBUG_HEARTBEAT_INTERVAL_SECONDS = 30.0
 DEVICE_BUSY_AVG_CPU_USAGE_PERCENT = 78.0
 DEVICE_BUSY_MAX_CPU_USAGE_PERCENT = 92.0
 DEVICE_BUSY_HOT_CORE_COUNT = 4
@@ -183,6 +185,7 @@ SCHOOL_ZONE_SHORT_CIRCUIT_CONFIDENCE = 0.78
 SCHOOL_ZONE_FALLBACK_MIN_CONFIDENCE = 0.35
 NON_SCHOOL_LOW_SPEED_COMPETING_MIN_CONFIDENCE = 0.95
 DEBUG_BASE_DIR = Path("/data/media/0/vision_speed_limit_debug")
+DEBUG_RUNTIME_STATUS_PATH = DEBUG_BASE_DIR / "runtime_status.json"
 DEBUG_CAPTURE_DIRNAME = "captures"
 SNAPSHOT_JPEG_QUALITY = 85
 SPEED_LIMIT_VISION_AFFINITY_CORES = [0, 1, 2]
@@ -283,6 +286,18 @@ class SpeedLimitVisionDaemon:
     self.debug_session_started_at = 0.0
     self.last_logged_status = ""
     self.last_logged_candidate = None
+    self.last_runtime_telemetry_at = 0.0
+    self.last_debug_heartbeat_at = 0.0
+    self.loop_count = 0
+    self.inference_count = 0
+    self.interval_skip_count = 0
+    self.busy_skip_count = 0
+    self.camera_unavailable_count = 0
+    self.empty_frame_count = 0
+    self.detection_count = 0
+    self.last_inference_interval = INFERENCE_INTERVAL
+    self.last_inference_interval_reason = "steady"
+    self.last_cpu_busy = False
 
     self.digit_templates = self._build_digit_templates()
     self.speed_value_templates = self._build_speed_value_templates()
@@ -328,6 +343,7 @@ class SpeedLimitVisionDaemon:
     self.debug_session_started_at = 0.0
     self.last_logged_status = ""
     self.last_logged_candidate = None
+    self.last_debug_heartbeat_at = 0.0
 
   def _read_next_map_speed_limit(self):
     if self.params_memory is None:
@@ -720,10 +736,17 @@ class SpeedLimitVisionDaemon:
   def _inference_interval(self, now):
     in_followup = now < self.followup_until
     interval = FOLLOWUP_INFERENCE_INTERVAL if in_followup else INFERENCE_INTERVAL
+    reason = "followup" if in_followup else "steady"
+    self.last_cpu_busy = False
     if now - self.last_live_pose_inputs_not_ok_at < LIVE_POSE_RECOVERY_THROTTLE_SECONDS:
       interval = max(interval, LIVE_POSE_RECOVERY_INFERENCE_INTERVAL)
+      reason = "live_pose_recovery"
     elif self._device_cpu_busy():
+      self.last_cpu_busy = True
       interval = max(interval, BUSY_INFERENCE_INTERVAL)
+      reason = "cpu_busy"
+    self.last_inference_interval = interval
+    self.last_inference_interval_reason = reason
     return interval
 
   def _load_model(self):
@@ -1751,6 +1774,107 @@ class SpeedLimitVisionDaemon:
       self.last_logged_status = status
       self._write_debug_event("status", statusText=status)
 
+  def _publish_runtime_telemetry(self, now, phase, force=False, **fields):
+    if not self.use_runtime:
+      return
+    if not force and now - self.last_runtime_telemetry_at < RUNTIME_TELEMETRY_INTERVAL_SECONDS:
+      return
+
+    self.last_runtime_telemetry_at = now
+    try:
+      DEBUG_BASE_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+      if self.params_memory is not None:
+        try:
+          self.params_memory.put("VisionSpeedLimitLastEvent", f"runtime telemetry mkdir error: {type(exc).__name__}"[:160])
+        except Exception:
+          pass
+      return
+
+    try:
+      live_pose_inputs_ok = True
+      started = False
+      cpu_usage = []
+      if self.sm is not None:
+        try:
+          started = bool(self.sm["deviceState"].started)
+          cpu_usage = [round(float(value), 1) for value in self.sm["deviceState"].cpuUsagePercent]
+        except Exception:
+          started = False
+          cpu_usage = []
+        try:
+          live_pose_inputs_ok = bool(self.sm["livePose"].inputsOK)
+        except Exception:
+          live_pose_inputs_ok = True
+
+      camera_connected = False
+      try:
+        camera_connected = bool(self.client is not None and self.client.is_connected())
+      except Exception:
+        camera_connected = False
+
+      telemetry = {
+        "phase": phase,
+        "wallTimeNs": time.time_ns(),
+        "monoTimeNs": time.monotonic_ns(),
+        "started": started,
+        "startedPrev": self.started_prev,
+        "modelMode": self.model_mode,
+        "stream": self.stream_name,
+        "cameraConnected": camera_connected,
+        "debugSession": self.debug_session_id,
+        "loopCount": self.loop_count,
+        "inferenceCount": self.inference_count,
+        "intervalSkipCount": self.interval_skip_count,
+        "busySkipCount": self.busy_skip_count,
+        "cameraUnavailableCount": self.camera_unavailable_count,
+        "emptyFrameCount": self.empty_frame_count,
+        "detectionCount": self.detection_count,
+        "lastInferenceAgeS": round(max(now - self.last_inference_at, 0.0), 3),
+        "lastInferenceIntervalS": round(float(self.last_inference_interval), 3),
+        "lastInferenceIntervalReason": self.last_inference_interval_reason,
+        "cpuBusy": self.last_cpu_busy,
+        "cpuUsagePercent": cpu_usage,
+        "livePoseInputsOK": live_pose_inputs_ok,
+        "publishedSpeedLimitMph": self.published_speed_limit_mph,
+        "publishedConfidence": round(self.published_confidence, 4),
+        "lastCandidateSpeedLimitMph": self.last_candidate_speed_limit_mph,
+        "lastCandidateConfidence": round(self.last_candidate_confidence, 4),
+        "lastError": self.last_error,
+      }
+      telemetry.update(fields)
+      encoded = json.dumps(telemetry, separators=(",", ":")) + "\n"
+    except Exception as exc:
+      telemetry = {
+        "phase": phase,
+        "wallTimeNs": time.time_ns(),
+        "monoTimeNs": time.monotonic_ns(),
+        "loopCount": self.loop_count,
+        "telemetryError": f"{type(exc).__name__}: {exc}",
+      }
+      encoded = json.dumps(telemetry, separators=(",", ":")) + "\n"
+      if self.params_memory is not None:
+        try:
+          self.params_memory.put("VisionSpeedLimitLastEvent", f"runtime telemetry error: {type(exc).__name__}"[:160])
+        except Exception:
+          pass
+
+    try:
+      tmp_path = DEBUG_RUNTIME_STATUS_PATH.with_name(f"{DEBUG_RUNTIME_STATUS_PATH.name}.tmp")
+      tmp_path.write_text(encoded, encoding="utf-8")
+      tmp_path.replace(DEBUG_RUNTIME_STATUS_PATH)
+    except Exception as exc:
+      if self.params_memory is not None:
+        try:
+          self.params_memory.put("VisionSpeedLimitLastEvent", f"runtime telemetry write error: {type(exc).__name__}"[:160])
+        except Exception:
+          pass
+      return
+
+    if self.debug_log_path and now - self.last_debug_heartbeat_at >= DEBUG_HEARTBEAT_INTERVAL_SECONDS:
+      self.last_debug_heartbeat_at = now
+      self._write_debug_event("heartbeat", runtime=telemetry)
+
   def _publish_detection(self, speed_limit_mph, confidence, status_prefix):
     if speed_limit_mph != self.published_speed_limit_mph or abs(confidence - self.published_confidence) >= 0.05:
       published_changed = speed_limit_mph != self.published_speed_limit_mph
@@ -1832,6 +1956,8 @@ class SpeedLimitVisionDaemon:
     ratekeeper = self.Ratekeeper(RUNTIME_LOOP_HZ, None)
 
     while True:
+      now = time.monotonic()
+      self.loop_count += 1
       self.sm.update(0)
 
       if self.sm.updated["userBookmark"]:
@@ -1842,6 +1968,7 @@ class SpeedLimitVisionDaemon:
 
       if self.net is None:
         self._publish_status(self.last_error or "Vision model unavailable", clear_speed=True)
+        self._publish_runtime_telemetry(now, "model_unavailable")
         ratekeeper.keep_time()
         continue
 
@@ -1854,16 +1981,21 @@ class SpeedLimitVisionDaemon:
         self.current_frame_bgr = None
         self.pending_auto_bookmark = None
         self._publish_status("Idle - offroad", clear_speed=True)
+        self._publish_runtime_telemetry(now, "offroad")
         ratekeeper.keep_time()
         continue
 
-      now = time.monotonic()
       if self.sm.updated["livePose"] and not self.sm["livePose"].inputsOK:
         self.last_live_pose_inputs_not_ok_at = now
 
       if not self.started_prev:
         self.started_prev = True
         self._start_debug_session()
+        self._publish_runtime_telemetry(now, "onroad_start", force=True)
+      elif not self.debug_session_id:
+        self._start_debug_session()
+        self._write_debug_event("session_recovered", reason="missing_debug_session_while_onroad")
+        self._publish_runtime_telemetry(now, "session_recovered", force=True)
 
       road_name = self.sm["mapdOut"].roadName
       if self.last_road_name and road_name and road_name != self.last_road_name:
@@ -1872,32 +2004,41 @@ class SpeedLimitVisionDaemon:
       self.last_road_name = road_name or self.last_road_name
 
       if not self._connect_camera():
+        self.camera_unavailable_count += 1
         stale_cleared = self._clear_published_detection_if_stale(now, "camera_unavailable")
         status = "Waiting for camera stream"
         if self.published_speed_limit_mph > 0 and not stale_cleared:
           status = f"{status}, holding {self.published_speed_limit_mph} mph"
         self._publish_status(status, clear_speed=False)
+        self._publish_runtime_telemetry(now, "camera_unavailable")
         ratekeeper.keep_time()
         continue
 
       inference_interval = self._inference_interval(now)
       if now - self.last_inference_at < inference_interval:
+        self.interval_skip_count += 1
+        if self.last_inference_interval_reason == "cpu_busy":
+          self.busy_skip_count += 1
         stale_cleared = self._clear_published_detection_if_stale(now, "inference_interval")
         if self.published_speed_limit_mph > 0 and not stale_cleared:
           self._publish_detection(self.published_speed_limit_mph, self.published_confidence, "Holding")
         else:
           self._publish_status(f"Scanning {self.stream_name}", clear_speed=False)
+        self._publish_runtime_telemetry(now, "interval_skip")
         ratekeeper.keep_time()
         continue
 
       buffer = self.client.recv() if self.client is not None else None
+      self.inference_count += 1
       self.last_inference_at = now
       if buffer is None or not buffer.data.any():
+        self.empty_frame_count += 1
         stale_cleared = self._clear_published_detection_if_stale(now, "empty_frame")
         if self.published_speed_limit_mph > 0 and not stale_cleared:
           self._publish_status(f"Waiting for {self.stream_name}, holding {self.published_speed_limit_mph} mph", clear_speed=False)
         else:
           self._publish_status(f"Waiting for {self.stream_name}", clear_speed=False)
+        self._publish_runtime_telemetry(now, "empty_frame")
         ratekeeper.keep_time()
         continue
 
@@ -1907,13 +2048,18 @@ class SpeedLimitVisionDaemon:
 
       detection = self._detect_sign(frame_bgr)
       if detection is not None:
+        self.detection_count += 1
         self._update_detection(detection)
+        self._publish_runtime_telemetry(now, "detection")
       elif self._clear_published_detection_if_stale(now, "no_detection"):
         self._publish_status(f"Scanning {self.stream_name}", clear_speed=False)
+        self._publish_runtime_telemetry(now, "stale_clear")
       elif self.published_speed_limit_mph > 0:
         self._publish_detection(self.published_speed_limit_mph, self.published_confidence, "Holding")
+        self._publish_runtime_telemetry(now, "holding")
       else:
         self._publish_status(f"Scanning {self.stream_name}", clear_speed=False)
+        self._publish_runtime_telemetry(now, "scanning")
 
       self._maybe_commit_auto_bookmark(now)
       self._maybe_commit_training_capture(now)
