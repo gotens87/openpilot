@@ -84,6 +84,7 @@ class AlertRenderer(Widget):
                                            line_height=0.86, letter_spacing=0.025)
 
     self._prev_alert: Alert | None = None
+    self._current_alert: Alert | None = None
 
     self._alert_y_filter = BounceFilter(0, 0.1, 1 / gui_app.target_fps, initialized=False)
     self._alpha_filter = FirstOrderFilter(0, 0.05, 1 / gui_app.target_fps)
@@ -127,7 +128,8 @@ class AlertRenderer(Widget):
     return ret
 
   def will_render(self) -> tuple[Alert | None, bool]:
-    alert = self.get_alert(ui_state.sm)
+    """Return cached alert state without re-polling get_alert(). Safe to call multiple times per frame."""
+    alert = self._current_alert
     return alert or self._prev_alert, alert is None
 
   def _get_alert_rect(self, rect: rl.Rectangle, size: int) -> rl.Rectangle:
@@ -138,6 +140,7 @@ class AlertRenderer(Widget):
 
   def _render(self, rect: rl.Rectangle) -> bool:
     alert = self.get_alert(ui_state.sm)
+    self._current_alert = alert
 
     self._alpha_filter.update(0 if alert is None else 1)
 
