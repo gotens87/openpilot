@@ -55,7 +55,7 @@ MAP_NEXT_REVIEW_DISTANCE_METERS = 120.0
 MAP_TRANSITION_MISS_CAPTURE_COOLDOWN_SECONDS = 8.0
 MAP_VISION_MATCH_WINDOW_SECONDS = 2.5
 MODEL_PROPOSAL_MIN_CONFIDENCE = 0.0001
-MODEL_PROPOSAL_MAX_COUNT = 16
+MODEL_PROPOSAL_MAX_COUNT = 4
 MODEL_PROPOSAL_MAX_AREA_RATIO = 0.18
 MODEL_PROPOSAL_MIN_WIDTH = 10
 MODEL_PROPOSAL_MIN_HEIGHT = 18
@@ -152,6 +152,7 @@ SCHOOL_ZONE_SPEED_VALUES = frozenset((15, 20, 25))
 US_DETECTOR_MIN_CONFIDENCE = 0.10
 US_CLASSIFIER_MIN_CONFIDENCE = 0.50
 US_CLASSIFIER_REJECT_MIN_CONFIDENCE = 0.85
+SEPARATE_REJECT_CLASSIFIER_ENABLED = False
 US_REJECT_CLASSIFIER_MIN_CONFIDENCE = 0.85
 DETECTOR_CLASSIFIER_EXPANSIONS = (
   (0.00, 0.00, 0.00, 0.00, 1.10),
@@ -180,7 +181,7 @@ DETECTOR_CLASSIFIER_MIN_ACCEPT_HEIGHT = 40
 DETECTOR_CLASSIFIER_RESCUE_MIN_WIDTH = 14
 DETECTOR_CLASSIFIER_RESCUE_MIN_HEIGHT = 18
 DETECTOR_CLASSIFIER_RESCUE_MIN_X_RATIO = 0.52
-DETECTOR_CLASSIFIER_RESCUE_MIN_SUPPORT = 1
+DETECTOR_CLASSIFIER_RESCUE_MIN_SUPPORT = 2
 DETECTOR_CLASSIFIER_RESCUE_MIN_CONFIDENCE = 0.90
 DETECTOR_CLASSIFIER_RESCUE_MAX_SCORE = 0.64
 DETECTOR_CLASSIFIER_TRUSTED_MODEL_MAX_HEIGHT = 55
@@ -189,6 +190,8 @@ DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_PROPOSAL_CONFIDENCE = 0.18
 DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_X_RATIO = 0.52
 DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_READ_CONFIDENCE = 0.98
 DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_SUPPORT = 2
+DETECTOR_CLASSIFIER_STRONG_MODEL_MIN_PROPOSAL_CONFIDENCE = 0.70
+DETECTOR_CLASSIFIER_STRONG_MODEL_MIN_READ_CONFIDENCE = 0.995
 SCHOOL_ZONE_SPEED_PRIOR = 0.12
 SCHOOL_ZONE_SUPPORT_BONUS = 0.08
 SCHOOL_ZONE_MIN_SUPPORT = 2
@@ -800,7 +803,7 @@ class SpeedLimitVisionDaemon:
         self.classifier_net = cv2.dnn.readNetFromONNX(str(US_CLASSIFIER_MODEL_PATH))
         self.classifier_net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
         self.classifier_net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
-        if US_REJECT_CLASSIFIER_MODEL_PATH.is_file():
+        if SEPARATE_REJECT_CLASSIFIER_ENABLED and US_REJECT_CLASSIFIER_MODEL_PATH.is_file():
           try:
             self.reject_classifier_net = cv2.dnn.readNetFromONNX(str(US_REJECT_CLASSIFIER_MODEL_PATH))
             self.reject_classifier_net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
@@ -1276,19 +1279,20 @@ class SpeedLimitVisionDaemon:
     if self.classifier_net is None or sign_crop.size == 0:
       return None
 
-    normalized_mask = self._extract_value_template_mask(sign_crop)
     speed_class_count = len(US_CLASSIFIER_SPEED_VALUES)
 
-    if normalized_mask is not None and self.reject_classifier_net is not None:
-      reject_input = cv2.cvtColor(normalized_mask, cv2.COLOR_GRAY2BGR)
-      reject_crop = self._square_resize(reject_input, size=128)
-      reject_blob = cv2.dnn.blobFromImage(reject_crop, scalefactor=1 / 255.0, size=(128, 128), swapRB=True, crop=False)
-      self.reject_classifier_net.setInput(reject_blob)
-      reject_scores = np.array(self.reject_classifier_net.forward()).reshape(-1)
-      if reject_scores.size == speed_class_count + 1:
-        reject_probabilities = self._normalize_classifier_output(reject_scores)
-        if float(reject_probabilities[speed_class_count]) >= US_REJECT_CLASSIFIER_MIN_CONFIDENCE:
-          return None
+    if self.reject_classifier_net is not None:
+      normalized_mask = self._extract_value_template_mask(sign_crop)
+      if normalized_mask is not None:
+        reject_input = cv2.cvtColor(normalized_mask, cv2.COLOR_GRAY2BGR)
+        reject_crop = self._square_resize(reject_input, size=128)
+        reject_blob = cv2.dnn.blobFromImage(reject_crop, scalefactor=1 / 255.0, size=(128, 128), swapRB=True, crop=False)
+        self.reject_classifier_net.setInput(reject_blob)
+        reject_scores = np.array(self.reject_classifier_net.forward()).reshape(-1)
+        if reject_scores.size == speed_class_count + 1:
+          reject_probabilities = self._normalize_classifier_output(reject_scores)
+          if float(reject_probabilities[speed_class_count]) >= US_REJECT_CLASSIFIER_MIN_CONFIDENCE:
+            return None
 
     padded_crop = self._square_resize(sign_crop, size=128)
     blob = cv2.dnn.blobFromImage(padded_crop, scalefactor=1 / 255.0, size=(128, 128), swapRB=True, crop=False)
@@ -1427,7 +1431,19 @@ class SpeedLimitVisionDaemon:
           proposal_confidence >= DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_PROPOSAL_CONFIDENCE and
           model_read[1] >= DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_READ_CONFIDENCE
         )
-        needs_ocr_confirmation = class_id != 2 and (not is_regulatory or is_tiny_low_conf_box) and not trusted_model_read
+        strong_model_read = (
+          class_id == 0 and
+          model_read is not None and
+          not is_small_box and
+          proposal_confidence >= DETECTOR_CLASSIFIER_STRONG_MODEL_MIN_PROPOSAL_CONFIDENCE and
+          model_read[1] >= DETECTOR_CLASSIFIER_STRONG_MODEL_MIN_READ_CONFIDENCE
+        )
+        needs_ocr_confirmation = (
+          class_id != 2 and
+          (not is_regulatory or is_tiny_low_conf_box) and
+          not trusted_model_read and
+          not strong_model_read
+        )
         if model_read is None or needs_ocr_confirmation:
           ocr_read = self._read_speed_limit_from_crop(sign_crop)
         read_result = model_read or ocr_read
@@ -1440,7 +1456,7 @@ class SpeedLimitVisionDaemon:
           read_result = (model_read[0], min(model_read[1], ocr_read[1]))
 
         speed_limit_mph, read_confidence = read_result
-        score_is_regulatory = is_regulatory or trusted_model_read
+        score_is_regulatory = is_regulatory or trusted_model_read or strong_model_read
         if (
           class_id == 2 and
           proposal_confidence < SCHOOL_ZONE_FALLBACK_MIN_CONFIDENCE and
@@ -1459,7 +1475,7 @@ class SpeedLimitVisionDaemon:
         speed_scores[speed_limit_mph] = speed_scores.get(speed_limit_mph, 0.0) + score
         speed_best_confidences[speed_limit_mph] = max(speed_best_confidences.get(speed_limit_mph, 0.0), read_confidence)
         speed_support_counts[speed_limit_mph] = speed_support_counts.get(speed_limit_mph, 0) + 1
-        if is_regulatory or class_id == 2:
+        if is_regulatory or class_id == 2 or strong_model_read:
           speed_regulatory_support[speed_limit_mph] = speed_regulatory_support.get(speed_limit_mph, 0) + 1
         if trusted_model_read:
           speed_trusted_model_support[speed_limit_mph] = speed_trusted_model_support.get(speed_limit_mph, 0) + 1
@@ -1900,6 +1916,7 @@ class SpeedLimitVisionDaemon:
         "modelMode": self.model_mode,
         "detectorInputSize": self.detector_input_size,
         "detectorRegionMode": DETECTOR_CLASSIFIER_REGION_MODE,
+        "separateRejectClassifierEnabled": SEPARATE_REJECT_CLASSIFIER_ENABLED,
         "stream": self.stream_name,
         "cameraConnected": camera_connected,
         "debugSession": self.debug_session_id,

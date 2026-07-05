@@ -702,6 +702,9 @@ _FAST_UPDATE_REBOOT_NOTICE_SECONDS = 6.0
 _FAST_UPDATE_FETCH_TIMEOUT_S = 60
 _FAST_BRANCH_SWITCH_FETCH_TIMEOUT_S = 60
 _FAST_ROLLBACK_FETCH_TIMEOUT_S = 60
+_AGNOS_MANIFEST_PATH = "system/hardware/tici/agnos.json"
+_AGNOS_REMOTE_MANIFEST_TIMEOUT_S = 8
+_AGNOS_UPDATE_ESTIMATED_DOWNLOAD_MB = 900
 _GIT_PROGRESS_PERCENT_RE = re.compile(r'([A-Za-z][A-Za-z /_-]+):\s*([0-9]{1,3})%')
 _GIT_SUBMODULE_SECTION_RE = re.compile(r'^\s*\[submodule\s+"[^"]+"\]\s*$', re.MULTILINE)
 _ROLLBACK_REF = "refs/starpilot/rollback"
@@ -1265,6 +1268,179 @@ def _is_deferred_tls_error(exception):
 
   return False
 
+def _get_remote_branch_commit(repo_path, branch):
+  remote_commit = ""
+  remote_error = ""
+  branch_name = str(branch or "").strip()
+  if not branch_name or not _remote_git_check_allowed():
+    return remote_commit, remote_error
+
+  try:
+    remote_raw = _git_stdout(repo_path, ["ls-remote", "--heads", "origin", branch_name], timeout=20)
+    if remote_raw:
+      remote_commit = remote_raw.split()[0]
+  except Exception as exception:
+    if not _is_deferred_tls_error(exception):
+      remote_error = str(exception)
+
+  return remote_commit, remote_error
+
+def _base_agnos_update_status(target_branch="", local_commit="", remote_commit=""):
+  return {
+    "available": False,
+    "checked": False,
+    "targetBranch": str(target_branch or "").strip(),
+    "manifestPath": _AGNOS_MANIFEST_PATH,
+    "localCommit": str(local_commit or "").strip(),
+    "remoteCommit": str(remote_commit or "").strip(),
+    "localManifestHash": "",
+    "remoteManifestHash": "",
+    "changedPartitions": [],
+    "estimatedDownloadMb": _AGNOS_UPDATE_ESTIMATED_DOWNLOAD_MB,
+    "warnings": [
+      "This AGNOS firmware update will take much longer than a normal software update.",
+      "You must be able to physically access the device to press the on-device update button.",
+      "It downloads about 900 MB of data, so Wi-Fi is recommended.",
+    ],
+    "source": "",
+    "error": "",
+  }
+
+def _canonical_agnos_manifest_text(manifest_text):
+  text = str(manifest_text or "").strip()
+  if not text:
+    return ""
+
+  try:
+    return json.dumps(json.loads(text), sort_keys=True, separators=(",", ":"))
+  except Exception:
+    return text
+
+def _agnos_manifest_hash(manifest_text):
+  canonical = _canonical_agnos_manifest_text(manifest_text)
+  if not canonical:
+    return ""
+  return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+def _agnos_partition_fingerprints(manifest_text):
+  try:
+    manifest = json.loads(str(manifest_text or ""))
+  except Exception:
+    return {}
+
+  if not isinstance(manifest, list):
+    return {}
+
+  partitions = {}
+  for item in manifest:
+    if not isinstance(item, dict):
+      continue
+
+    name = str(item.get("name") or "").strip()
+    if not name:
+      continue
+
+    partitions[name] = {
+      "hash": str(item.get("hash") or ""),
+      "hashRaw": str(item.get("hash_raw") or ""),
+      "url": str(item.get("url") or ""),
+      "size": str(item.get("size") or ""),
+    }
+
+  return partitions
+
+def _agnos_changed_partitions(local_manifest_text, remote_manifest_text):
+  local_partitions = _agnos_partition_fingerprints(local_manifest_text)
+  remote_partitions = _agnos_partition_fingerprints(remote_manifest_text)
+  partition_names = sorted(set(local_partitions) | set(remote_partitions))
+  return [
+    name for name in partition_names
+    if local_partitions.get(name) != remote_partitions.get(name)
+  ]
+
+def _git_show_file_text(repo_path, ref, file_path):
+  safe_ref = str(ref or "").strip()
+  if not safe_ref:
+    raise RuntimeError("Missing git ref")
+  return _git_stdout(repo_path, ["show", f"{safe_ref}:{file_path}"], timeout=10)
+
+def _github_raw_file_url(origin_remote, ref, file_path):
+  remote = utilities.normalize_github_remote(origin_remote)
+  if not remote:
+    return ""
+
+  slug = remote.split("https://github.com/", 1)[1]
+  parts = slug.split("/", 1)
+  if len(parts) != 2 or not parts[0] or not parts[1]:
+    return ""
+
+  owner = quote(parts[0], safe="")
+  repo = quote(parts[1], safe="")
+  quoted_ref = quote(str(ref or "").strip(), safe="")
+  quoted_path = "/".join(quote(part, safe="") for part in str(file_path or "").split("/") if part)
+  if not quoted_ref or not quoted_path:
+    return ""
+
+  return f"https://raw.githubusercontent.com/{owner}/{repo}/{quoted_ref}/{quoted_path}"
+
+def _fetch_remote_file_text(origin_remote, ref, file_path):
+  raw_url = _github_raw_file_url(origin_remote, ref, file_path)
+  if not raw_url:
+    raise RuntimeError("AGNOS manifest comparison is only available for GitHub remotes when the remote commit is not available locally.")
+
+  response = requests.get(raw_url, timeout=_AGNOS_REMOTE_MANIFEST_TIMEOUT_S)
+  response.raise_for_status()
+  return response.text, raw_url
+
+def _build_agnos_update_status(repo_path, origin_remote, local_commit, remote_commit, target_branch=""):
+  status = _base_agnos_update_status(target_branch, local_commit, remote_commit)
+  safe_local_commit = str(local_commit or "").strip()
+  safe_remote_commit = str(remote_commit or "").strip()
+
+  if not safe_local_commit or not safe_remote_commit:
+    status["error"] = "Missing commit information for AGNOS manifest comparison."
+    return status
+
+  if safe_local_commit == safe_remote_commit:
+    status["checked"] = True
+    status["source"] = "same-commit"
+    return status
+
+  try:
+    local_manifest_text = _git_show_file_text(repo_path, safe_local_commit, _AGNOS_MANIFEST_PATH)
+  except Exception as exception:
+    status["error"] = f"Unable to read local AGNOS manifest: {exception}"
+    return status
+
+  remote_manifest_text = ""
+  if _git_has_commit(repo_path, safe_remote_commit):
+    try:
+      remote_manifest_text = _git_show_file_text(repo_path, safe_remote_commit, _AGNOS_MANIFEST_PATH)
+      status["source"] = "git"
+    except Exception as exception:
+      status["error"] = f"Unable to read remote AGNOS manifest from git: {exception}"
+      return status
+  else:
+    try:
+      remote_manifest_text, raw_url = _fetch_remote_file_text(origin_remote, safe_remote_commit, _AGNOS_MANIFEST_PATH)
+      status["source"] = raw_url
+    except Exception as exception:
+      status["error"] = f"Unable to fetch remote AGNOS manifest: {exception}"
+      return status
+
+  local_hash = _agnos_manifest_hash(local_manifest_text)
+  remote_hash = _agnos_manifest_hash(remote_manifest_text)
+  changed_partitions = _agnos_changed_partitions(local_manifest_text, remote_manifest_text)
+  status.update({
+    "checked": True,
+    "available": bool(local_hash and remote_hash and local_hash != remote_hash),
+    "localManifestHash": local_hash,
+    "remoteManifestHash": remote_hash,
+    "changedPartitions": changed_partitions,
+    "error": "",
+  })
+  return status
+
 def _build_shallow_fetch_args(branch):
   return [
     "-c", "gc.auto=0",
@@ -1697,6 +1873,7 @@ def _collect_fast_update_info(include_remote=True):
   origin_remote = ""
   commits_url = ""
   rollback_data = _load_rollback_target(repo_path)
+  agnos_update = _base_agnos_update_status()
 
   try:
     branch = _git_stdout(repo_path, ["rev-parse", "--abbrev-ref", "HEAD"])
@@ -1716,7 +1893,11 @@ def _collect_fast_update_info(include_remote=True):
       "originRemote": origin_remote,
       "commitsUrl": commits_url,
       **rollback_data,
+      "agnosUpdate": agnos_update,
     }
+
+  agnos_update["targetBranch"] = branch
+  agnos_update["localCommit"] = local_commit
 
   if origin_remote:
     remote = origin_remote.strip()
@@ -1735,14 +1916,12 @@ def _collect_fast_update_info(include_remote=True):
         commits_url = f"{remote}/commits/{quote(branch, safe='')}/"
 
   if branch and include_remote and _remote_git_check_allowed():
-    try:
-      remote_raw = _git_stdout(repo_path, ["ls-remote", "--heads", "origin", branch], timeout=20)
-      if remote_raw:
-        remote_commit = remote_raw.split()[0]
-        update_available = bool(local_commit and remote_commit and local_commit != remote_commit)
-    except Exception as exception:
-      if not _is_deferred_tls_error(exception):
-        remote_error = str(exception)
+    remote_commit, remote_error = _get_remote_branch_commit(repo_path, branch)
+    update_available = bool(local_commit and remote_commit and local_commit != remote_commit)
+    if remote_commit:
+      agnos_update = _build_agnos_update_status(repo_path, origin_remote, local_commit, remote_commit, branch)
+  elif not include_remote:
+    agnos_update = _base_agnos_update_status(branch, local_commit, "")
 
   return {
     "repoPath": repo_path,
@@ -1753,6 +1932,7 @@ def _collect_fast_update_info(include_remote=True):
     "remoteError": remote_error,
     "originRemote": origin_remote,
     "commitsUrl": commits_url,
+    "agnosUpdate": agnos_update,
     **rollback_data,
   }
 
@@ -5522,6 +5702,51 @@ def setup(app):
       "remoteError": remote_error,
       "isOnroad": _safe_params_get_bool("IsOnroad"),
       "running": state_data.get("running", False),
+    }), 200
+
+  @app.route("/api/update/agnos_status", methods=["GET"])
+  def get_agnos_update_status():
+    state_data = _get_fast_update_state()
+    if state_data.get("running", False):
+      return jsonify({"error": "Cannot check AGNOS update status while an update action is running."}), 409
+
+    repo_path = str(_get_openpilot_root())
+    try:
+      current_branch = _git_stdout(repo_path, ["rev-parse", "--abbrev-ref", "HEAD"])
+      local_commit = _git_stdout(repo_path, ["rev-parse", "HEAD"])
+      origin_remote = _git_stdout(repo_path, ["config", "--get", "remote.origin.url"])
+    except Exception as exception:
+      return jsonify({"error": str(exception)}), 500
+
+    target_branch = str(request.args.get("branch") or current_branch or "").strip()
+    if not target_branch:
+      return jsonify({"error": "Missing target branch."}), 400
+    if not _is_valid_git_branch_name(repo_path, target_branch):
+      return jsonify({"error": "Invalid branch name."}), 400
+    if not _remote_git_check_allowed():
+      agnos_update = _base_agnos_update_status(target_branch, local_commit, "")
+      agnos_update["error"] = "Remote checks are deferred until system time is valid."
+      return jsonify({
+        "currentBranch": current_branch,
+        "targetBranch": target_branch,
+        "localCommit": local_commit,
+        "remoteCommit": "",
+        "agnosUpdate": agnos_update,
+      }), 200
+
+    remote_commit, remote_error = _get_remote_branch_commit(repo_path, target_branch)
+    if not remote_commit:
+      agnos_update = _base_agnos_update_status(target_branch, local_commit, "")
+      agnos_update["error"] = remote_error or f"Remote branch '{target_branch}' was not found."
+    else:
+      agnos_update = _build_agnos_update_status(repo_path, origin_remote, local_commit, remote_commit, target_branch)
+
+    return jsonify({
+      "currentBranch": current_branch,
+      "targetBranch": target_branch,
+      "localCommit": local_commit,
+      "remoteCommit": remote_commit,
+      "agnosUpdate": agnos_update,
     }), 200
 
   @app.route("/api/update/fast", methods=["POST"])

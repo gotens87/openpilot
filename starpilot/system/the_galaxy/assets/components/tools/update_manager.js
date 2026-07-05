@@ -17,6 +17,10 @@ const state = reactive({
   switchBusy: false,
   rollbackBusy: false,
   recoveryBusy: false,
+  selectedBranchAgnosUpdate: null,
+  selectedBranchAgnosBusy: false,
+  selectedBranchAgnosTarget: "",
+  selectedBranchAgnosError: "",
 })
 
 let initialized = false
@@ -55,6 +59,52 @@ function isSelectedBranchDifferent() {
   const currentBranch = String(state.status?.branch || "").trim()
   const selectedBranch = String(state.selectedBranch || "").trim()
   return !!currentBranch && !!selectedBranch && currentBranch !== selectedBranch
+}
+
+function clearSelectedBranchAgnosStatus() {
+  state.selectedBranchAgnosUpdate = null
+  state.selectedBranchAgnosBusy = false
+  state.selectedBranchAgnosTarget = ""
+  state.selectedBranchAgnosError = ""
+}
+
+function activeAgnosUpdate() {
+  if (isSelectedBranchDifferent()) {
+    return state.selectedBranchAgnosUpdate || null
+  }
+  return state.status?.agnosUpdate || null
+}
+
+function activeAgnosError() {
+  if (isSelectedBranchDifferent()) {
+    return state.selectedBranchAgnosError || ""
+  }
+  return state.status?.agnosUpdate?.error || ""
+}
+
+function agnosWarningItems(update = activeAgnosUpdate()) {
+  const warnings = Array.isArray(update?.warnings) ? update.warnings.filter(Boolean) : []
+  if (warnings.length) return warnings
+  return [
+    "This AGNOS firmware update will take much longer than a normal software update.",
+    "You must be able to physically access the device to press the on-device update button.",
+    "It downloads about 900 MB of data, so Wi-Fi is recommended.",
+  ]
+}
+
+function agnosChangedPartitionsText(update = activeAgnosUpdate()) {
+  const partitions = Array.isArray(update?.changedPartitions) ? update.changedPartitions.filter(Boolean) : []
+  if (!partitions.length) return ""
+  return `Changed AGNOS partitions: ${partitions.join(", ")}`
+}
+
+function agnosConfirmationText(update = activeAgnosUpdate()) {
+  if (!update?.available) return ""
+
+  const warningLines = agnosWarningItems(update)
+    .map((warning) => `- ${warning}`)
+    .join("\n")
+  return `\n\nAGNOS firmware update included:\n\n${warningLines}`
 }
 
 function normalizeGithubRemote(remoteValue, commitsUrlValue = "") {
@@ -250,6 +300,12 @@ async function fetchStatus(showToast) {
       state.selectedBranch = payload.branch
     }
 
+    if (isSelectedBranchDifferent()) {
+      fetchSelectedBranchAgnosStatus(false)
+    } else {
+      clearSelectedBranchAgnosStatus()
+    }
+
     if (shouldContinuePolling()) {
       ensurePolling()
     } else {
@@ -258,7 +314,10 @@ async function fetchStatus(showToast) {
 
     if (showToast) {
       state.checkedForUpdates = true
-      showSnackbar(payload.updateAvailable ? "Update available." : "No update available.")
+      const updateMessage = payload.updateAvailable
+        ? (payload.agnosUpdate?.available ? "Update available. AGNOS firmware update included." : "Update available.")
+        : "No update available."
+      showSnackbar(updateMessage)
     }
   } catch (error) {
     const isRebootTransitionError = !showToast
@@ -312,6 +371,12 @@ async function fetchBranches(showToast = false) {
       state.hasManualBranchSelection = false
     }
 
+    if (isSelectedBranchDifferent()) {
+      fetchSelectedBranchAgnosStatus(false)
+    } else {
+      clearSelectedBranchAgnosStatus()
+    }
+
     if (showToast) {
       showSnackbar(branches.length ? `Loaded ${branches.length} branches.` : "No branches found.")
     }
@@ -326,6 +391,56 @@ async function fetchBranches(showToast = false) {
   }
 }
 
+async function fetchSelectedBranchAgnosStatus(showToast = false, force = false) {
+  const targetBranch = String(state.selectedBranch || "").trim()
+  if (!targetBranch || !isSelectedBranchDifferent() || state.status?.running) {
+    clearSelectedBranchAgnosStatus()
+    return null
+  }
+
+  if (!force && state.selectedBranchAgnosUpdate?.targetBranch === targetBranch) {
+    return state.selectedBranchAgnosUpdate
+  }
+  if (state.selectedBranchAgnosBusy && state.selectedBranchAgnosTarget === targetBranch) {
+    return state.selectedBranchAgnosUpdate
+  }
+
+  state.selectedBranchAgnosBusy = true
+  state.selectedBranchAgnosTarget = targetBranch
+  state.selectedBranchAgnosError = ""
+  try {
+    const response = await fetch(`/api/update/agnos_status?branch=${encodeURIComponent(targetBranch)}`)
+    const payload = await readJsonPayload(response)
+    if (!response.ok) {
+      throw new Error(payload.error || response.statusText || "Failed to check AGNOS update status")
+    }
+
+    const agnosUpdate = payload.agnosUpdate || null
+    if (String(state.selectedBranch || "").trim() === targetBranch) {
+      state.selectedBranchAgnosUpdate = agnosUpdate
+      state.selectedBranchAgnosError = agnosUpdate?.error || ""
+    }
+    if (showToast && agnosUpdate?.available) {
+      showSnackbar("Selected branch includes an AGNOS firmware update.")
+    }
+    return agnosUpdate
+  } catch (error) {
+    const message = error?.message || "Failed to check AGNOS update status"
+    if (String(state.selectedBranch || "").trim() === targetBranch) {
+      state.selectedBranchAgnosUpdate = null
+      state.selectedBranchAgnosError = message
+    }
+    if (showToast) {
+      showSnackbar(message, "error")
+    }
+    return null
+  } finally {
+    if (state.selectedBranchAgnosTarget === targetBranch) {
+      state.selectedBranchAgnosBusy = false
+    }
+  }
+}
+
 function setAdvancedOptions(enabled) {
   const next = !!enabled
   state.showAdvancedOptions = next
@@ -336,6 +451,7 @@ function setAdvancedOptions(enabled) {
       state.selectedBranch = currentBranch
     }
     state.hasManualBranchSelection = false
+    clearSelectedBranchAgnosStatus()
   }
 
   try {
@@ -389,10 +505,13 @@ async function runFastUpdate(skipConfirmation = false) {
   }
 
   if (!skipConfirmation) {
+    const agnosWarning = agnosConfirmationText()
     const confirmed = window.confirm(
       "Fast update warning:\n\n" +
       "- This update method skips backup creation.\n" +
-      "- Your device will reboot when the update is done.\n\n" +
+      "- Your device will reboot when the update is done." +
+      agnosWarning +
+      "\n\n" +
       "Continue with fast update?"
     )
     if (!confirmed) return
@@ -452,10 +571,16 @@ async function runBranchSwitch(skipConfirmation = false) {
   const currentBranch = String(state.status?.branch || "").trim()
   const actionLabel = currentBranch && currentBranch === targetBranch ? "update" : "switch and update"
   if (!skipConfirmation) {
+    if (isSelectedBranchDifferent()) {
+      await fetchSelectedBranchAgnosStatus(false, true)
+    }
+    const agnosWarning = agnosConfirmationText()
     const confirmed = window.confirm(
       `This will ${actionLabel} to the '${targetBranch}' branch.\n\n` +
       "- This update method skips backup creation.\n" +
-      "- Your device will reboot when the update is done.\n\n" +
+      "- Your device will reboot when the update is done." +
+      agnosWarning +
+      "\n\n" +
       "Continue?"
     )
     if (!confirmed) return
@@ -686,6 +811,23 @@ export function UpdateManager() {
 
           ${() => state.status?.isOnroad ? html`<p class="updateWarning"><strong>Onroad: actions disabled</strong></p>` : ""}
 
+          ${() => isSelectedBranchDifferent() && state.selectedBranchAgnosBusy
+            ? html`<p class="updateHint">Checking AGNOS firmware impact for ${state.selectedBranch}...</p>`
+            : ""}
+
+          ${() => activeAgnosUpdate()?.available ? html`
+            <div class="updateAgnosWarning">
+              <strong>AGNOS firmware update included</strong>
+              <p>This update changes the AGNOS firmware manifest.</p>
+              <ul>
+                ${() => agnosWarningItems(activeAgnosUpdate()).map((warning) => html`<li>${warning}</li>`)}
+              </ul>
+              ${() => agnosChangedPartitionsText(activeAgnosUpdate())
+                ? html`<p>${agnosChangedPartitionsText(activeAgnosUpdate())}</p>`
+                : ""}
+            </div>
+          ` : ""}
+
           <label class="updateToggleRow">
             <span>Automatically install updates</span>
             <input
@@ -723,6 +865,11 @@ export function UpdateManager() {
                   @change="${(event) => {
                     state.selectedBranch = String(event.target.value || "")
                     state.hasManualBranchSelection = true
+                    if (isSelectedBranchDifferent()) {
+                      fetchSelectedBranchAgnosStatus(false, true)
+                    } else {
+                      clearSelectedBranchAgnosStatus()
+                    }
                   }}">
                   ${() => state.branches.length
                     ? state.branches.map((branch) => html`<option value="${branch}" selected="${() => branch === state.selectedBranch || false}">${branch}${branch === state.status?.branch ? " (current)" : ""}</option>`)
@@ -768,6 +915,7 @@ export function UpdateManager() {
 
           ${() => !isFactoryResetStatusActive() && state.status?.message && state.status?.stage !== "rebooting" ? html`<p class="updateMessage">${state.status.message}</p>` : ""}
           ${() => state.status?.remoteError ? html`<p class="updateError"><strong>Remote Check:</strong> ${state.status.remoteError}</p>` : ""}
+          ${() => (state.checkedForUpdates || isSelectedBranchDifferent()) && activeAgnosError() ? html`<p class="updateError"><strong>AGNOS Check:</strong> ${activeAgnosError()}</p>` : ""}
           ${() => !isFactoryResetStatusActive() && state.status?.lastError ? html`<p class="updateError"><strong>Last Error:</strong> ${state.status.lastError}</p>` : ""}
           ${() => state.error ? html`<p class="updateError"><strong>Error:</strong> ${state.error}</p>` : ""}
 
