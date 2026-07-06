@@ -3529,12 +3529,12 @@ class AetherTransitionManager:
     self._incoming_render_fn = None
 
   def start(self, outgoing_render_fn, incoming_render_fn, direction: int):
-    self._outgoing_render_fn = outgoing_render_fn
-    self._incoming_render_fn = incoming_render_fn
+    self._outgoing_render_fn = None
+    self._incoming_render_fn = None
     self._direction = direction
     self._time = 0.0
-    self._progress = 0.0
-    self._active = True
+    self._progress = 1.0
+    self._active = False
 
   def is_animating(self) -> bool:
     return self._active
