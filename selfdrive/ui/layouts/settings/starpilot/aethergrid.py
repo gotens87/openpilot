@@ -64,7 +64,7 @@ def aether_end_scissor_mode() -> None:
 
 # Custom vector icon layout constants (scribble.py coordinate system)
 CUSTOM_ICON_BASE_SIZE = 100.0
-CUSTOM_ICON_SCALE_MULT = 1.25
+CUSTOM_ICON_SCALE_MULT = 1.60
 CUSTOM_ICON_CANVAS_SIZE = 60.0
 
 
@@ -4067,9 +4067,9 @@ class HubTile(AetherTile):
     text_scale = max(0.82, min(1.12, min(rw / 360.0, rh / 205.0)))
     gap = SPACING.line_gap
 
-    title_size = max(20, int(round(24 * text_scale)))
+    title_size = max(40, int(round(44 * text_scale)))
     desc_to_render = status_text
-    desc_size = max(17, int(round(18 * text_scale))) if desc_to_render else 0
+    desc_size = max(32, int(round(36 * text_scale))) if desc_to_render else 0
 
     icon_h = 0.0
     if self.custom_icon_key:
