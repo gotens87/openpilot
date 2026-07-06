@@ -43,6 +43,43 @@ class FakeParamsBackend:
     return self.values.get(key)
 
 
+class WritableFakeParams:
+  def __init__(self, values=None):
+    self.values = dict(values or {})
+    self.writes = []
+
+  def get(self, key, encoding=None, default=None, block=False):
+    del encoding, block
+    return self.values.get(key, default)
+
+  def get_bool(self, key):
+    value = self.values.get(key, False)
+    if isinstance(value, bool):
+      return value
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+  def put(self, key, value):
+    self.writes.append((key, value))
+    self.values[key] = value
+
+  def put_bool(self, key, value):
+    self.writes.append((key, bool(value)))
+    self.values[key] = bool(value)
+
+
+def _params_client(monkeypatch, values, device_type):
+  fake_params = WritableFakeParams(values)
+  monkeypatch.setattr(the_galaxy, "params", fake_params)
+  monkeypatch.setattr(the_galaxy, "_get_param_type_info", lambda: ({"TryRaylibUI"}, {"TryRaylibUI": bool}))
+  monkeypatch.setattr(the_galaxy.HARDWARE, "get_device_type", lambda: device_type)
+  monkeypatch.setattr(the_galaxy.Paths, "comma_home", lambda: "/tmp/dashboard-test-home", raising=False)
+
+  assert the_galaxy._import_galaxy_web_symbols()
+  app = the_galaxy.Flask(f"params_test_{device_type}")
+  the_galaxy.setup(app)
+  return app.test_client(), fake_params
+
+
 def test_params_compat_accepts_json_strings_for_json_keys():
   backend = FakeParamsBackend(
     key_types={"FavoriteDestinations": ParamKeyType.JSON},
@@ -117,3 +154,38 @@ def test_galaxy_session_value_matches_cookie_format():
     "testGalaxySlug01",
     "a" * 64,
   ) == f"testGalaxySlug01%3A{'a' * 64}"
+
+
+def test_try_raylib_ui_is_noop_on_c4_mici(monkeypatch):
+  client, fake_params = _params_client(monkeypatch, {"TryRaylibUI": False, "IsOnroad": False}, "mici")
+
+  response = client.put("/api/params", json={"key": "TryRaylibUI", "value": True})
+  payload = response.get_json()
+
+  assert response.status_code == 200
+  assert payload["updated"] == {"TryRaylibUI": False}
+  assert fake_params.values["TryRaylibUI"] is False
+  assert fake_params.writes == []
+
+
+def test_try_raylib_ui_writes_on_big_device_offroad(monkeypatch):
+  client, fake_params = _params_client(monkeypatch, {"TryRaylibUI": False, "IsOnroad": False}, "tici")
+
+  response = client.put("/api/params", json={"key": "TryRaylibUI", "value": True})
+  payload = response.get_json()
+
+  assert response.status_code == 200
+  assert payload["updated"] == {"TryRaylibUI": True}
+  assert fake_params.values["TryRaylibUI"] is True
+  assert fake_params.writes == [("TryRaylibUI", True)]
+
+
+def test_try_raylib_ui_rejects_big_device_onroad_change(monkeypatch):
+  client, fake_params = _params_client(monkeypatch, {"TryRaylibUI": False, "IsOnroad": True}, "tici")
+
+  response = client.put("/api/params", json={"key": "TryRaylibUI", "value": True})
+
+  assert response.status_code == 403
+  assert response.get_json()["error"] == "Cannot change Try raylib UI while driving."
+  assert fake_params.values["TryRaylibUI"] is False
+  assert fake_params.writes == []

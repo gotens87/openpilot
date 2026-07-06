@@ -4,12 +4,13 @@ import signal
 import time
 from pathlib import Path
 import json
+from types import SimpleNamespace
 
 from cereal import car
 from openpilot.common.params import Params
 import openpilot.system.manager.manager as manager
 from openpilot.system.manager.process import ensure_running
-from openpilot.system.manager.process_config import managed_processes, procs
+from openpilot.system.manager.process_config import BigDeviceUIProcess, managed_processes, procs
 from openpilot.system.hardware import HARDWARE
 
 os.environ['FAKEUPLOAD'] = "1"
@@ -71,6 +72,40 @@ class FileBackedFakeParams:
     self.put(key, float(value))
 
 
+class FakeManagedProcess:
+  def __init__(self):
+    self.proc = None
+    self.shutting_down = False
+    self.starts = 0
+    self.stops = 0
+
+  def prepare(self):
+    pass
+
+  def start(self):
+    if self.proc is not None:
+      return
+
+    self.starts += 1
+    self.shutting_down = False
+    self.proc = SimpleNamespace(exitcode=None, pid=self.starts, is_alive=lambda: True)
+
+  def stop(self, retry=True, block=True, sig=None):
+    if self.proc is None:
+      return None
+
+    self.stops += 1
+    self.shutting_down = False
+    self.proc = None
+    return 0
+
+  def check_watchdog(self, started):
+    pass
+
+  def get_process_state_msg(self):
+    return SimpleNamespace(name="ui")
+
+
 class TestManager:
   def setup_method(self):
     HARDWARE.set_power_save(False)
@@ -95,6 +130,34 @@ class TestManager:
 
     assert names.index("the_galaxy") < ui_idx
     assert names.index("galaxy") < ui_idx
+
+  def test_big_device_ui_process_swaps_offroad_only(self, tmp_path):
+    ui_process = BigDeviceUIProcess(lambda *args: True)
+    qt_process = FakeManagedProcess()
+    raylib_process = FakeManagedProcess()
+    ui_process._qt_process = qt_process
+    ui_process._raylib_process = raylib_process
+
+    params = FileBackedFakeParams(tmp_path / "params", {"TryRaylibUI": False})
+
+    assert ui_process.should_run(False, params, car.CarParams.new_message(), SimpleNamespace())
+    ui_process.start()
+    assert ui_process.proc is qt_process.proc
+    assert qt_process.starts == 1
+    assert raylib_process.starts == 0
+
+    params.put_bool("TryRaylibUI", True)
+    assert ui_process.should_run(True, params, car.CarParams.new_message(), SimpleNamespace())
+    ui_process.start()
+    assert ui_process.proc is qt_process.proc
+    assert qt_process.stops == 0
+    assert raylib_process.starts == 0
+
+    assert ui_process.should_run(False, params, car.CarParams.new_message(), SimpleNamespace())
+    ui_process.start()
+    assert qt_process.stops == 1
+    assert raylib_process.starts == 1
+    assert ui_process.proc is raylib_process.proc
 
   def test_blacklisted_procs(self):
     # TODO: ensure there are blacklisted procs until we have a dedicated test

@@ -3633,6 +3633,13 @@
     "icon": "bi-exclamation-triangle",
     "params": [
       {
+        "key": "TryRaylibUI",
+        "label": "Try raylib UI",
+        "description": "Use the beta raylib UI instead of the default Qt UI on tici/tizi devices. This setting has no effect on C4/mici devices.",
+        "data_type": "bool",
+        "ui_type": "toggle"
+      },
+      {
         "key": "DisableWideRoad",
         "label": "Disable Wide Road Camera",
         "description": "Only enable this if the wide camera is broken or for development!\n\nDisabling the wide camera may degrade driving performance and cause instability.\n\nRequires a reboot to take effect.",

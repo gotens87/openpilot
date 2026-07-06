@@ -147,6 +147,13 @@ def _is_comma_device_runtime() -> bool:
     return False
 
 
+def _raylib_ui_toggle_affects_device() -> bool:
+  try:
+    return HARDWARE.get_device_type() in ("tici", "tizi")
+  except Exception:
+    return False
+
+
 def _get_param_key_type(params_obj, key):
   getter = getattr(params_obj, "get_key_type", None)
   if getter is None:
@@ -4162,6 +4169,24 @@ def setup(app):
       allowed_keys, _ = _get_param_type_info()
       if key not in allowed_keys:
         return jsonify({"error": f"Parameter '{key}' is not editable."}), 403
+
+      if key == "TryRaylibUI":
+        enabled = str_val.strip() in ("1", "true", "True")
+        if not _raylib_ui_toggle_affects_device():
+          current_enabled = params.get_bool("TryRaylibUI")
+          return jsonify({
+            "message": "Try raylib UI is only available on tici/tizi devices.",
+            "updated": {"TryRaylibUI": current_enabled},
+          }), 200
+
+        if params.get_bool("IsOnroad"):
+          return jsonify({"error": "Cannot change Try raylib UI while driving."}), 403
+
+        params.put_bool("TryRaylibUI", enabled)
+        return jsonify({
+          "message": f"{'Raylib' if enabled else 'Qt'} UI selected. UI will restart shortly.",
+          "updated": {"TryRaylibUI": enabled},
+        }), 200
 
       # 1. Prevent changing the model or reboot-required toggles while the car is actively driving
       reboot_keys = {"Model", "DrivingModel", "AlwaysOnLateral", "DisableOpenpilotLongitudinal", "ForceTorqueController", "NNFF", "NNFFLite"}
