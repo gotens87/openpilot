@@ -1016,6 +1016,8 @@ class PanelManagerView(AetherInteractiveMixin, Widget):
 
 class BreadcrumbController:
   EXPAND_DURATION: float = 2.5
+  TRIGGER_DEPTH: int = 4
+  RECENT_KEEP: int = 3
 
   def __init__(self):
     self._rects: dict[str, rl.Rectangle] = {}
@@ -1160,13 +1162,10 @@ class BreadcrumbController:
       self._expanded = False
 
     ANIM_LERP      = 0.2
-    EXPAND_THRESH  = 0.4
     FADE_THRESH    = 0.01
-    EXPAND_RANGE   = 1.0 - EXPAND_THRESH
 
     target = 1.0 if self._expanded else 0.0
     self._expand_alpha += (target - self._expand_alpha) * ANIM_LERP
-    alpha = self._expand_alpha
 
     ACTIVE_SIZE   = 44
     PAST_SIZE     = 36
@@ -1189,22 +1188,27 @@ class BreadcrumbController:
 
     mouse_pos = gui_app.last_mouse_event.pos
 
-    has_overflow = alpha > FADE_THRESH and len(path) > 6
+    depth = len(path)
+    has_overflow = depth > self.TRIGGER_DEPTH
 
-    if has_overflow and alpha >= EXPAND_THRESH:
+    if not has_overflow:
+      # Shallow path: render everything, no ellipsis.
       display_path = list(path)
-      middle_alpha = min(1.0, (alpha - EXPAND_THRESH) / EXPAND_RANGE)
-      overflow_alpha = 0.0
-    elif has_overflow:
-      display_path = [path[0], ("...", "action:breadcrumb_history"), path[-1]]
-      overflow_alpha = 1.0 - (alpha / EXPAND_THRESH)
-      middle_alpha = 0.0
-    else:
-      display_path = list(path) if len(path) <= 6 else [path[0], ("...", "action:breadcrumb_history"), path[-1]]
       overflow_alpha = 1.0
-      middle_alpha = 0.0
+    elif self._expanded:
+      # Expanded: reveal the entire path and allow it to overflow.
+      # The overflow will be cleanly masked by a scissor clip and fade out gradient.
+      display_path = list(path)
+      overflow_alpha = 0.0
+    else:
+      # Collapsed: single … at front, most-recent RECENT_KEEP crumbs visible.
+      recent = path[-self.RECENT_KEEP:]
+      display_path = [("...", "action:breadcrumb_history")] + recent
+      overflow_alpha = 1.0
 
     current_x = rect.x + 20
+
+    aether_begin_scissor_mode(int(rect.x), int(rect.y), int(rect.width), int(rect.height))
 
     for i, (text, action) in enumerate(display_path):
       is_last     = (i == len(display_path) - 1)
@@ -1220,7 +1224,10 @@ class BreadcrumbController:
         capsule_w, capsule_h = 70, 40
         cap_rect = rl.Rectangle(current_x, center_y - capsule_h / 2, capsule_w, capsule_h)
         hovered = point_hits(mouse_pos, cap_rect, None, pad_x=4, pad_y=6)
-        self._rects[action] = cap_rect
+        
+        # Only add to interactive rects if it's visible within the bounds
+        if cap_rect.x < rect.x + rect.width:
+          self._rects[action] = cap_rect
 
         oa = overflow_alpha
         if pressed:
@@ -1255,8 +1262,6 @@ class BreadcrumbController:
 
       else:
         item_alpha = 255
-        if has_overflow and not is_first and not is_last:
-          item_alpha = int(middle_alpha * 255)
 
         if is_last:
           font      = gui_app.font(FontWeight.BOLD)
@@ -1280,7 +1285,10 @@ class BreadcrumbController:
         ts = measure_text_cached(font, text, font_size)
         hit_rect = rl.Rectangle(current_x - 6, center_y - 30, ts.x + 12, 60)
         hovered  = point_hits(mouse_pos, hit_rect, None, pad_x=0, pad_y=0)
-        self._rects[action] = hit_rect
+        
+        # Only add to interactive rects if it's visible within the bounds
+        if hit_rect.x < rect.x + rect.width:
+          self._rects[action] = hit_rect
 
         color = c_pressed if pressed else (c_hover if hovered else c_normal)
 
@@ -1296,7 +1304,14 @@ class BreadcrumbController:
         draw_chevron_icon(chev_rect, color_sep, thickness=2.0, direction="right")
         current_x += CHEVRON_W + GAP
 
+    if current_x > rect.x + rect.width:
+      fade_w = 60
+      fade_x = rect.x + rect.width - fade_w
+      bg_color = AetherListColors.PANEL_BG
+      transparent_bg = rl.Color(bg_color.r, bg_color.g, bg_color.b, 0)
+      rl.draw_rectangle_gradient_h(int(fade_x), int(rect.y), int(fade_w), int(rect.height), transparent_bg, bg_color)
 
+    aether_end_scissor_mode()
 PANEL_HEADER_TITLE_Y: int = 34
 PANEL_HEADER_SUBTITLE_Y: int = 78
 PANEL_HEADER_TITLE_FONT_SIZE: int = 40
