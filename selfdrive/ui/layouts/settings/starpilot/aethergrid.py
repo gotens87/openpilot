@@ -289,7 +289,7 @@ class AetherListMetrics:
   panel_padding_bottom: int = 22
   header_height: int = 0
   section_gap: int = 28
-  section_header_height: int = 34
+  section_header_height: int = 60
   section_header_gap: int = 12
   row_height: int = 122
   utility_row_height: int = 88
@@ -312,7 +312,7 @@ class AetherListMetrics:
   utility_value_right: int = 270
   utility_value_width: int = 220
   utility_chevron_right: int = 62
-  menu_button_font_size: int = 18
+  menu_button_font_size: int = 32
   menu_button_roundness: float = 0.35
   menu_button_segments: int = 12
 
@@ -707,7 +707,7 @@ class PanelManagerView(AetherInteractiveMixin, Widget):
   def _compute_two_column_height(self, left_height: float) -> float:
     return max(self._scroll_rect.height if self._scroll_rect else 0.0, left_height)
 
-  def _draw_two_column_tile_grid(self, grid: TileGrid, x: float, y: float, column_width: float, matching_height: float, title: str | None = None, style: PanelStyle | None = None):
+  def _draw_two_column_tile_grid(self, grid: TileGrid, x: float, y: float, column_width: float, matching_height: float, title: str | None = None, subsection_title: str | None = None, style: PanelStyle | None = None):
     if style is None:
       style = self.PANEL_STYLE
     grid._columns = 2
@@ -720,7 +720,10 @@ class PanelManagerView(AetherInteractiveMixin, Widget):
       draw_h = max(0.0, matching_height)
     
     draw_list_group_shell(rl.Rectangle(x, draw_y, column_width, draw_h), style=style)
-    self._render_page_grid(grid, rl.Rectangle(x + 12, draw_y + 12, column_width - 24, max(0.0, draw_h - 24)))
+    inner_y = draw_y
+    if subsection_title:
+      inner_y = draw_subsection_header(x + 24, draw_y, column_width - 48, subsection_title)
+    self._render_page_grid(grid, rl.Rectangle(x + 12, inner_y + 12, column_width - 24, max(0.0, draw_h - (inner_y - draw_y) - 24)))
 
   # ── convenience builders ──────────────────────────────────
 
@@ -1357,8 +1360,8 @@ def draw_status_badges(
   items: list[str],
   style: PanelStyle,
   *,
-  height: float = 28.0,
-  font_size: int = 17,
+  height: float = 44.0,
+  font_size: int = 28,
   gap: float = 8.0,
   padding_x: float = 18.0,
   text_color: rl.Color = AetherListColors.HEADER,
@@ -1884,6 +1887,21 @@ GROUP_HEADER_GAP = 2.0
 GROUP_HAIRLINE_COLOR = rl.Color(255, 255, 255, 10)
 GROUP_HEADER_COLOR = rl.Color(255, 255, 255, 90)
 
+SUBSECTION_HEADER_HEIGHT = 36.0
+SUBSECTION_HEADER_GAP = 6.0
+SUBSECTION_HEADER_TOP_MARGIN = 8.0
+SUBSECTION_HEADER_FONT_SIZE = 24
+SUBSECTION_HEADER_COLOR = rl.Color(255, 255, 255, 200)
+SUBSECTION_OVERHEAD = SUBSECTION_HEADER_TOP_MARGIN + SUBSECTION_HEADER_HEIGHT + SUBSECTION_HEADER_GAP
+
+
+def draw_subsection_header(x: float, y: float, width: float, label: str) -> float:
+  header_y = y + SUBSECTION_HEADER_TOP_MARGIN
+  gui_label(rl.Rectangle(x, header_y, width, SUBSECTION_HEADER_HEIGHT),
+            label, SUBSECTION_HEADER_FONT_SIZE, SUBSECTION_HEADER_COLOR, FontWeight.MEDIUM)
+  return header_y + SUBSECTION_HEADER_HEIGHT + SUBSECTION_HEADER_GAP
+
+
 def draw_group_header(x: float, y: float, width: float, label: str) -> float:
   gui_label(rl.Rectangle(x, y, width, GROUP_HEADER_HEIGHT), label, 16, GROUP_HEADER_COLOR, FontWeight.MEDIUM)
   y += GROUP_HEADER_HEIGHT
@@ -1896,8 +1914,8 @@ def draw_section_header(
   title: str = "",
   *,
   trailing_text: str = "",
-  title_size: int = 26,
-  trailing_size: int = 20,
+  title_size: int = 40,
+  trailing_size: int = 36,
   title_color: rl.Color | None = None,
   trailing_color: rl.Color | None = None,
   style: PanelStyle = DEFAULT_PANEL_STYLE,
@@ -1989,9 +2007,9 @@ def draw_settings_list_row(
   pressed: bool = False,
   is_last: bool = False,
   show_chevron: bool = True,
-  title_size: int = 28,
-  subtitle_size: int = 20,
-  value_size: int = 24,
+  title_size: int = 34,
+  subtitle_size: int = 26,
+  value_size: int = 30,
   separator_inset: int = 22,
   title_color: rl.Color | None = None,
   subtitle_color: rl.Color | None = None,
@@ -2036,7 +2054,7 @@ def draw_settings_list_row(
   if subtitle:
     draw_text_fit_common(
       gui_app.font(FontWeight.NORMAL), subtitle,
-      rl.Vector2(text_left, draw_rect.y + 54),
+      rl.Vector2(text_left, draw_rect.y + 64),
       text_width, subtitle_size,
       color=resolved_subtitle_color,
     )
@@ -2063,7 +2081,7 @@ def draw_settings_list_row(
   if value:
     value_left = draw_rect.x + draw_rect.width - AETHER_LIST_METRICS.utility_value_right
     value_right = chevron_rect.x - 16 if show_chevron else draw_rect.x + draw_rect.width - 24
-    value_rect = rl.Rectangle(value_left, draw_rect.y + 20, max(48.0, value_right - value_left), 28)
+    value_rect = rl.Rectangle(value_left, draw_rect.y + 20, max(48.0, value_right - value_left), 34)
     gui_label(
       value_rect,
       value,
