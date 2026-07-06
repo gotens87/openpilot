@@ -273,7 +273,7 @@ class StarPilotLayout(Widget):
     self._commit_navigation()
 
   def _render(self, rect: rl.Rectangle):
-    TOP_BAR_HEIGHT = 80
+    TOP_BAR_HEIGHT = 110
     content_rect = rl.Rectangle(rect.x, rect.y + TOP_BAR_HEIGHT, rect.width, rect.height - TOP_BAR_HEIGHT)
 
     # Standardize width to perfectly match subpanel shells
