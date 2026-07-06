@@ -59,6 +59,7 @@ class LatControlTorque(LatControl):
     self.lat_accel_request_buffer = deque([0.] * self.lat_accel_request_buffer_len, maxlen=self.lat_accel_request_buffer_len)
     self.lookahead_frames = int(JERK_LOOKAHEAD_SECONDS / self.dt)
     self.jerk_filter = FirstOrderFilter(0.0, 1 / (2 * np.pi * LP_FILTER_CUTOFF_HZ), self.dt)
+    self.ioniq_6_directional_taper_filter = FirstOrderFilter(1.0, IONIQ_6_DIRECTIONAL_TAPER_FILTER_RC, self.dt)
     self.previous_measurement = 0.0
     self.measurement_rate_filter = FirstOrderFilter(0.0, 1 / (2 * np.pi * (MAX_LAT_JERK_UP - 0.5)), self.dt)
     self.low_speed_reset_threshold = max(CP.minSteerSpeed, MIN_LATERAL_CONTROL_SPEED)
@@ -164,6 +165,7 @@ class LatControlTorque(LatControl):
       self.measurement_rate_filter.x = 0.0
       self.lat_accel_request_buffer = deque([0.] * self.lat_accel_request_buffer_len, maxlen=self.lat_accel_request_buffer_len)
       self.prev_desired_lateral_accel = 0.0
+      self.ioniq_6_directional_taper_filter.x = 1.0
     else:
       if self.prev_steering_pressed and not CS.steeringPressed:
         self.pid.i *= self.steer_release_i_decay
@@ -283,7 +285,11 @@ class LatControlTorque(LatControl):
         ff *= get_ioniq_ev_old_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo) * ioniq_ev_old_center_taper
         friction_scale = 1.0 + ((friction_scale - 1.0) * ioniq_ev_old_center_taper)
       elif ioniq_6_active:
-        ff *= get_ioniq_6_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo) * ioniq_6_center_taper
+        # smooth the directional taper so jerk-gated unwind cuts can't step the FF in one frame
+        ioniq_6_directional_taper = self.ioniq_6_directional_taper_filter.update(
+          get_ioniq_6_directional_taper_scale(setpoint, desired_lateral_jerk, CS.vEgo))
+        ff *= get_ioniq_6_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo,
+                                   directional_taper_scale=ioniq_6_directional_taper) * ioniq_6_center_taper
         friction_threshold = get_ioniq_6_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk) / max(ioniq_6_center_taper, 1e-3)
         friction_scale = get_ioniq_6_friction_scale(CS.vEgo, setpoint, desired_lateral_jerk)
         friction_scale = 1.0 + ((friction_scale - 1.0) * ioniq_6_center_taper)

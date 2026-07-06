@@ -517,14 +517,20 @@ IONIQ_6_DIRECTIONAL_TAPER_LAT_END = 0.90
 IONIQ_6_DIRECTIONAL_TAPER_LAT_WIDTH = 0.06
 IONIQ_6_DIRECTIONAL_TAPER_BASE_LEFT = 0.11
 IONIQ_6_DIRECTIONAL_TAPER_BASE_RIGHT = 0.45
-IONIQ_6_DIRECTIONAL_TAPER_UNWIND_LEFT = 2.15
-IONIQ_6_DIRECTIONAL_TAPER_UNWIND_RIGHT = 4.25
+IONIQ_6_DIRECTIONAL_TAPER_UNWIND_LEFT = 1.10
+IONIQ_6_DIRECTIONAL_TAPER_UNWIND_RIGHT = 2.10
 IONIQ_6_DIRECTIONAL_TAPER_FLOOR_LEFT = 0.48
 IONIQ_6_DIRECTIONAL_TAPER_FLOOR_RIGHT = 0.52
 IONIQ_6_DIRECTIONAL_TAPER_UNWIND_FLOOR_LEFT = 0.20
 IONIQ_6_DIRECTIONAL_TAPER_UNWIND_FLOOR_RIGHT = 0.10
-IONIQ_6_DIRECTIONAL_TAPER_JERK_ONSET = 0.60
-IONIQ_6_DIRECTIONAL_TAPER_JERK_WIDTH = 0.14
+IONIQ_6_DIRECTIONAL_TAPER_JERK_ONSET = 1.00
+IONIQ_6_DIRECTIONAL_TAPER_JERK_WIDTH = 0.30
+# Unwind detection needs a softer phase transition and time smoothing than the shared
+# PHASE_SCALE: desired lateral jerk noise in a sustained curve (~+/-1-2 m/s^3) otherwise
+# chatters the taper between its base value and its floor at ~0.5 Hz (felt as notchy
+# steering in highway sweepers).
+IONIQ_6_DIRECTIONAL_TAPER_PHASE_SCALE = 0.45
+IONIQ_6_DIRECTIONAL_TAPER_FILTER_RC = 0.4
 IONIQ_6_DIRECTIONAL_TAPER_LOW_SPEED_RELIEF = 0.98
 IONIQ_6_DIRECTIONAL_TAPER_LOW_SPEED_RELIEF_SPEED = 11.2
 IONIQ_6_DIRECTIONAL_TAPER_LOW_SPEED_RELIEF_SPEED_WIDTH = 1.5
@@ -569,8 +575,8 @@ IONIQ_6_HEAVY_DIRECTIONAL_TAPER_LAT_START = 0.90
 IONIQ_6_HEAVY_DIRECTIONAL_TAPER_LAT_WIDTH = 0.18
 IONIQ_6_HEAVY_DIRECTIONAL_TAPER_BASE_LEFT = 0.03
 IONIQ_6_HEAVY_DIRECTIONAL_TAPER_BASE_RIGHT = 0.11
-IONIQ_6_HEAVY_DIRECTIONAL_TAPER_UNWIND_LEFT = 0.78
-IONIQ_6_HEAVY_DIRECTIONAL_TAPER_UNWIND_RIGHT = 1.10
+IONIQ_6_HEAVY_DIRECTIONAL_TAPER_UNWIND_LEFT = 0.40
+IONIQ_6_HEAVY_DIRECTIONAL_TAPER_UNWIND_RIGHT = 0.55
 IONIQ_6_OUTPUT_TAPER_SPEED = 8.5
 IONIQ_6_OUTPUT_TAPER_SPEED_WIDTH = 2.5
 IONIQ_6_OUTPUT_CENTER_TAPER_BLEND = 0.90
@@ -1764,7 +1770,8 @@ def _ioniq_6_transition_envelope(v_ego: float, desired_lateral_accel: float, des
   return _ioniq_6_low_speed_factor(v_ego) * lat_factor * jerk_factor
 
 
-def get_ioniq_6_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: float, v_ego: float) -> float:
+def get_ioniq_6_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: float, v_ego: float,
+                         directional_taper_scale: float | None = None) -> float:
   if desired_lateral_accel == 0.0:
     return 1.0
 
@@ -1798,8 +1805,10 @@ def get_ioniq_6_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: flo
     high_speed_lat_cutoff = _ioniq_6_sigmoid((IONIQ_6_HIGH_SPEED_RIGHT_TURN_IN_FF_LAT_END - abs_lateral_accel) /
                                              IONIQ_6_HIGH_SPEED_RIGHT_TURN_IN_FF_LAT_WIDTH)
     high_speed_right_turn_in_scale = IONIQ_6_HIGH_SPEED_RIGHT_TURN_IN_FF_BOOST * high_speed_weight * high_speed_lat_onset * high_speed_lat_cutoff
+  if directional_taper_scale is None:
+    directional_taper_scale = get_ioniq_6_directional_taper_scale(desired_lateral_accel, desired_lateral_jerk, v_ego)
   return (1.0 + crawl_turn_in_scale + high_speed_right_turn_in_scale +
-          (extra_scale * turn_in_boost * max(unwind_taper, 0.0))) * get_ioniq_6_directional_taper_scale(desired_lateral_accel, desired_lateral_jerk, v_ego)
+          (extra_scale * turn_in_boost * max(unwind_taper, 0.0))) * directional_taper_scale
 
 
 def get_ioniq_6_friction_threshold(v_ego: float, desired_lateral_accel: float = 0.0, desired_lateral_jerk: float = 0.0) -> float:
@@ -1859,7 +1868,7 @@ def get_ioniq_6_directional_taper_scale(desired_lateral_accel: float, desired_la
   cutoff = _ioniq_6_sigmoid((IONIQ_6_DIRECTIONAL_TAPER_LAT_END - abs_lateral_accel) / IONIQ_6_DIRECTIONAL_TAPER_LAT_WIDTH)
   band_weight = onset * cutoff
   heavy_band_weight = _ioniq_6_sigmoid((abs_lateral_accel - IONIQ_6_HEAVY_DIRECTIONAL_TAPER_LAT_START) / IONIQ_6_HEAVY_DIRECTIONAL_TAPER_LAT_WIDTH)
-  phase = _ioniq_6_transition_phase(desired_lateral_accel, desired_lateral_jerk)
+  phase = math.tanh((desired_lateral_accel * desired_lateral_jerk) / IONIQ_6_DIRECTIONAL_TAPER_PHASE_SCALE)
   unwind_weight = max(-phase, 0.0) * _ioniq_6_sigmoid((abs(desired_lateral_jerk) - IONIQ_6_DIRECTIONAL_TAPER_JERK_ONSET) /
                                                        IONIQ_6_DIRECTIONAL_TAPER_JERK_WIDTH)
   low_speed_relief_weight = 0.0
