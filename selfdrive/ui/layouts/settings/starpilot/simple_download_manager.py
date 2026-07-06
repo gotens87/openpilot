@@ -117,9 +117,9 @@ class SimpleDownloadManager(Widget):
   MODE_DOWNLOAD = 2
 
   MODE_LABELS = ["SELECT", "DELETE", "DOWNLOAD"]
-  ITEM_HEIGHT = 88
-  PILL_HEIGHT = 50
-  PILL_GAP = 10
+  ITEM_HEIGHT = 128
+  PILL_HEIGHT = 73
+  PILL_GAP = 14
   OUTER_MARGIN = 60
 
   def __init__(
