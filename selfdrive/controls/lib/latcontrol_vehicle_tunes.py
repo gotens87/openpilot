@@ -571,6 +571,16 @@ IONIQ_6_HIGH_SPEED_RIGHT_TURN_IN_FF_LAT_START = 0.06
 IONIQ_6_HIGH_SPEED_RIGHT_TURN_IN_FF_LAT_END = 0.22
 IONIQ_6_HIGH_SPEED_RIGHT_TURN_IN_FF_LAT_WIDTH = 0.035
 IONIQ_6_LOW_SPEED_PID_RESET_SPEED = 0.1 * CV.MPH_TO_MS
+# Friction compensation near zero lateral accel amplifies planner jerk noise into a slow
+# (~0.5 Hz) weave on straights: the 0.09/0.39 small-signal slope plus the jerk feed acts as
+# extra P/D gain right where there is no breakaway torque to overcome. Deadzone the jerk
+# feed below straight-line noise levels and fade friction near center at highway speed.
+IONIQ_6_FRICTION_JERK_DEADZONE = 0.30
+IONIQ_6_FRICTION_CENTER_FADE_MAX = 0.50
+IONIQ_6_FRICTION_CENTER_FADE_LAT = 0.15
+IONIQ_6_FRICTION_CENTER_FADE_LAT_WIDTH = 0.06
+IONIQ_6_FRICTION_CENTER_FADE_SPEED = 18.0
+IONIQ_6_FRICTION_CENTER_FADE_SPEED_WIDTH = 2.5
 IONIQ_6_HEAVY_DIRECTIONAL_TAPER_LAT_START = 0.90
 IONIQ_6_HEAVY_DIRECTIONAL_TAPER_LAT_WIDTH = 0.18
 IONIQ_6_HEAVY_DIRECTIONAL_TAPER_BASE_LEFT = 0.03
@@ -1837,6 +1847,12 @@ def get_ioniq_6_friction_scale(v_ego: float, desired_lateral_accel: float, desir
   friction_scale -= (_ioniq_6_side_value(desired_lateral_accel, IONIQ_6_UNWIND_FRICTION_REDUCTION_LEFT, IONIQ_6_UNWIND_FRICTION_REDUCTION_RIGHT) *
                      transition_envelope * unwind_weight * unwind_speed_weight)
   return min(max(friction_scale, 0.82), 1.08)
+
+
+def get_ioniq_6_friction_center_fade_scale(desired_lateral_accel: float, v_ego: float) -> float:
+  speed_weight = _ioniq_6_sigmoid((v_ego - IONIQ_6_FRICTION_CENTER_FADE_SPEED) / IONIQ_6_FRICTION_CENTER_FADE_SPEED_WIDTH)
+  center_weight = _ioniq_6_sigmoid((IONIQ_6_FRICTION_CENTER_FADE_LAT - abs(desired_lateral_accel)) / IONIQ_6_FRICTION_CENTER_FADE_LAT_WIDTH)
+  return 1.0 - IONIQ_6_FRICTION_CENTER_FADE_MAX * speed_weight * center_weight
 
 
 def get_ioniq_6_center_taper_scale(desired_lateral_accel: float, v_ego: float) -> float:
