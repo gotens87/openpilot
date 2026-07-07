@@ -3564,7 +3564,7 @@ def _save_longitudinal_maneuver_status(status):
     history = []
   status_copy["history"] = [str(line) for line in history if str(line).strip()][-120:]
   status_copy["updatedAtSec"] = float(status_copy.get("updatedAtSec") or time.monotonic())
-  params.put("LongitudinalManeuverStatus", json.dumps(status_copy, separators=(",", ":")))
+  params.put("LongitudinalManeuverStatus", status_copy)
   return status_copy
 
 def _append_longitudinal_maneuver_history(status, line):
@@ -3693,7 +3693,7 @@ def _save_lateral_maneuver_status(status):
     history = []
   status_copy["history"] = [str(line) for line in history if str(line).strip()][-120:]
   status_copy["updatedAtSec"] = float(status_copy.get("updatedAtSec") or time.monotonic())
-  params.put("LateralManeuverStatus", json.dumps(status_copy, separators=(",", ":")))
+  params.put("LateralManeuverStatus", status_copy)
   return status_copy
 
 
