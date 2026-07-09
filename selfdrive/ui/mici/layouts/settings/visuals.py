@@ -47,11 +47,10 @@ class LeadIndicatorBigButton(BigToggle):
 
   def _handle_mouse_release(self, mouse_pos):
     super()._handle_mouse_release(mouse_pos)
-    self.params.put_bool("LeadIndicator", self._checked)
     self.params.put_bool("HideLeadMarker", not self._checked)
 
   def refresh(self):
-    self.set_checked(lead_indicator_enabled(self.params))
+    self.set_checked(lead_indicator_enabled(self.params, hide_by_default=True))
 
 
 class VisualsLayoutMici(NavScroller):

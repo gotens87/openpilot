@@ -16,10 +16,9 @@ def get_border_width(base_width: int, params: Params | None = None) -> int:
   return max(1, int(round(base_width * scale / 100.0)))
 
 
-def lead_indicator_enabled(params: Params | None = None) -> bool:
+def lead_indicator_enabled(params: Params | None = None, *, hide_by_default: bool = False) -> bool:
   active_params = params if params is not None else Params()
 
-  return (
-    active_params.get_bool("LeadIndicator", default=False)
-    and not active_params.get_bool("HideLeadMarker", default=False)
-  )
+  if active_params.get("HideLeadMarker") is None:
+    return not hide_by_default
+  return not active_params.get_bool("HideLeadMarker")
