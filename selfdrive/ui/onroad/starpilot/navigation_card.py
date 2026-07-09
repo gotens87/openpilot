@@ -232,13 +232,13 @@ class NavigationCardRenderer(Widget):
     truncated = word_index < len(words)
     if truncated and lines:
       shortened = lines[-1]
-      candidate = f"{shortened}…"
+      candidate = f"{shortened}..."
       while shortened and measure_text_cached(self._font_bold, candidate, font_size).x > max_width:
         if " " in shortened:
           shortened = shortened.rsplit(" ", 1)[0]
         else:
           shortened = shortened[:-1]
-        candidate = f"{shortened}…" if shortened else "…"
+        candidate = f"{shortened}..." if shortened else "..."
       lines[-1] = candidate
 
     return lines[:max_lines], truncated
@@ -259,10 +259,10 @@ class NavigationCardRenderer(Widget):
       return text
 
     shortened = text.rstrip()
-    candidate = f"{shortened}…"
+    candidate = f"{shortened}..."
     while shortened and measure_text_cached(self._font_medium, candidate, font_size).x > max_width:
       shortened = shortened[:-1].rstrip()
-      candidate = f"{shortened}…" if shortened else "…"
+      candidate = f"{shortened}..." if shortened else "..."
     return candidate
 
   def _draw_wrapped_lines(self, lines: list[str], x: float, y: float, font_size: int) -> None:
