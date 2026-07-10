@@ -48,7 +48,7 @@ def allow_logging(started, params, CP: car.CarParams, classic_model, tinygrad_mo
   return not frogpilot_toggles.no_logging and logging(started, params, CP, classic_model, tinygrad_model, frogpilot_toggles)
 
 def allow_uploads(started, params, CP: car.CarParams, classic_model, tinygrad_model, frogpilot_toggles) -> bool:
-  if BLOCK_COMMA_UPLOADS:
+  if BLOCK_COMMA_UPLOADS and not os.path.exists("/cache/use_konik"):
     return False
   return not frogpilot_toggles.no_uploads or frogpilot_toggles.no_onroad_uploads
 
@@ -68,7 +68,7 @@ def run_tinygrad_modeld(started, params, CP: car.CarParams, classic_model, tinyg
   return started and tinygrad_model
 
 procs = [
-  DaemonProcess("manage_athenad", "system.athena.manage_athenad", "AthenadPid", enabled=not BLOCK_COMMA_UPLOADS),
+  DaemonProcess("manage_athenad", "system.athena.manage_athenad", "AthenadPid", enabled=not BLOCK_COMMA_UPLOADS or os.path.exists("/cache/use_konik")),
 
   NativeProcess("camerad", "system/camerad", ["./camerad"], driverview),
   NativeProcess("logcatd", "system/logcatd", ["./logcatd"], allow_logging),
