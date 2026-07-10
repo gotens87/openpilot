@@ -1177,11 +1177,11 @@ class BreadcrumbController:
     target = 1.0 if self._expanded else 0.0
     self._expand_alpha += (target - self._expand_alpha) * ANIM_LERP
 
-    ACTIVE_SIZE   = 58
-    PAST_SIZE     = 50
-    CHEVRON_SIZE  = 38
-    CHEVRON_W     = 32
-    GAP           = 23
+    ACTIVE_SIZE   = 48
+    PAST_SIZE     = 40
+    CHEVRON_SIZE  = 30
+    CHEVRON_W     = 26
+    GAP           = 20
 
     center_y = rect.y + rect.height / 2
 
@@ -1198,8 +1198,8 @@ class BreadcrumbController:
 
     mouse_pos = gui_app.last_mouse_event.pos
 
-    MIN_ACTIVE_SIZE = 34
-    CAPSULE_W = 102
+    MIN_ACTIVE_SIZE = 30
+    CAPSULE_W = 92
     capsule_need = CAPSULE_W + GAP + CHEVRON_W + GAP
 
     active_size = ACTIVE_SIZE
@@ -1264,7 +1264,7 @@ class BreadcrumbController:
           current_x += GAP
           continue
 
-        capsule_w, capsule_h = CAPSULE_W, 58
+        capsule_w, capsule_h = CAPSULE_W, 48
         cap_rect = rl.Rectangle(current_x, center_y - capsule_h / 2, capsule_w, capsule_h)
         hovered = point_hits(mouse_pos, cap_rect, None, pad_x=4, pad_y=6)
         
@@ -1297,10 +1297,10 @@ class BreadcrumbController:
           rl.draw_rectangle_rounded_lines_ex(cap_rect, 1.0, 16, 1.0, outline)
 
           font_dots = gui_app.font(FontWeight.BOLD)
-          dots_ts = measure_text_cached(font_dots, "...", 41)
+          dots_ts = measure_text_cached(font_dots, "...", 34)
           rl.draw_text_ex(font_dots, "...",
             rl.Vector2(cap_rect.x + (cap_rect.width - dots_ts.x) / 2, center_y - dots_ts.y / 2),
-            41, 0, dots_c)
+            34, 0, dots_c)
         current_x += capsule_w + GAP
 
       else:
@@ -1326,7 +1326,7 @@ class BreadcrumbController:
           c_pressed = rl.Color(past_pressed.r, past_pressed.g, past_pressed.b, item_alpha)
 
         ts = measure_text_cached(font, text, font_size)
-        hit_rect = rl.Rectangle(current_x - 9, center_y - 44, ts.x + 17, 87)
+        hit_rect = rl.Rectangle(current_x - 8, center_y - 38, ts.x + 16, 76)
         hovered  = point_hits(mouse_pos, hit_rect, None, pad_x=0, pad_y=0)
         
         # Only add to interactive rects if it's visible within the bounds
@@ -3382,7 +3382,7 @@ class AetherSettingsView(PanelManagerView):
 
 
 def draw_back_button(pill_rect: rl.Rectangle, center_y: float, pressed: bool, hovered: bool) -> rl.Rectangle:
-  back_size = 55
+  back_size = 48
   back_x = pill_rect.x + 12
   btn = rl.Rectangle(back_x, center_y - back_size / 2, back_size, back_size)
   if pressed or hovered:
@@ -3458,16 +3458,16 @@ class AetherCategoryDrawer(AetherSettingsView):
       rl.draw_rectangle_rec(rl.Rectangle(drawer_rect.x + drawer_rect.width - 4, drawer_rect.y, 4, drawer_rect.height), self._color)
 
     # Draw header with navigation breadcrumbs
-    header_rect = rl.Rectangle(drawer_rect.x + 36, drawer_rect.y + 24, drawer_rect.width - 72, 80)
+    header_rect = rl.Rectangle(drawer_rect.x + 36, drawer_rect.y + 24, drawer_rect.width - 72, 60)
     if self._has_header:
       self._draw_header(header_rect)
 
     # Set up scroll area (vertical scroll list)
     self._scroll_rect = rl.Rectangle(
       drawer_rect.x + 36,
-      drawer_rect.y + 120,
+      drawer_rect.y + 100,
       drawer_rect.width - 72,
-      drawer_rect.height - 144
+      drawer_rect.height - 124
     )
 
     content_width = self._scroll_rect.width - AETHER_LIST_METRICS.content_right_gutter
@@ -3518,7 +3518,7 @@ class AetherCategoryDrawer(AetherSettingsView):
       super()._activate_target(target_id)
 
   def _draw_header(self, rect: rl.Rectangle):
-    pill_h = 52
+    pill_h = 48
     pill_rect = rl.Rectangle(rect.x, rect.y + (rect.height - pill_h) / 2, rect.width, pill_h)
     center_y = pill_rect.y + pill_h / 2
 
