@@ -39,9 +39,9 @@ CM_ "Ocelot smartDSU bridge status TX (firmware-derived from RetroPilot/ocelot m
 BO_ 767 SDSU_STATUS: 4 SDSU
  SG_ DISTANCE_BUTTON : 7|1@1+ (1,0) [0|1] "" XXX
  SG_ CTRL_MODE : 8|8@1+ (1,0) [0|255] "" XXX
- SG_ COUNTER : 16|4@1+ (1,0) [0|15] "" XXX
+ SG_ SDSU_COUNTER : 16|4@1+ (1,0) [0|15] "" XXX
  SG_ STATE : 20|4@1+ (1,0) [0|15] "" XXX
- SG_ CHECKSUM : 24|8@1+ (1,0) [0|255] "" XXX
+ SG_ SDSU_CHECKSUM : 24|8@1+ (1,0) [0|255] "" XXX
 
 BO_ 768 BUTTONS: 8 RADAR
  SG_ LKAS_PRESS : 2|1@0+ (1,0) [0|1] "" XXX
