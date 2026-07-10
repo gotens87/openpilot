@@ -32,7 +32,10 @@ def manager_init() -> None:
   params.clear_all(ParamKeyType.CLEAR_ON_ONROAD_TRANSITION)
   params.clear_all(ParamKeyType.CLEAR_ON_OFFROAD_TRANSITION)
   if build_metadata.release_channel:
+    keep_exp_long = params.get_bool("ExperimentalLongitudinalEnabled")
     params.clear_all(ParamKeyType.DEVELOPMENT_ONLY)
+    if keep_exp_long:  # smartDSU longitudinal opt-in must survive the release-channel dev-param wipe
+      params.put_bool("ExperimentalLongitudinalEnabled", True)
 
   # FrogPilot variables
   setup_frogpilot(build_metadata)
