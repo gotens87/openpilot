@@ -49,6 +49,10 @@ class StarPilotOnroadView(AugmentedRoadView):
     self._render_path_features(rect)
 
   def _render_slc(self):
+    alert_showing, _ = self.alert_renderer.will_render()
+    if alert_showing is not None:
+      return
+
     rl.begin_scissor_mode(
       int(self._content_rect.x), int(self._content_rect.y),
       int(self._content_rect.width), int(self._content_rect.height),
@@ -57,6 +61,10 @@ class StarPilotOnroadView(AugmentedRoadView):
     rl.end_scissor_mode()
 
   def _render_overlays(self):
+    alert_showing, _ = self.alert_renderer.will_render()
+    if alert_showing is not None:
+      return
+
     self._position_personality_button()
     self._personality_button.render()
     self._render_standstill_timer()
