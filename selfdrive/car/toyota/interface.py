@@ -62,6 +62,8 @@ class CarInterface(CarInterfaceBase):
 
     if Ecu.hybrid in found_ecus:
       ret.flags |= ToyotaFlags.HYBRID.value
+    if not (ret.flags & ToyotaFlags.HYBRID.value) and (0x127 in fingerprint[0] or 0x245 in fingerprint[0]):
+      ret.flags |= ToyotaFlags.HYBRID.value
 
     if candidate == CAR.TOYOTA_PRIUS:
       # Only give steer angle deadzone to for bad angle sensor prius
