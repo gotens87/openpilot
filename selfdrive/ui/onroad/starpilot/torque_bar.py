@@ -189,7 +189,7 @@ class TorqueBar(Widget):
       self._torque_filter.update(-ui_state.sm['carOutput'].actuatorsOutput.torque)
 
   def _render(self, rect: rl.Rectangle) -> None:
-    SCALE = rect.height / 240.0
+    SCALE = rect.height / 240.0 * (rect.width / gui_app.width)
     # adjust y pos with torque
     torque_line_offset = np.interp(abs(self._torque_filter.x), [0.5, 1], [22 * SCALE, 26 * SCALE])
     torque_line_height = np.interp(abs(self._torque_filter.x), [0.5, 1], [14 * SCALE, 56 * SCALE])
