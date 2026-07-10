@@ -294,12 +294,12 @@ class AetherListColors:
 
 @dataclass(frozen=True)
 class AetherListMetrics:
-  max_content_width: int = 1560
-  outer_margin_x: int = 18
-  outer_margin_y: int = 24
-  panel_padding_x: int = 16
-  panel_padding_top: int = 28
-  panel_padding_bottom: int = 22
+  max_content_width: int = 100000
+  outer_margin_x: int = 10
+  outer_margin_y: int = 10
+  panel_padding_x: int = 0
+  panel_padding_top: int = 0
+  panel_padding_bottom: int = 0
   header_height: int = 0
   section_gap: int = 28
   section_header_height: int = 87
@@ -311,7 +311,7 @@ class AetherListMetrics:
   header_button_height: int = 84
   header_button_gap: int = 14  # noqa: used implicitly by driving_model
   fade_height: int = 24
-  content_right_gutter: int = 18
+  content_right_gutter: int = 0
   toggle_width: int = 113
   toggle_height: int = 61
   toggle_right_inset: int = 49
