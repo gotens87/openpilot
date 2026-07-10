@@ -5437,6 +5437,19 @@ class AetherSegmentedControl(Widget):
     self._option_offsets: list[float] = []
     self._option_targets: list[float] = []
 
+  @property
+  def _hit_rect(self) -> rl.Rectangle:
+    hit_rect = rl.Rectangle(
+      self._rect.x - GEOMETRY_OFFSET,
+      self._rect.y - GEOMETRY_OFFSET,
+      self._rect.width + 2 * GEOMETRY_OFFSET,
+      self._rect.height + 2 * GEOMETRY_OFFSET,
+    )
+    parent_rect = getattr(self, "_parent_rect", None)
+    if parent_rect is not None:
+      return _intersect_rect(hit_rect, parent_rect)
+    return hit_rect
+
   def _current(self) -> int:
     if callable(self._current_index):
       return max(0, min(len(self._options) - 1, int(self._current_index())))
