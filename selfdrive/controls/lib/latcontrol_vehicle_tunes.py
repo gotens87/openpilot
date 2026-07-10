@@ -570,18 +570,27 @@ IONIQ_6_HIGH_SPEED_RIGHT_TURN_IN_FF_SPEED_WIDTH = 2.5
 IONIQ_6_HIGH_SPEED_RIGHT_TURN_IN_FF_LAT_START = 0.06
 IONIQ_6_HIGH_SPEED_RIGHT_TURN_IN_FF_LAT_END = 0.22
 IONIQ_6_HIGH_SPEED_RIGHT_TURN_IN_FF_LAT_WIDTH = 0.035
-IONIQ_6_CURVY_SPEED_MIN = 10.5
+IONIQ_6_CURVY_SPEED_MIN = 7.2
 IONIQ_6_CURVY_SPEED_MAX = 19.0
-IONIQ_6_CURVY_SPEED_MIN_WIDTH = 1.5
+IONIQ_6_CURVY_SPEED_MIN_WIDTH = 1.1
 IONIQ_6_CURVY_SPEED_MAX_WIDTH = 1.8
-IONIQ_6_CURVY_UNWIND_EXTRA_REDUCTION_LEFT = 0.12
-IONIQ_6_CURVY_UNWIND_EXTRA_REDUCTION_RIGHT = 0.16
-IONIQ_6_CURVY_UNWIND_FLOOR_RELIEF_LEFT = 0.10
-IONIQ_6_CURVY_UNWIND_FLOOR_RELIEF_RIGHT = 0.14
-IONIQ_6_CURVY_UNWIND_LAT_START = 0.55
-IONIQ_6_CURVY_UNWIND_LAT_END = 3.4
-IONIQ_6_CURVY_UNWIND_LAT_ONSET_WIDTH = 0.16
-IONIQ_6_CURVY_UNWIND_LAT_CUTOFF_WIDTH = 0.50
+IONIQ_6_CURVY_UNWIND_EXTRA_REDUCTION_LEFT = 0.18
+IONIQ_6_CURVY_UNWIND_EXTRA_REDUCTION_RIGHT = 0.24
+IONIQ_6_CURVY_UNWIND_FLOOR_RELIEF_LEFT = 0.16
+IONIQ_6_CURVY_UNWIND_FLOOR_RELIEF_RIGHT = 0.22
+IONIQ_6_CURVY_UNWIND_LAT_START = 0.45
+IONIQ_6_CURVY_UNWIND_LAT_END = 3.6
+IONIQ_6_CURVY_UNWIND_LAT_ONSET_WIDTH = 0.14
+IONIQ_6_CURVY_UNWIND_LAT_CUTOFF_WIDTH = 0.55
+IONIQ_6_CURVY_TURN_IN_TRIM_SPEED_MIN = 11.5
+IONIQ_6_CURVY_TURN_IN_TRIM_SPEED_MAX = 18.5
+IONIQ_6_CURVY_TURN_IN_TRIM_SPEED_WIDTH = 1.2
+IONIQ_6_CURVY_TURN_IN_TRIM_LEFT = 0.06
+IONIQ_6_CURVY_TURN_IN_TRIM_RIGHT = 0.06
+IONIQ_6_CURVY_TURN_IN_TRIM_LAT_START = 1.0
+IONIQ_6_CURVY_TURN_IN_TRIM_LAT_END = 2.5
+IONIQ_6_CURVY_TURN_IN_TRIM_LAT_ONSET_WIDTH = 0.18
+IONIQ_6_CURVY_TURN_IN_TRIM_LAT_CUTOFF_WIDTH = 0.30
 IONIQ_6_LOW_SPEED_PID_RESET_SPEED = 0.1 * CV.MPH_TO_MS
 # Friction compensation near zero lateral accel amplifies planner jerk noise into a slow
 # (~0.5 Hz) weave on straights: the 0.09/0.39 small-signal slope plus the jerk feed acts as
@@ -1798,6 +1807,12 @@ def _ioniq_6_curvy_speed_weight(v_ego: float) -> float:
   return onset * cutoff
 
 
+def _ioniq_6_curvy_turn_in_trim_speed_weight(v_ego: float) -> float:
+  onset = _ioniq_6_sigmoid((max(v_ego, 0.0) - IONIQ_6_CURVY_TURN_IN_TRIM_SPEED_MIN) / IONIQ_6_CURVY_TURN_IN_TRIM_SPEED_WIDTH)
+  cutoff = _ioniq_6_sigmoid((IONIQ_6_CURVY_TURN_IN_TRIM_SPEED_MAX - max(v_ego, 0.0)) / IONIQ_6_CURVY_TURN_IN_TRIM_SPEED_WIDTH)
+  return onset * cutoff
+
+
 def get_ioniq_6_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: float, v_ego: float,
                          directional_taper_scale: float | None = None) -> float:
   if desired_lateral_accel == 0.0:
@@ -1906,12 +1921,20 @@ def get_ioniq_6_directional_taper_scale(desired_lateral_accel: float, desired_la
   unwind_weight = max(-phase, 0.0) * _ioniq_6_sigmoid((abs(desired_lateral_jerk) - IONIQ_6_DIRECTIONAL_TAPER_JERK_ONSET) /
                                                        IONIQ_6_DIRECTIONAL_TAPER_JERK_WIDTH)
   low_speed_relief_weight = 0.0
+  curvy_turn_in_trim_weight = 0.0
   if v_ego is not None:
     low_speed_weight = _ioniq_6_sigmoid((IONIQ_6_DIRECTIONAL_TAPER_LOW_SPEED_RELIEF_SPEED - max(v_ego, 0.0)) /
                                         IONIQ_6_DIRECTIONAL_TAPER_LOW_SPEED_RELIEF_SPEED_WIDTH)
     tight_turn_weight = _ioniq_6_sigmoid((abs_lateral_accel - IONIQ_6_DIRECTIONAL_TAPER_LOW_SPEED_RELIEF_LAT) /
                                          IONIQ_6_DIRECTIONAL_TAPER_LOW_SPEED_RELIEF_LAT_WIDTH)
     low_speed_relief_weight = IONIQ_6_DIRECTIONAL_TAPER_LOW_SPEED_RELIEF * low_speed_weight * tight_turn_weight * (1.0 - unwind_weight)
+    turn_in_weight = max(phase, 0.0)
+    curvy_turn_in_speed_weight = _ioniq_6_curvy_turn_in_trim_speed_weight(v_ego)
+    curvy_turn_in_lat_onset = _ioniq_6_sigmoid((abs_lateral_accel - IONIQ_6_CURVY_TURN_IN_TRIM_LAT_START) /
+                                               IONIQ_6_CURVY_TURN_IN_TRIM_LAT_ONSET_WIDTH)
+    curvy_turn_in_lat_cutoff = _ioniq_6_sigmoid((IONIQ_6_CURVY_TURN_IN_TRIM_LAT_END - abs_lateral_accel) /
+                                                IONIQ_6_CURVY_TURN_IN_TRIM_LAT_CUTOFF_WIDTH)
+    curvy_turn_in_trim_weight = curvy_turn_in_speed_weight * curvy_turn_in_lat_onset * curvy_turn_in_lat_cutoff * turn_in_weight
   base_reduction = _ioniq_6_side_value(desired_lateral_accel, IONIQ_6_DIRECTIONAL_TAPER_BASE_LEFT, IONIQ_6_DIRECTIONAL_TAPER_BASE_RIGHT)
   unwind_reduction = _ioniq_6_side_value(desired_lateral_accel, IONIQ_6_DIRECTIONAL_TAPER_UNWIND_LEFT, IONIQ_6_DIRECTIONAL_TAPER_UNWIND_RIGHT)
   heavy_base_reduction = _ioniq_6_side_value(desired_lateral_accel, IONIQ_6_HEAVY_DIRECTIONAL_TAPER_BASE_LEFT, IONIQ_6_HEAVY_DIRECTIONAL_TAPER_BASE_RIGHT)
@@ -1920,6 +1943,10 @@ def get_ioniq_6_directional_taper_scale(desired_lateral_accel: float, desired_la
   heavy_base_reduction *= 1.0 - low_speed_relief_weight
   reduction = band_weight * (base_reduction + unwind_reduction * unwind_weight)
   reduction += heavy_band_weight * (heavy_base_reduction + heavy_unwind_reduction * unwind_weight)
+  reduction += (_ioniq_6_side_value(desired_lateral_accel,
+                                    IONIQ_6_CURVY_TURN_IN_TRIM_LEFT,
+                                    IONIQ_6_CURVY_TURN_IN_TRIM_RIGHT) *
+                curvy_turn_in_trim_weight)
   curvy_unwind_weight = 0.0
   curvy_unwind_floor_relief = 0.0
   if v_ego is not None:
