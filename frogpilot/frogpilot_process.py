@@ -18,6 +18,8 @@ from openpilot.frogpilot.system.frogpilot_tracking import FrogPilotTracking
 
 ASSET_CHECK_RATE = (1 / DT_MDL)
 
+BLOCK_COMMA_UPLOADS = True
+
 def assets_checks(model_manager, theme_manager, frogpilot_toggles):
   if params_memory.get_bool(MODEL_DOWNLOAD_ALL_PARAM):
     run_thread_with_lock("download_all_models", model_manager.download_all_models)
@@ -102,7 +104,8 @@ def frogpilot_thread():
         theme_manager.update_active_theme(time_validated, frogpilot_toggles, randomize_theme=True)
 
       if time_validated:
-        send_stats(json.loads(params.get("LastGPSPosition") or "{}"), params, frogpilot_toggles)
+        if time_validated and not BLOCK_COMMA_UPLOADS:
+          send_stats(json.loads(params.get("LastGPSPosition") or "{}"), params, frogpilot_toggles)
 
     elif started and not started_previously:
       if error_log.is_file():
