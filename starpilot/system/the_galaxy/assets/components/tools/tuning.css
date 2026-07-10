@@ -1,0 +1,143 @@
+.ftmTwoColumn {
+  display: grid;
+  gap: var(--gap-base);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: var(--margin-base);
+}
+
+.ftmCard {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--border-radius-md);
+  margin-top: var(--margin-base);
+  padding: var(--padding-base);
+}
+
+.ftmCardHeader {
+  align-items: flex-start;
+  display: flex;
+  gap: var(--gap-sm);
+  justify-content: space-between;
+}
+
+.ftmCardHeader h3,
+.ftmCardHeader h4,
+.ftmCardHeader h5 {
+  margin: 0;
+}
+
+.ftmCardSubsection {
+  margin-top: var(--margin-base);
+}
+
+.ftmRouteList,
+.ftmWorkspaceList,
+.ftmFindings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-sm);
+  margin-top: var(--margin-base);
+}
+
+.ftmWorkspaceRow {
+  display: flex;
+  gap: var(--gap-sm);
+}
+
+.ftmRouteList {
+  max-height: 28rem;
+  overflow: auto;
+  padding-right: var(--padding-xs);
+}
+
+.ftmRouteItem,
+.ftmWorkspaceItem {
+  align-items: flex-start;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--border-radius-sm);
+  color: var(--text-color);
+  cursor: pointer;
+  display: flex;
+  gap: var(--gap-sm);
+  padding: var(--padding-sm);
+  text-align: left;
+}
+
+.ftmRouteItem input {
+  margin-top: 0.2rem;
+}
+
+.ftmRouteItem span,
+.ftmWorkspaceItem {
+  display: flex;
+  flex-direction: column;
+}
+
+.ftmWorkspaceItem {
+  flex: 1 1 auto;
+}
+
+.ftmWorkspaceDelete {
+  align-self: stretch;
+  flex: 0 0 auto;
+}
+
+.ftmRouteItem small,
+.ftmWorkspaceItem small,
+.ftmWorkspaceItem span {
+  color: var(--text-muted);
+}
+
+.ftmWorkspaceItem:hover,
+.ftmRouteItem:hover,
+.ftmCard button.selected {
+  border-color: var(--main-fg);
+}
+
+.ftmProfileGrid {
+  display: grid;
+  gap: var(--gap-base);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ftmFeedbackButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap-xs);
+}
+
+.ftmDeltaBox {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--border-radius-sm);
+  margin-top: var(--margin-sm);
+  padding: var(--padding-sm);
+}
+
+.ftmNotes {
+  background: var(--secondary-bg);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--border-radius-sm);
+  color: var(--text-color);
+  margin-top: var(--margin-base);
+  min-height: 5.5rem;
+  padding: var(--padding-sm);
+  resize: vertical;
+  width: 100%;
+}
+
+.ftmPlotWrap {
+  margin-top: var(--margin-base);
+}
+
+.ftmPlotWrap svg {
+  height: 140px;
+  width: 100%;
+}
+
+@media only screen and (max-width: 900px) {
+  .ftmTwoColumn,
+  .ftmProfileGrid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -229,6 +229,9 @@ EXCLUDED_KEYS = {
   "CommunityFavorites",
   "CurvatureData",
   "ExperimentalLongitudinalEnabled",
+  "FTMActiveOverrides",
+  "FTMActiveProfileId",
+  "FTMTrialApplied",
   "InstallDate",
   "StarPilotCarParamsPersistent",
   "KonikMinutes",
@@ -677,6 +680,13 @@ class StarPilotVariables:
     advanced_lateral_tuning = self.get_value("AdvancedLateralTune")
     toggle.force_auto_tune = self.get_value("ForceAutoTune", condition=advanced_lateral_tuning and not has_auto_tune and is_torque_car and not is_angle_car)
     toggle.force_auto_tune_off = self.get_value("ForceAutoTuneOff", condition=advanced_lateral_tuning and has_auto_tune and is_torque_car and not is_angle_car)
+    toggle.ftm_active_profile_id = self.params.get("FTMActiveProfileId", encoding="utf-8") or ""
+    toggle.ftm_trial_applied = self.params.get_bool("FTMTrialApplied")
+    ftm_overrides_raw = self.params.get("FTMActiveOverrides", encoding="utf-8") or ""
+    try:
+      toggle.ftm_active_overrides = json.loads(ftm_overrides_raw) if ftm_overrides_raw else {}
+    except Exception:
+      toggle.ftm_active_overrides = {}
     toggle.steerActuatorDelay = self.get_value("SteerDelay", cast=float, condition=advanced_lateral_tuning, default=steerActuatorDelay, min=0.01, max=1.0)
     toggle.use_custom_steerActuatorDelay = bool(round(toggle.steerActuatorDelay, 2) != round(steerActuatorDelay, 2))
     toggle.friction = self.get_value("SteerFriction", cast=float, condition=advanced_lateral_tuning, default=friction, min=0, max=1)

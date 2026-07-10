@@ -6,7 +6,6 @@ import { ErrorLogs } from "/assets/components/tools/error_logs.js"
 import { VehicleFeatures } from "/assets/components/tools/vehicle_features.js"
 import { GalaxyPairing } from "/assets/components/tools/galaxy.js"
 import { Home } from "/assets/components/home/home.js"
-import { LateralManeuvers } from "/assets/components/tools/lateral_maneuvers.js"
 import { LongitudinalManeuvers } from "/assets/components/tools/longitudinal_maneuvers.js"
 import { MapsManager } from "/assets/components/tools/maps.js"
 import { NavDestination } from "/assets/components/navigation/navigation_destination.js?v=nav-search-context-1"
@@ -14,12 +13,13 @@ import { NavKeys } from "/assets/components/navigation/navigation_keys.js?v=app-
 import { RouteRecordings } from "/assets/components/recordings/dashcam_routes.js"
 import { SettingsView } from "/assets/components/settings.js"
 import { ScreenRecordings } from "/assets/components/recordings/screen_recordings.js"
-import { Sidebar } from "/assets/components/sidebar.js?v=app-keys-session-1"
+import { Sidebar } from "/assets/components/sidebar.js?v=lateral-tuning-1"
 import { SpeedLimits } from "/assets/components/tools/speed_limits.js"
 import { ModelManager } from "/assets/components/tools/model_manager.js?v=20260303t"
 import { LivePlots } from "/assets/components/tools/plots.js"
 import { ThemeMaker } from "/assets/components/tools/theme_maker.js"
 import { TestingGround } from "/assets/components/tools/testing_ground.js"
+import { Tuning } from "/assets/components/tools/tuning.js?v=ftm-workspace-4"
 import { Troubleshoot } from "/assets/components/tools/troubleshoot.js"
 import { TmuxLog } from "/assets/components/tools/tmux.js"
 import { ToggleControl } from "/assets/components/tools/toggles.js"
@@ -72,7 +72,8 @@ function Root() {
     createRoute("settings", "/settings/:section/:subsection?", SettingsView),
     createRoute("speed_limits", "/download_speed_limits", SpeedLimits),
     createRoute("model_manager", "/manage_models", ModelManager),
-    createRoute("lateral_maneuvers", "/lateral_maneuvers", LateralManeuvers),
+    createRoute("tuning", "/tuning", Tuning),
+    createRoute("lateral_maneuvers", "/lateral_maneuvers", Tuning),
     createRoute("longitudinal_maneuvers", "/longitudinal_maneuvers", LongitudinalManeuvers),
     createRoute("maps", "/manage_maps", MapsManager),
     createRoute("plots", "/plots", LivePlots),

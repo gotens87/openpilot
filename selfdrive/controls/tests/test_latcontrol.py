@@ -19,7 +19,13 @@ from openpilot.selfdrive.controls.lib.latcontrol_pid import (
   get_civic_bosch_modified_pid_output_alpha,
   get_civic_bosch_modified_pid_output_scale,
 )
-from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import get_hkg_canfd_base_friction_threshold
+from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
+  clear_ftm_runtime_overrides,
+  get_ftm_runtime_overrides,
+  get_hkg_canfd_base_friction_threshold,
+  normalize_ftm_overrides,
+  set_ftm_runtime_overrides,
+)
 from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_civic_bosch_modified_a_center_taper_scale,
   LatControlTorque,
@@ -257,6 +263,42 @@ class TestLatControl:
     assert turn_in_right > steady_right
     assert unwind_left < steady_left
     assert unwind_right < steady_right
+
+  def test_ftm_standard_friction_curve_override(self):
+    base = get_standard_friction_threshold(10.0)
+    overrides = normalize_ftm_overrides({
+      "baseFrictionThresholds": {
+        "standard": {
+          "values": [0.30, 0.31, 0.32, 0.33, 0.34],
+        },
+      },
+    })
+    try:
+      set_ftm_runtime_overrides(overrides)
+      assert get_ftm_runtime_overrides()["baseFrictionThresholds"]["standard"]["values"] == [0.30, 0.31, 0.32, 0.33, 0.34]
+      assert get_standard_friction_threshold(10.0) == pytest.approx(0.32)
+      assert get_standard_friction_threshold(12.5) > get_standard_friction_threshold(10.0)
+      assert get_standard_friction_threshold(10.0) != pytest.approx(base)
+    finally:
+      clear_ftm_runtime_overrides()
+    assert get_ftm_runtime_overrides() == {}
+    assert get_standard_friction_threshold(10.0) == pytest.approx(base)
+
+  def test_ftm_vehicle_knob_override_ioniq6_center_taper(self):
+    baseline = get_ioniq_6_center_taper_scale(0.0, 32.0)
+    overrides = normalize_ftm_overrides({
+      "vehicleKnobs": {
+        "hyundai_ioniq_6.center_taper_max": 0.0,
+        "hyundai_ioniq_6.highway_center_taper_max": 0.0,
+      },
+    })
+    try:
+      set_ftm_runtime_overrides(overrides)
+      adjusted = get_ioniq_6_center_taper_scale(0.0, 32.0)
+      assert adjusted > baseline
+      assert adjusted <= 1.0
+    finally:
+      clear_ftm_runtime_overrides()
 
   def test_sonata_hybrid_center_taper_curve(self):
     assert get_sonata_hybrid_center_taper_scale(0.0, 30.0) < get_sonata_hybrid_center_taper_scale(0.0, 15.0)
