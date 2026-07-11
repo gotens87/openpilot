@@ -56,6 +56,10 @@ class CarInterface(CarInterfaceBase):
     if Ecu.hybrid in found_ecus:
       ret.flags |= ToyotaFlags.HYBRID.value
 
+    # CAN fallback: detect hybrid via passive Bus 0 messages when ECU query fails.
+    if not (ret.flags & ToyotaFlags.HYBRID.value) and (0x127 in fingerprint[0] or 0x245 in fingerprint[0]):
+      ret.flags |= ToyotaFlags.HYBRID.value
+
     if candidate == CAR.TOYOTA_PRIUS:
       stop_and_go = True
       # Only give steer angle deadzone to for bad angle sensor prius
@@ -102,7 +106,7 @@ class CarInterface(CarInterfaceBase):
 
     # No radar dbc for cars without DSU which are not TSS 2.0
     # TODO: make an adas dbc file for dsu-less models
-    ret.radarUnavailable = Bus.radar not in DBC[candidate] or candidate in (NO_DSU_CAR - TSS2_CAR)
+    ret.radarUnavailable = Bus.radar not in DBC[candidate] or candidate in (NO_DSU_CAR - TSS2_CAR - {CAR.TOYOTA_CAMRY})
 
     # since we don't yet parse radar on TSS2/TSS-P radar-based ACC cars, gate longitudinal behind experimental toggle
     if candidate in (RADAR_ACC_CAR | NO_DSU_CAR):
@@ -137,9 +141,18 @@ class CarInterface(CarInterfaceBase):
       ret.vEgoStarting = 0.25
       ret.stoppingDecelRate = 0.3  # reach stopping target smoothly
 
-      # Hybrids have much quicker longitudinal actuator response
-      if ret.flags & ToyotaFlags.HYBRID.value:
-        ret.longitudinalActuatorDelay = 0.05
+    # Camry Hybrid (THS-II eCVT, non-TSS2): adopt the gentler TSS2-style stop ramp. The
+    # generic non-TSS2 defaults (vEgoStopping/Starting 0.5, stoppingDecelRate 0.8) ramp the
+    # brake too fast into the stop for the eCVT's slower brake-blend -> abrupt stops. We do
+    # NOT take RAISED_ACCEL_LIMIT (kept off above) - only the gentler stop ramp.
+    if candidate == CAR.TOYOTA_CAMRY:
+      ret.vEgoStopping = 0.25
+      ret.vEgoStarting = 0.25
+      ret.stoppingDecelRate = 0.3
+
+    # Hybrids have much quicker longitudinal actuator response.
+    if ret.flags & ToyotaFlags.HYBRID.value:
+      ret.longitudinalActuatorDelay = 0.05
 
     return ret
 
