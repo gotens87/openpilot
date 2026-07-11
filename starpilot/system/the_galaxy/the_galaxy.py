@@ -5702,6 +5702,20 @@ def setup(app):
     except RuntimeError as error:
       return jsonify({"error": str(error)}), 409
 
+  @app.route("/api/ftm/report/<report_id>/path", methods=["POST"])
+  def select_ftm_report_path(report_id):
+    data = request.get_json(silent=True) or {}
+    path_key = str(data.get("pathKey") or "").strip()
+    if not path_key:
+      return jsonify({"error": "pathKey is required."}), 400
+
+    try:
+      return jsonify(ftm_workspace.select_report_path(report_id, path_key)), 200
+    except FileNotFoundError:
+      return jsonify({"error": "FTM report not found."}), 404
+    except ValueError as error:
+      return jsonify({"error": str(error)}), 400
+
   @app.route("/api/ftm/workspace", methods=["GET"])
   def get_ftm_workspace():
     return jsonify(ftm_workspace.list_workspace()), 200

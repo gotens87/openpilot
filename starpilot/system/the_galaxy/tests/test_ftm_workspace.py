@@ -105,6 +105,8 @@ def _install_ftm_import_stubs(tmp_path):
     get_ftm_capabilities=lambda *args, **kwargs: {"richProfileKey": "hyundai_ioniq_6", "frictionFamily": "hkg_canfd"},
     get_ftm_rich_profile_key=lambda *args, **kwargs: "hyundai_ioniq_6",
     get_ftm_supported_vehicle_knobs=lambda: {
+      "hyundai_ioniq_6.ff_gain_left": {"min": 0.0, "max": 0.6, "precision": 0.001, "defaultValue": 0.1, "profile": "hyundai_ioniq_6"},
+      "hyundai_ioniq_6.ff_gain_right": {"min": 0.0, "max": 0.6, "precision": 0.001, "defaultValue": 0.12, "profile": "hyundai_ioniq_6"},
       "hyundai_ioniq_6.turn_in_boost_left": {"min": 0.4, "max": 2.8, "precision": 0.001, "defaultValue": 1.64, "profile": "hyundai_ioniq_6"},
       "hyundai_ioniq_6.unwind_taper_left": {"min": 0.0, "max": 1.2, "precision": 0.001, "defaultValue": 0.4, "profile": "hyundai_ioniq_6"},
       "hyundai_ioniq_6.low_speed_angle_assist_max_torque": {"min": 0.0, "max": 0.8, "precision": 0.001, "defaultValue": 0.46, "profile": "hyundai_ioniq_6"},
@@ -228,6 +230,36 @@ def test_build_suggestions_baseline_prefers_generic_lat_accel_for_understeer(tmp
   adjustment = suggestions[0]["primaryAdjustmentRaw"]
   assert adjustment["type"] == "generic_param"
   assert adjustment["paramKey"] == "SteerLatAccel"
+  assert adjustment["suggested"] > adjustment["current"]
+
+
+def test_build_suggestions_baseline_respects_asymmetric_nonlinear_map(tmp_path):
+  module, _ = _load_ftm_workspace_module(tmp_path)
+  summary = {
+    "bucket": "understeer",
+    "dimensionId": "understeer:right:mid",
+    "direction": "right",
+    "speedBand": "mid",
+    "severity": 1.0,
+    "evidence": {"speedBand": "mid", "directionBias": "right", "eventCount": 3, "segments": [{"label": "route/2"}]},
+    "plotSvg": "",
+  }
+  capabilities = {
+    "richProfileKey": "hyundai_ioniq_6",
+    "frictionFamily": "gm",
+    "nonlinearTorqueMap": {
+      "type": "siglin",
+      "left": [2.6, 1.1, 0.19, 0.0],
+      "right": [2.7, 1.0, 0.15, 0.0],
+      "asymmetric": True,
+    },
+  }
+  current = {"SteerLatAccel": 1.8, "SteerFriction": 0.2}
+
+  suggestions = module.build_suggestions([summary], capabilities, current, strategy="baseline")
+  adjustment = suggestions[0]["primaryAdjustmentRaw"]
+  assert adjustment["type"] == "vehicle_knob"
+  assert adjustment["symbol"] == "hyundai_ioniq_6.ff_gain_right"
   assert adjustment["suggested"] > adjustment["current"]
 
 
@@ -481,3 +513,45 @@ def test_delete_report_removes_saved_artifacts(tmp_path):
   assert not (workspace["profiles"] / f"{report_id}.json").exists()
   assert not (workspace["feedback"] / f"{report_id}.json").exists()
   assert not (workspace["snapshots"] / f"{report_id}-recommended.json").exists()
+
+
+def test_select_report_path_persists_manual_override(tmp_path):
+  module, _ = _load_ftm_workspace_module(tmp_path)
+  workspace = module.ensure_ftm_workspace()
+  report_id = "report-path"
+  suggestion_base = {
+    "evidence": {"speedBand": "mixed", "directionBias": "center", "eventCount": 0, "segments": []},
+    "currentVsSuggested": None,
+    "observedBehavior": "test",
+    "likelyInterpretation": "test",
+    "primaryAdjustment": "test",
+    "whatNotToTouchYet": "test",
+    "ifThatWasWrong": "test",
+    "plotSvg": "",
+  }
+  cleanup_suggestion = {**suggestion_base, "dimensionId": "cleanup", "bucket": "model_limited"}
+  baseline_suggestion = {**suggestion_base, "dimensionId": "baseline", "bucket": "understeer"}
+  report = {
+    "reportId": report_id,
+    "routeNames": ["route"],
+    "car": {"carFingerprint": "TEST", "controlPath": "torque", "gitBranch": "", "gitCommit": ""},
+    "capabilities": {"frictionFamily": "standard", "richProfileKey": "hyundai_ioniq_6", "nonlinearTorqueMap": {}},
+    "primaryPathKey": "cleanup_pass",
+    "selectedPathKey": "cleanup_pass",
+    "pathSelectionSource": "auto",
+    "paths": [
+      {"key": "cleanup_pass", "title": "Cleanup Pass", "isPrimary": True, "suggestions": [cleanup_suggestion], "profiles": []},
+      {"key": "baseline_fix", "title": "Baseline Fix", "isPrimary": False, "suggestions": [baseline_suggestion], "profiles": []},
+    ],
+    "suggestions": [cleanup_suggestion],
+    "profiles": [],
+    "addTheseParametersAndStartHere": [],
+  }
+  (workspace["reports"] / f"{report_id}.json").write_text(json.dumps(report), encoding="utf-8")
+
+  result = module.select_report_path(report_id, "baseline_fix")
+  selected = result["report"]
+  assert selected["selectedPathKey"] == "baseline_fix"
+  assert selected["pathSelectionSource"] == "manual"
+  assert selected["primaryPathKey"] == "cleanup_pass"
+  assert selected["suggestions"] == [baseline_suggestion]

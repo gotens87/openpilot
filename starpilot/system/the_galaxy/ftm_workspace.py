@@ -581,6 +581,38 @@ def _current_param_state(CP, params: Params) -> dict[str, Any]:
   }
 
 
+def _nonlinear_torque_map(CP) -> dict[str, Any]:
+  if str(getattr(CP, "brand", "") or "") != "gm":
+    return {}
+
+  try:
+    from opendbc.car.gm.interface import NON_LINEAR_TORQUE_PARAMS
+  except (ImportError, AttributeError):
+    return {}
+
+  raw_params = NON_LINEAR_TORQUE_PARAMS.get(CP.carFingerprint)
+  if raw_params is None:
+    return {}
+
+  if isinstance(raw_params, dict):
+    left = [float(value) for value in raw_params.get("left", [])]
+    right = [float(value) for value in raw_params.get("right", [])]
+  else:
+    left = [float(value) for value in raw_params]
+    right = list(left)
+
+  if len(left) != 4 or len(right) != 4:
+    return {}
+
+  return {
+    "type": "siglin",
+    "left": left,
+    "right": right,
+    "asymmetric": any(not math.isclose(left[idx], right[idx], abs_tol=1e-9) for idx in range(4)),
+    "learnedByLiveTorque": False,
+  }
+
+
 def _baseline_family_curve(family: str) -> list[float]:
   getter = {
     "gm": get_gm_base_friction_threshold,
@@ -855,6 +887,9 @@ def _primary_delta_from_summary(summary: dict[str, Any], capabilities: dict[str,
   supports_curvy_speed_max = _rich_profile_supports_knob(capabilities, "curvy_speed_max")
   supports_curvy_unwind_extra = _rich_profile_supports_knob(capabilities, f"curvy_unwind_extra_reduction_{side}")
   supports_curvy_unwind_floor = _rich_profile_supports_knob(capabilities, f"curvy_unwind_floor_relief_{side}")
+  supports_ff_gain = _rich_profile_supports_knob(capabilities, f"ff_gain_{side}")
+  nonlinear_map = capabilities.get("nonlinearTorqueMap", {})
+  asymmetric_nonlinear_map = bool(isinstance(nonlinear_map, dict) and nonlinear_map.get("asymmetric"))
 
   if bucket == "model_limited":
     return None
@@ -889,12 +924,20 @@ def _primary_delta_from_summary(summary: dict[str, Any], capabilities: dict[str,
       }
 
     if bucket in ("understeer", "late_turn_in", "saturation_limited"):
+      if asymmetric_nonlinear_map and direction in ("left", "right") and supports_ff_gain:
+        adjustment = _vehicle_knob_adjustment(f"{rich_profile}.ff_gain_{side}", 0.025 * severity, current)
+        if adjustment is not None:
+          return adjustment
       current_value = float(current["SteerLatAccel"])
       scale = 0.04 if bucket == "saturation_limited" else 0.03
       suggested_value = round(_clamp(current_value + max(scale, current_value * scale * severity), 0.5, 5.0), 4)
       return {"type": "generic_param", "paramKey": "SteerLatAccel", "current": current_value, "suggested": suggested_value, "delta": round(suggested_value - current_value, 4)}
 
     if bucket in ("oversteer", "early_turn_in"):
+      if asymmetric_nonlinear_map and direction in ("left", "right") and supports_ff_gain:
+        adjustment = _vehicle_knob_adjustment(f"{rich_profile}.ff_gain_{side}", -0.025 * severity, current)
+        if adjustment is not None:
+          return adjustment
       current_value = float(current["SteerLatAccel"])
       suggested_value = round(_clamp(current_value - max(0.03, current_value * 0.03 * severity), 0.5, 5.0), 4)
       return {"type": "generic_param", "paramKey": "SteerLatAccel", "current": current_value, "suggested": suggested_value, "delta": round(suggested_value - current_value, 4)}
@@ -1039,6 +1082,8 @@ def _likely_interpretation(summary: dict[str, Any], adjustment: dict[str, Any]) 
     return "This looks more like a friction-threshold problem than a whole-tune problem; the controller is busy around center and needs a calmer deadzone slope."
   if adjustment["type"] == "vehicle_knob":
     symbol = adjustment["symbol"]
+    if "ff_gain_" in symbol:
+      return "This car has a directional nonlinear torque map, and the mismatch is concentrated on one side. Correct that side's feedforward layer before moving global authority."
     if "low_speed_angle_assist_max_torque" in symbol:
       return "The main torque path is waking up too late below about 8 mph, so the low-speed assist layer needs a little more authority."
     if "crawl_turn_in_ff_boost" in symbol:
@@ -1067,6 +1112,8 @@ def _why_this_knob(adjustment: dict[str, Any]) -> str:
     return "This changes the threshold that maps small lateral-accel error into friction compensation without pretending the whole torque slope is wrong."
   if adjustment["type"] == "vehicle_knob":
     symbol = adjustment["symbol"]
+    if "ff_gain_" in symbol:
+      return "This compensates the affected side without flattening the car's separate left/right nonlinear torque response into one global value."
     if "low_speed_angle_assist_max_torque" in symbol:
       return "This directly raises the crawl-speed assist ceiling that fills the gap before the normal torque path wakes up."
     if "crawl_turn_in_ff_boost" in symbol:
@@ -1474,7 +1521,10 @@ def build_recommendation_paths(report_id: str, summaries: list[dict[str, Any]], 
 
 def _render_report_html(report: dict[str, Any]) -> str:
   report_paths = [path for path in report.get("paths", []) if isinstance(path, dict)]
-  primary_path = next((path for path in report_paths if path.get("isPrimary")), report_paths[0] if report_paths else {})
+  selected_path_key = str(report.get("selectedPathKey") or report.get("primaryPathKey") or "")
+  primary_path = next((path for path in report_paths if path.get("key") == selected_path_key), None)
+  if primary_path is None:
+    primary_path = next((path for path in report_paths if path.get("isPrimary")), report_paths[0] if report_paths else {})
   findings_html = []
   for suggestion in report.get("suggestions", []):
     evidence = suggestion.get("evidence", {})
@@ -1508,7 +1558,12 @@ def _render_report_html(report: dict[str, Any]) -> str:
 
   path_html = []
   for path in report_paths:
-    badge = "Recommended" if path.get("isPrimary") else "Alternate"
+    badges = []
+    if path.get("isPrimary"):
+      badges.append("Analyzer recommended")
+    if path.get("key") == selected_path_key:
+      badges.append("Active")
+    badge = " / ".join(badges) or "Alternate"
     path_html.append(
       "<section class='ftm-card'>"
       f"<h3>{path.get('title', 'Path')}</h3>"
@@ -1566,10 +1621,11 @@ def _render_report_html(report: dict[str, Any]) -> str:
     f"<p>{report['car']['carFingerprint']} | {report['car'].get('gitBranch', '')} {report['car'].get('gitCommit', '')}</p>"
     f"<div class='ftm-grid'><section class='ftm-card'><h3>Routes</h3><p>{', '.join(report.get('routeNames', []))}</p></section>"
     f"<section class='ftm-card'><h3>Control Path</h3><p>{report['car'].get('controlPath', 'unknown')}</p></section>"
-    f"<section class='ftm-card'><h3>Friction Family</h3><p>{report['capabilities'].get('frictionFamily', 'standard')}</p></section></div>"
+    f"<section class='ftm-card'><h3>Friction Family</h3><p>{report['capabilities'].get('frictionFamily', 'standard')}</p></section>"
+    f"<section class='ftm-card'><h3>Nonlinear Torque Map</h3><p>{'Asymmetric left/right siglin' if report['capabilities'].get('nonlinearTorqueMap', {}).get('asymmetric') else ('Symmetric siglin' if report['capabilities'].get('nonlinearTorqueMap') else 'Not detected')}</p></section></div>"
     f"{''.join(path_html)}"
     f"{start_here_html}"
-    f"<h2>Recommended Findings: {primary_path.get('title', 'Recommendations')}</h2>"
+    f"<h2>Active Findings: {primary_path.get('title', 'Recommendations')}</h2>"
     f"{findings_block}"
     "<h2>Trial Profiles</h2>"
     f"{profiles_block}"
@@ -1624,6 +1680,8 @@ def analyze_routes(route_names: list[str], footage_paths: list[str], feedback: d
     hyundai_canfd=hyundai_canfd,
     torque_control=torque_control,
   )
+  capabilities = dict(capabilities)
+  capabilities["nonlinearTorqueMap"] = _nonlinear_torque_map(car_params)
   current_params = _current_param_state(car_params, params)
 
   if torque_control:
@@ -1698,6 +1756,8 @@ def analyze_routes(route_names: list[str], footage_paths: list[str], feedback: d
       "usedQlogFallback": used_qlog,
     },
     "primaryPathKey": path_decision["primaryPathKey"],
+    "selectedPathKey": path_decision["primaryPathKey"],
+    "pathSelectionSource": "auto",
     "pathDecision": path_decision,
     "paths": paths_payload,
     "findings": summaries,
@@ -1735,6 +1795,31 @@ def load_report(report_id: str) -> dict[str, Any]:
   html_path = paths["reports"] / f"{report_id}.html"
   report["html"] = html_path.read_text(encoding="utf-8") if html_path.exists() else ""
   return report
+
+
+def select_report_path(report_id: str, path_key: str) -> dict[str, Any]:
+  paths = ensure_ftm_workspace()
+  report = load_report(report_id)
+  report_paths = [path for path in report.get("paths", []) if isinstance(path, dict)]
+  selected_path = next((path for path in report_paths if path.get("key") == path_key), None)
+  if selected_path is None:
+    raise ValueError(f"Unknown FTM path: {path_key}")
+
+  report["selectedPathKey"] = path_key
+  report["pathSelectionSource"] = "manual"
+  report["suggestions"] = list(selected_path.get("suggestions", []))
+  report["addTheseParametersAndStartHere"] = _add_parameters_start_here(
+    report.get("capabilities", {}),
+    report["suggestions"],
+    path_key,
+  )
+  report.pop("html", None)
+  (paths["reports"] / f"{report_id}.html").write_text(_render_report_html(report), encoding="utf-8")
+  _write_json(paths["reports"] / f"{report_id}.json", report)
+  return {
+    "message": f"Using {selected_path.get('title', path_key)} for this report.",
+    "report": load_report(report_id),
+  }
 
 
 def list_workspace() -> dict[str, Any]:
@@ -1910,6 +1995,7 @@ def record_feedback(report_id: str, feedback: dict[str, Any]) -> dict[str, Any]:
   report = load_report(report_id)
   report["feedback"] = normalized
   if isinstance(report.get("paths"), list) and report.get("paths"):
+    selected_path_key = str(report.get("selectedPathKey") or report.get("primaryPathKey") or "")
     flattened_profiles = []
     for path in report["paths"]:
       if not isinstance(path, dict):
@@ -1924,7 +2010,7 @@ def record_feedback(report_id: str, feedback: dict[str, Any]) -> dict[str, Any]:
       )
       path["profiles"] = profiles
       flattened_profiles.extend(profiles)
-      if path.get("isPrimary"):
+      if path.get("key") == selected_path_key:
         report["suggestions"] = list(path.get("suggestions", []))
     report["profiles"] = flattened_profiles
   else:
@@ -1937,6 +2023,7 @@ def record_feedback(report_id: str, feedback: dict[str, Any]) -> dict[str, Any]:
     "message": "Saved FTM feedback.",
     "feedback": normalized,
     "profiles": report["profiles"],
+    "report": load_report(report_id),
   }
 
 

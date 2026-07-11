@@ -378,6 +378,30 @@ async function applyProfile(profileId) {
   }
 }
 
+async function selectPath(pathKey) {
+  if (!state.report?.reportId || !pathKey || state.runningAction) return
+  if (pathKey === (state.report.selectedPathKey || state.report.primaryPathKey)) return
+
+  state.runningAction = true
+  try {
+    const response = await fetch(`/api/ftm/report/${encodeURIComponent(state.report.reportId)}/path`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pathKey }),
+    })
+    const payload = await response.json()
+    if (!response.ok) throw new Error(payload.error || "Failed to select tuning path.")
+    state.report = payload.report
+    syncFeedbackState(state.report)
+    showSnackbar(payload.message || "Tuning path selected.")
+  } catch (error) {
+    state.error = error?.message || "Failed to select tuning path."
+    showSnackbar(state.error, "error")
+  } finally {
+    state.runningAction = false
+  }
+}
+
 async function revertProfile() {
   if (state.runningAction) return
   state.runningAction = true
@@ -422,7 +446,7 @@ async function saveFeedback() {
     })
     const payload = await response.json()
     if (!response.ok) throw new Error(payload.error || "Failed to save tuning feedback.")
-    state.report = {
+    state.report = payload.report || {
       ...state.report,
       feedback: payload.feedback,
       profiles: payload.profiles || state.report.profiles,
@@ -480,7 +504,8 @@ function reportPaths() {
 
 function primaryPath() {
   const paths = reportPaths()
-  return paths.find((path) => path.isPrimary) || paths[0] || null
+  const selectedPathKey = state.report?.selectedPathKey || state.report?.primaryPathKey
+  return paths.find((path) => path.key === selectedPathKey) || paths.find((path) => path.isPrimary) || paths[0] || null
 }
 
 function renderProfile(profile) {
@@ -586,13 +611,22 @@ function renderSuggestion(suggestion) {
 }
 
 function renderPathSummary(path) {
+  const selected = path.key === (state.report?.selectedPathKey || state.report?.primaryPathKey)
   return html`
     <div class="ftmCard">
       <div class="ftmCardHeader">
         <div>
           <h4>${path.title}</h4>
-          <p class="longManeuverMuted">${path.isPrimary ? "Recommended path" : "Alternate path"}</p>
+          <p class="longManeuverMuted">
+            ${path.isPrimary ? "Analyzer recommended" : "Alternate path"}${selected ? " / Active" : ""}
+          </p>
         </div>
+        <button
+          class="longManeuverButton"
+          disabled="${() => state.runningAction || selected}"
+          @click="${() => selectPath(path.key)}">
+          ${selected ? "Active Path" : `Use ${path.title}`}
+        </button>
       </div>
       <p>${path.description || ""}</p>
       <p><strong>Why this path:</strong> ${path.whySelected || "No path note available."}</p>
@@ -758,7 +792,11 @@ export function Tuning() {
               <p><strong>Car:</strong> ${state.report.car?.carFingerprint || "Unknown"}</p>
               <p><strong>Control Path:</strong> ${state.report.car?.controlPath || "unknown"}</p>
               <p><strong>Friction Family:</strong> ${state.report.capabilities?.frictionFamily || "standard"}</p>
-              <p><strong>Recommended Path:</strong> ${primaryPath()?.title || "Recommendations"}</p>
+              <p><strong>Analyzer Recommended:</strong> ${reportPaths().find((path) => path.isPrimary)?.title || "Recommendations"}</p>
+              <p><strong>Active Path:</strong> ${primaryPath()?.title || "Recommendations"}</p>
+              <p><strong>Path Choice:</strong> ${state.report.pathSelectionSource === "manual" ? "Manual override" : "Automatic"}</p>
+              <p><strong>Nonlinear Torque Map:</strong> ${state.report.capabilities?.nonlinearTorqueMap?.asymmetric ? "Asymmetric left/right siglin" : (state.report.capabilities?.nonlinearTorqueMap ? "Symmetric siglin" : "Not detected")}</p>
+              <p><strong>Live Learner Refits Map:</strong> ${state.report.capabilities?.nonlinearTorqueMap ? "No" : "Not applicable"}</p>
               <p><strong>Processed Segments:</strong> ${safeCount(state.report.summary?.processedSegments)}</p>
               <p><strong>qlog Fallback:</strong> ${state.report.summary?.usedQlogFallback ? "Yes" : "No"}</p>
               <p><strong>Samples:</strong> ${safeCount(state.report.summary?.sampleCount)}</p>
@@ -790,7 +828,7 @@ export function Tuning() {
           <section class="ftmCard">
             <div class="ftmCardHeader">
               <div>
-                <h3>Recommended Findings: ${primaryPath()?.title || "Recommendations"}</h3>
+                <h3>Active Findings: ${primaryPath()?.title || "Recommendations"}</h3>
                 <p class="longManeuverMuted">
                   ${primaryPath()?.whySelected || "Mark the dimensions that match what the driver felt."}
                 </p>
