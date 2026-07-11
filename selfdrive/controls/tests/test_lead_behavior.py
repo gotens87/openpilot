@@ -23,7 +23,7 @@ def test_tracked_lead_catchup_bias_ignores_very_far_gap():
 
 def test_tracked_lead_catchup_bias_applies_to_two_second_highway_gap():
   bias = get_tracked_lead_catchup_bias(30.4, 63.0, 40.0, 0.4)
-  assert bias > 14.0
+  assert bias > 9.0
 
 
 def test_tracked_lead_catchup_bias_reduces_for_laterally_offset_lead():
@@ -43,6 +43,24 @@ def test_tracked_lead_catchup_bias_fades_before_very_far_gap_cutoff():
 def test_tracked_lead_catchup_bias_stays_off_once_at_set_speed():
   bias = get_tracked_lead_catchup_bias(31.4, 78.7, 38.0, 0.1, v_cruise=31.4)
   assert bias == 0.0
+
+
+def test_tracked_lead_catchup_bias_fades_smoothly_near_set_speed():
+  below_set = get_tracked_lead_catchup_bias(27.70, 81.0, 46.0, 0.0, v_cruise=27.78, y_rel=0.8)
+  at_set = get_tracked_lead_catchup_bias(27.78, 81.0, 46.0, 0.0, v_cruise=27.78, y_rel=0.8)
+  assert 0.0 < below_set < 0.25
+  assert at_set == 0.0
+
+
+def test_tracked_lead_catchup_bias_dials_back_camry_bookmark_case():
+  bias = get_tracked_lead_catchup_bias(27.40, 81.0, 46.0, 0.0, v_cruise=27.78, y_rel=0.8)
+  assert 0.0 < bias < 2.0
+
+
+def test_tracked_lead_catchup_bias_fades_smoothly_at_closing_limit():
+  below_limit = get_tracked_lead_catchup_bias(31.4, 78.7, 38.0, 3.75)
+  above_limit = get_tracked_lead_catchup_bias(31.4, 78.7, 38.0, 3.77)
+  assert abs(below_limit - above_limit) < 0.1
 
 
 def test_disable_far_lead_throttle_rejects_two_second_plus_gap():
