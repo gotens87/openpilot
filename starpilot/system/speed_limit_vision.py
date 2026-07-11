@@ -27,6 +27,8 @@ RUNTIME_TELEMETRY_INTERVAL_SECONDS = 2.0
 DEBUG_HEARTBEAT_INTERVAL_SECONDS = 30.0
 DEFAULT_DETECTOR_INPUT_SIZE = 640
 DETECTOR_INPUT_SIZE_CANDIDATES = (640, 512, 448, 416, 384, 320, 288, 256, 224, 192)
+DEFAULT_CLASSIFIER_INPUT_SIZE = 128
+CLASSIFIER_INPUT_SIZE_CANDIDATES = (128, 112, 96, 80, 64)
 FULL_FRAME_OCR_FALLBACK_ENABLED = False
 DETECTOR_CLASSIFIER_REGION_MODE = "right_roi"  # full, right_roi, full_and_right_roi
 DEVICE_BUSY_AVG_CPU_USAGE_PERCENT = 78.0
@@ -38,9 +40,10 @@ OCR_MIN_CONFIDENCE = 0.35
 VALUE_TEMPLATE_MIN_CONFIDENCE = 0.55
 HISTORY_SECONDS = 2.0
 CONSISTENT_DETECTIONS = 2
-CHANGE_CONSISTENT_DETECTIONS = 10
-LOW_SPEED_CHANGE_CONSISTENT_DETECTIONS = 12
-LOW_SPEED_CHANGE_MIN_CONFIDENCE = 0.97
+# These counts must remain achievable at the measured 1.5 Hz onroad cadence.
+CHANGE_CONSISTENT_DETECTIONS = 2
+LOW_SPEED_CHANGE_CONSISTENT_DETECTIONS = 3
+LOW_SPEED_CHANGE_MIN_CONFIDENCE = 0.90
 MODEL_DETECTION_SHORT_CIRCUIT_CONFIDENCE = 0.65
 PUBLISHED_HOLD_SECONDS = 300.0
 PUBLISHED_CHANGE_COOLDOWN_SECONDS = 1.4
@@ -265,6 +268,7 @@ class SpeedLimitVisionDaemon:
     self.classifier_net = None
     self.model_mode = "legacy"
     self.detector_input_size = DEFAULT_DETECTOR_INPUT_SIZE
+    self.classifier_input_size = DEFAULT_CLASSIFIER_INPUT_SIZE
     self.last_error = ""
     self.last_inference_at = -float("inf")
     self.last_detection_at = 0.0
@@ -772,25 +776,25 @@ class SpeedLimitVisionDaemon:
     return interval
 
   @staticmethod
-  def _read_onnx_square_input_size(model_path):
+  def _read_onnx_square_input_size(model_path, default_size=DEFAULT_DETECTOR_INPUT_SIZE, candidates=DETECTOR_INPUT_SIZE_CANDIDATES):
     try:
       import onnx
 
       model = onnx.load(str(model_path), load_external_data=False)
       if not model.graph.input:
-        return DEFAULT_DETECTOR_INPUT_SIZE
+        return default_size
 
       shape = model.graph.input[0].type.tensor_type.shape.dim
       if len(shape) < 4:
-        return DEFAULT_DETECTOR_INPUT_SIZE
+        return default_size
 
       height = int(shape[2].dim_value)
       width = int(shape[3].dim_value)
-      if height == width and height in DETECTOR_INPUT_SIZE_CANDIDATES:
+      if height == width and height in candidates:
         return height
     except Exception:
       pass
-    return DEFAULT_DETECTOR_INPUT_SIZE
+    return default_size
 
   def _load_model(self):
     self.net = None
@@ -798,6 +802,7 @@ class SpeedLimitVisionDaemon:
     self.reject_classifier_net = None
     self.model_mode = "legacy"
     self.detector_input_size = DEFAULT_DETECTOR_INPUT_SIZE
+    self.classifier_input_size = DEFAULT_CLASSIFIER_INPUT_SIZE
 
     if US_DETECTOR_MODEL_PATH.is_file() and US_CLASSIFIER_MODEL_PATH.is_file():
       try:
@@ -805,6 +810,11 @@ class SpeedLimitVisionDaemon:
         self.net = cv2.dnn.readNetFromONNX(str(US_DETECTOR_MODEL_PATH))
         self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
         self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+        self.classifier_input_size = self._read_onnx_square_input_size(
+          US_CLASSIFIER_MODEL_PATH,
+          DEFAULT_CLASSIFIER_INPUT_SIZE,
+          CLASSIFIER_INPUT_SIZE_CANDIDATES,
+        )
         self.classifier_net = cv2.dnn.readNetFromONNX(str(US_CLASSIFIER_MODEL_PATH))
         self.classifier_net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
         self.classifier_net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
@@ -1302,8 +1312,9 @@ class SpeedLimitVisionDaemon:
           if float(reject_probabilities[speed_class_count]) >= US_REJECT_CLASSIFIER_MIN_CONFIDENCE:
             return None
 
-    padded_crop = self._square_resize(sign_crop, size=128)
-    blob = cv2.dnn.blobFromImage(padded_crop, scalefactor=1 / 255.0, size=(128, 128), swapRB=True, crop=False)
+    input_size = self.classifier_input_size
+    padded_crop = self._square_resize(sign_crop, size=input_size)
+    blob = cv2.dnn.blobFromImage(padded_crop, scalefactor=1 / 255.0, size=(input_size, input_size), swapRB=True, crop=False)
     self.classifier_net.setInput(blob)
 
     forward_started_at = time.monotonic()
@@ -1926,6 +1937,7 @@ class SpeedLimitVisionDaemon:
         "startedPrev": self.started_prev,
         "modelMode": self.model_mode,
         "detectorInputSize": self.detector_input_size,
+        "classifierInputSize": self.classifier_input_size,
         "detectorRegionMode": DETECTOR_CLASSIFIER_REGION_MODE,
         "separateRejectClassifierEnabled": SEPARATE_REJECT_CLASSIFIER_ENABLED,
         "stream": self.stream_name,
