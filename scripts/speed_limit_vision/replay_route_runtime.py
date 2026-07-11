@@ -160,6 +160,7 @@ def parse_args() -> argparse.Namespace:
   )
   parser.add_argument("--right-roi-bounds", help="Override the right ROI as left,top,right,bottom ratios, for example 0.45,0,1,0.82.")
   parser.add_argument("--right-roi-min-confidence", type=float, help="Override the right ROI detector minimum confidence.")
+  parser.add_argument("--classifier-min-confidence", type=float, help="Override the value classifier confidence threshold.")
   parser.add_argument("--full-frame-ocr", action="store_true", help="Enable the expensive full-frame OCR fallback during replay.")
   return parser.parse_args()
 
@@ -261,6 +262,9 @@ def configure_models(models_dir: Path) -> None:
 def configure_runtime_options(args: argparse.Namespace) -> None:
   if args.detector_region_mode:
     slv.DETECTOR_CLASSIFIER_REGION_MODE = args.detector_region_mode
+
+  if args.classifier_min_confidence is not None:
+    slv.US_CLASSIFIER_MIN_CONFIDENCE = args.classifier_min_confidence
 
   if args.full_frame_ocr:
     slv.FULL_FRAME_OCR_FALLBACK_ENABLED = True
@@ -385,7 +389,7 @@ def summarize(route: str, segment_count: int, qlog_context: bool, daemon: RouteR
 def write_events(path: Path, route_events: list[tuple[str, dict[str, str]]]) -> None:
   path.parent.mkdir(parents=True, exist_ok=True)
   fieldnames = [
-    "route", "time_s", "event", "candidateSpeedLimitMph", "speedLimitMph", "confidence", "reason",
+    "route", "time_s", "event", "candidateSpeedLimitMph", "candidateConfidence", "speedLimitMph", "confidence", "reason",
     "previousRoadName", "roadName",
   ]
   with path.open("w", encoding="utf-8", newline="") as output_file:
