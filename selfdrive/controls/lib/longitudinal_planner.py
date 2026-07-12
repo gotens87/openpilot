@@ -108,6 +108,17 @@ LOW_SPEED_WEAK_LEAD_ACCEL_CAP_STRONG_DEPART_MIN_LEAD_SPEED = 1.2
 LOW_SPEED_WEAK_LEAD_ACCEL_CAP_STRONG_DEPART_MIN_LEAD_DELTA = 0.8
 LOW_SPEED_WEAK_LEAD_ACCEL_CAP_STRONG_DEPART_MIN_LEAD_ACCEL = 0.5
 CLOSE_LEAD_BRAKE_CAP_MAX_TTC = 25.0
+INSIDE_GAP_CLOSING_MIN_EGO_SPEED = 8.0
+INSIDE_GAP_CLOSING_MIN_LEAD_SPEED = 5.0
+INSIDE_GAP_CLOSING_MIN_SPEED = 0.5
+INSIDE_GAP_CLOSING_FULL_SPEED = 2.5
+INSIDE_GAP_CLOSING_MIN_DEFICIT = 3.0
+INSIDE_GAP_CLOSING_DEFICIT_RATIO = 0.15
+INSIDE_GAP_CLOSING_BRAKE_DEFICIT_RATIO = 0.25
+INSIDE_GAP_CLOSING_BRAKE_MIN_SPEED = 1.0
+INSIDE_GAP_CLOSING_MAX_DECEL = 0.65
+INSIDE_GAP_CLOSING_MAX_LATERAL_OFFSET = 1.75
+INSIDE_GAP_CLOSING_VISION_MIN_MODEL_PROB = 0.95
 VISION_LEAD_APPROACH_MIN_CLOSING_SPEED = 2.0
 VISION_LEAD_APPROACH_TRIGGER_TIME = 4.5
 VISION_LEAD_APPROACH_FULL_TIME = 1.0
@@ -691,6 +702,50 @@ class LongitudinalPlanner:
       return None
 
     return max(accel_min, -required_decel)
+
+  @staticmethod
+  def get_inside_gap_closing_lead_accel_cap(lead, v_ego, accel_min, t_follow):
+    if lead is None or not lead.status:
+      return None
+
+    ego_speed = float(v_ego)
+    lead_speed = max(float(getattr(lead, "vLead", 0.0)), 0.0)
+    if ego_speed < INSIDE_GAP_CLOSING_MIN_EGO_SPEED or lead_speed < INSIDE_GAP_CLOSING_MIN_LEAD_SPEED:
+      return None
+    if abs(float(getattr(lead, "yRel", 0.0))) > INSIDE_GAP_CLOSING_MAX_LATERAL_OFFSET:
+      return None
+
+    lead_radar = bool(getattr(lead, "radar", False))
+    lead_prob = float(getattr(lead, "modelProb", 1.0 if lead_radar else 0.0))
+    if not lead_radar and lead_prob < INSIDE_GAP_CLOSING_VISION_MIN_MODEL_PROB:
+      return None
+
+    closing_speed = ego_speed - lead_speed
+    if closing_speed < INSIDE_GAP_CLOSING_MIN_SPEED:
+      return None
+
+    desired_gap = float(desired_follow_distance(ego_speed, lead_speed, float(t_follow)))
+    gap_deficit = desired_gap - float(lead.dRel)
+    trigger_deficit = max(INSIDE_GAP_CLOSING_MIN_DEFICIT,
+                          INSIDE_GAP_CLOSING_DEFICIT_RATIO * desired_gap)
+    if gap_deficit <= trigger_deficit:
+      return None
+
+    brake_deficit = INSIDE_GAP_CLOSING_BRAKE_DEFICIT_RATIO * desired_gap
+    deficit_factor = float(np.clip(
+      (gap_deficit - brake_deficit) / max(brake_deficit, 1.0),
+      0.0,
+      1.0,
+    ))
+    closing_factor = float(np.clip(
+      (closing_speed - INSIDE_GAP_CLOSING_BRAKE_MIN_SPEED) /
+      (INSIDE_GAP_CLOSING_FULL_SPEED - INSIDE_GAP_CLOSING_BRAKE_MIN_SPEED),
+      0.0,
+      1.0,
+    ))
+    required_decel = 0.45 * deficit_factor + 0.20 * closing_factor
+    required_decel = min(required_decel, INSIDE_GAP_CLOSING_MAX_DECEL)
+    return max(float(accel_min), -required_decel)
 
   def get_vision_lead_approach_cap(self, lead, v_ego, accel_min, t_follow):
     if lead is None or not lead.status or bool(getattr(lead, "radar", False)):
@@ -3183,6 +3238,19 @@ class LongitudinalPlanner:
     if manual_stop_resume_override:
       output_a_target = max(output_a_target, MANUAL_STOP_RESUME_OVERRIDE_MIN_ACCEL)
       output_should_stop = False
+
+    inside_gap_closing_cap = None
+    if lead_control_active:
+      inside_gap_closing_lead = self.lead_two if self.mpc.source == 'lead1' else self.lead_one
+      inside_gap_closing_cap = self.get_inside_gap_closing_lead_accel_cap(
+        inside_gap_closing_lead,
+        scene_v_ego,
+        output_accel_min,
+        sm['starpilotPlan'].tFollow,
+      )
+    if inside_gap_closing_cap is not None:
+      self.a_desired = min(self.a_desired, inside_gap_closing_cap)
+      output_a_target = min(output_a_target, inside_gap_closing_cap)
 
     self.output_a_target = output_a_target
     self.output_should_stop = bool(output_should_stop or vision_low_speed_stop_active)

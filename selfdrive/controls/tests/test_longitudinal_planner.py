@@ -2524,6 +2524,52 @@ def test_cruise_tracking_lead_accel_cap_skips_spacious_tracking_only_follow():
   assert cap is None
 
 
+def test_inside_gap_closing_lead_cap_blocks_route_accel_burst():
+  v_ego = 17.1
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=26.3, v_lead=16.5, a_lead=0.0, radar=True, model_prob=1.0)
+
+  cap = planner.get_inside_gap_closing_lead_accel_cap(lead, v_ego, -1.0, 1.25)
+
+  assert cap is not None
+  assert cap == pytest.approx(0.0)
+
+
+def test_inside_gap_closing_lead_cap_strengthens_with_route_closure():
+  v_ego = 19.8
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=23.3, v_lead=17.3, a_lead=0.0, radar=True, model_prob=1.0)
+
+  cap = planner.get_inside_gap_closing_lead_accel_cap(lead, v_ego, -1.0, 1.25)
+
+  assert cap is not None
+  assert -0.7 <= cap <= -0.5
+
+
+@pytest.mark.parametrize("lead", [
+  make_lead(status=True, d_rel=36.0, v_lead=16.5, radar=True, model_prob=1.0),
+  make_lead(status=True, d_rel=26.3, v_lead=17.8, radar=True, model_prob=1.0),
+  make_lead(status=True, d_rel=26.3, v_lead=16.5, radar=False, model_prob=0.8),
+  make_lead(status=True, d_rel=26.3, v_lead=16.5, radar=True, model_prob=1.0, y_rel=2.0),
+])
+def test_inside_gap_closing_lead_cap_ignores_normal_or_ambiguous_follow(lead):
+  v_ego = 17.1
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+
+  assert planner.get_inside_gap_closing_lead_accel_cap(lead, v_ego, -1.0, 1.25) is None
+
+
+def test_inside_gap_closing_lead_cap_does_not_touch_standstill_departure():
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=0.0)
+  lead = make_lead(status=True, d_rel=5.0, v_lead=1.0, a_lead=0.5, radar=True, model_prob=1.0)
+
+  assert planner.get_inside_gap_closing_lead_accel_cap(lead, 0.0, -1.0, 1.25) is None
+
+
 def test_route_8bc6_post_departure_cruise_cap_skips_accelerating_away_radar_lead():
   v_ego = 19.03
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
