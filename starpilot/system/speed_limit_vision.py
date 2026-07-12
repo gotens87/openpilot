@@ -187,6 +187,10 @@ DETECTOR_CLASSIFIER_RESCUE_MIN_X_RATIO = 0.52
 DETECTOR_CLASSIFIER_RESCUE_MIN_SUPPORT = 2
 DETECTOR_CLASSIFIER_RESCUE_MIN_CONFIDENCE = 0.90
 DETECTOR_CLASSIFIER_RESCUE_MAX_SCORE = 0.64
+DETECTOR_CLASSIFIER_STRONG_RESCUE_MIN_SUPPORT = 3
+DETECTOR_CLASSIFIER_STRONG_RESCUE_MIN_PROPOSAL_CONFIDENCE = 0.60
+DETECTOR_CLASSIFIER_STRONG_RESCUE_MIN_READ_CONFIDENCE = 0.995
+DETECTOR_CLASSIFIER_STRONG_RESCUE_MAX_SCORE = 0.74
 DETECTOR_CLASSIFIER_TRUSTED_MODEL_MAX_HEIGHT = 55
 DETECTOR_CLASSIFIER_TRUSTED_MODEL_MAX_AREA_RATIO = 0.002
 DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_PROPOSAL_CONFIDENCE = 0.18
@@ -224,6 +228,7 @@ def device_cpu_usage_busy(cpu_usage):
 class Detection:
   speed_limit_mph: int
   confidence: float
+  strong_consensus: bool = False
 
 
 @dataclass
@@ -231,6 +236,7 @@ class HistoryEntry:
   speed_limit_mph: int
   confidence: float
   created_at: float
+  strong_consensus: bool = False
 
 
 class SpeedLimitVisionDaemon:
@@ -1535,6 +1541,7 @@ class SpeedLimitVisionDaemon:
             speed_limit_mph = competing_speed_limit_mph
       read_confidence = speed_best_confidences[speed_limit_mph]
       support_count = speed_support_counts[speed_limit_mph]
+      strong_rescue = False
       score = min(
         read_confidence * 0.72 +
         proposal_confidence * 0.24 +
@@ -1560,12 +1567,20 @@ class SpeedLimitVisionDaemon:
           continue
         if read_confidence < DETECTOR_CLASSIFIER_RESCUE_MIN_CONFIDENCE:
           continue
-        published_score = min(score, DETECTOR_CLASSIFIER_RESCUE_MAX_SCORE)
+        strong_rescue = (
+          speed_trusted_model_support.get(speed_limit_mph, 0) >= DETECTOR_CLASSIFIER_STRONG_RESCUE_MIN_SUPPORT and
+          proposal_confidence >= DETECTOR_CLASSIFIER_STRONG_RESCUE_MIN_PROPOSAL_CONFIDENCE and
+          read_confidence >= DETECTOR_CLASSIFIER_STRONG_RESCUE_MIN_READ_CONFIDENCE
+        )
+        rescue_max_score = (
+          DETECTOR_CLASSIFIER_STRONG_RESCUE_MAX_SCORE if strong_rescue else DETECTOR_CLASSIFIER_RESCUE_MAX_SCORE
+        )
+        published_score = min(score, rescue_max_score)
         if speed_trusted_model_support.get(speed_limit_mph, 0) < DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_SUPPORT:
           selection_score = published_score
       if selection_score > best_score:
         best_score = selection_score
-        best_detection = Detection(speed_limit_mph, published_score)
+        best_detection = Detection(speed_limit_mph, published_score, strong_rescue)
       if best_detection is not None and best_detection.confidence >= MODEL_DETECTION_SHORT_CIRCUIT_CONFIDENCE:
         return best_detection
 
@@ -1839,22 +1854,25 @@ class SpeedLimitVisionDaemon:
     candidate_speed_limit, candidate_count = counts.most_common(1)[0]
     matching_entries = [entry for entry in self.history if entry.speed_limit_mph == candidate_speed_limit]
     best_confidence = max(entry.confidence for entry in matching_entries)
+    has_strong_consensus = any(entry.strong_consensus for entry in matching_entries)
     current_speed_limit = self.published_speed_limit_mph
     current_count = counts.get(current_speed_limit, 0) if current_speed_limit > 0 else 0
 
     if current_speed_limit > 0 and candidate_speed_limit != current_speed_limit:
       required_count = CHANGE_CONSISTENT_DETECTIONS
+      allow_single_frame_consensus = has_strong_consensus
       if current_speed_limit >= 30 and candidate_speed_limit < 30:
         required_count = LOW_SPEED_CHANGE_CONSISTENT_DETECTIONS
+        allow_single_frame_consensus = False
         if best_confidence < LOW_SPEED_CHANGE_MIN_CONFIDENCE:
           return None
-      if candidate_count < required_count:
+      if candidate_count < required_count and not allow_single_frame_consensus:
         return None
       if candidate_count <= current_count:
         return None
       return candidate_speed_limit, best_confidence
 
-    if best_confidence >= STRONG_DETECTION_CONFIDENCE or candidate_count >= CONSISTENT_DETECTIONS:
+    if has_strong_consensus or best_confidence >= STRONG_DETECTION_CONFIDENCE or candidate_count >= CONSISTENT_DETECTIONS:
       return candidate_speed_limit, best_confidence
     return None
 
@@ -2058,7 +2076,7 @@ class SpeedLimitVisionDaemon:
         candidateConfidence=round(detection.confidence, 4),
       )
 
-    self.history.append(HistoryEntry(detection.speed_limit_mph, detection.confidence, now))
+    self.history.append(HistoryEntry(detection.speed_limit_mph, detection.confidence, now, detection.strong_consensus))
     self._prune_history(now)
 
     confirmed = self._confirm_detection()

@@ -61,10 +61,20 @@ class QlogRuntimeContext:
 
 
 class RouteReplayDaemon(slv.SpeedLimitVisionDaemon):
-  def __init__(self, runtime_context: QlogRuntimeContext | None, measured_inference_seconds: float):
+  def __init__(
+    self,
+    runtime_context: QlogRuntimeContext | None,
+    measured_inference_seconds: float,
+    measured_base_inference_seconds: float | None = None,
+    measured_classifier_forward_seconds: float = 0.0,
+  ):
     super().__init__(use_runtime=False)
     self.runtime_context = runtime_context
     self.measured_inference_seconds = max(float(measured_inference_seconds), 0.0)
+    self.measured_base_inference_seconds = (
+      max(float(measured_base_inference_seconds), 0.0) if measured_base_inference_seconds is not None else None
+    )
+    self.measured_classifier_forward_seconds = max(float(measured_classifier_forward_seconds), 0.0)
     self.next_available_at = -float("inf")
     self.now = 0.0
     self.sampled_frames = 0
@@ -131,9 +141,19 @@ class RouteReplayDaemon(slv.SpeedLimitVisionDaemon):
       return
 
     self.last_inference_at = now
-    self.next_available_at = now + self.measured_inference_seconds
     self.inference_frames += 1
+    self.last_detector_forward_count = 0
+    self.last_detector_forward_duration_s = 0.0
+    self.last_classifier_forward_count = 0
+    self.last_classifier_forward_duration_s = 0.0
     detection = self._detect_sign(frame_bgr)
+    inference_seconds = self.measured_inference_seconds
+    if self.measured_base_inference_seconds is not None:
+      inference_seconds = (
+        self.measured_base_inference_seconds +
+        self.last_classifier_forward_count * self.measured_classifier_forward_seconds
+      )
+    self.next_available_at = now + inference_seconds
     if detection is not None:
       self._update_detection(detection)
     elif self.published_speed_limit_mph > 0 and self._published_detection_stale(now):
@@ -153,6 +173,17 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--fast-seek", action="store_true", help="Use VideoCapture seeks when skipping frames. Faster, but less faithful for HEVC.")
   parser.add_argument("--qlog-context", action="store_true", help="Replay with logged deviceState/livePose/mapdOut context for closer runtime cadence.")
   parser.add_argument("--measured-inference-seconds", type=float, default=0.0, help="Simulate wall-clock time spent inside one runtime inference on the comma.")
+  parser.add_argument(
+    "--measured-base-inference-seconds",
+    type=float,
+    help="Simulate a measured no-proposal inference cost; enables the dynamic comma cost model.",
+  )
+  parser.add_argument(
+    "--measured-classifier-forward-seconds",
+    type=float,
+    default=0.0,
+    help="Additional measured comma cost per classifier forward when the dynamic cost model is enabled.",
+  )
   parser.add_argument(
     "--detector-region-mode",
     choices=("full", "right_roi", "full_and_right_roi"),
@@ -314,8 +345,15 @@ def replay_route(
   progress: bool,
   fast_seek: bool,
   measured_inference_seconds: float,
+  measured_base_inference_seconds: float | None = None,
+  measured_classifier_forward_seconds: float = 0.0,
 ) -> tuple[RouteSummary, list[dict[str, str]]]:
-  daemon = RouteReplayDaemon(runtime_context, measured_inference_seconds)
+  daemon = RouteReplayDaemon(
+    runtime_context,
+    measured_inference_seconds,
+    measured_base_inference_seconds,
+    measured_classifier_forward_seconds,
+  )
   for segment_path in segments:
     segment = segment_index(segment_path)
     capture = cv2.VideoCapture(str(segment_path))
@@ -450,15 +488,20 @@ def main() -> int:
       args.progress,
       args.fast_seek,
       args.measured_inference_seconds,
+      args.measured_base_inference_seconds,
+      args.measured_classifier_forward_seconds,
     )
     all_events.extend((log_id, event) for event in events)
-    print(
-      f"{summary.route}: segments={summary.segments} qlog_context={int(summary.qlog_context)} sampled={summary.sampled_frames} "
-      f"inference={summary.inference_frames} candidate={summary.candidate_events} "
-      f"publish={summary.publish_events} stale_clear={summary.stale_clear_events} road_change={summary.road_change_events} "
-      f"measured_inference_s={args.measured_inference_seconds:.3f} region={slv.DETECTOR_CLASSIFIER_REGION_MODE}",
-      flush=True,
-    )
+    summary_line = "".join((
+      f"{summary.route}: segments={summary.segments} qlog_context={int(summary.qlog_context)} sampled={summary.sampled_frames} ",
+      f"inference={summary.inference_frames} candidate={summary.candidate_events} ",
+      f"publish={summary.publish_events} stale_clear={summary.stale_clear_events} road_change={summary.road_change_events} ",
+      f"measured_inference_s={args.measured_inference_seconds:.3f} ",
+      f"measured_base_s={args.measured_base_inference_seconds if args.measured_base_inference_seconds is not None else 'off'} ",
+      f"measured_classifier_forward_s={args.measured_classifier_forward_seconds:.3f} ",
+      f"region={slv.DETECTOR_CLASSIFIER_REGION_MODE}",
+    ))
+    print(summary_line, flush=True)
     publish_values = [event.get("speedLimitMph") for event in events if event["event"] == "publish"]
     if publish_values:
       print(f"  publishes: {', '.join(publish_values)}", flush=True)

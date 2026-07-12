@@ -323,7 +323,8 @@ class LongControl:
       return
     if self.last_output_accel <= 0.10:
       return
-    if a_target > 0.03:
+    light_accel_threshold = float(interp(CS.vEgo, [8.0, 15.0, 25.0], [0.03, 0.06, 0.10]))
+    if a_target > light_accel_threshold:
       return
     if CS.vEgo <= NEGATIVE_TARGET_CREEP_GUARD_SPEED and a_target > -NEGATIVE_TARGET_CREEP_GUARD_DECEL:
       return
@@ -336,7 +337,7 @@ class LongControl:
     if authority_mismatch <= 0.08 and error > -0.08:
       return
 
-    target_factor = float(interp(a_target, [-0.30, -0.10, -0.02, 0.03], [0.20, 0.35, 0.60, 0.85]))
+    target_factor = float(interp(a_target, [-0.30, -0.10, -0.02, light_accel_threshold], [0.20, 0.35, 0.60, 0.98]))
     if error < -0.20:
       target_factor *= 0.75
     self.pid.i *= target_factor

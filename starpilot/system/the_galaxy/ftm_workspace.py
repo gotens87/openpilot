@@ -106,6 +106,9 @@ FTM_PATH_SPECS = {
   },
 }
 
+FTM_DRIVER_OVERRIDE_PRE_BUFFER_S = 0.35
+FTM_DRIVER_OVERRIDE_POST_BUFFER_S = 1.0
+
 
 @dataclass
 class RouteSource:
@@ -447,6 +450,39 @@ def _group_masked_events(samples: list[FTMSample], mask: list[bool], score_serie
   return events
 
 
+def _analysis_eligibility_mask(samples: list[FTMSample]) -> list[bool]:
+  eligible = [bool(sample.lat_active) for sample in samples]
+  group_start = 0
+  while group_start < len(samples):
+    group_key = (samples[group_start].route, samples[group_start].segment)
+    group_end = group_start + 1
+    while group_end < len(samples) and (samples[group_end].route, samples[group_end].segment) == group_key:
+      group_end += 1
+
+    last_override = -math.inf
+    for idx in range(group_start, group_end):
+      sample = samples[idx]
+      if sample.steering_pressed:
+        last_override = sample.t
+      if sample.steering_pressed or (sample.t - last_override) <= FTM_DRIVER_OVERRIDE_POST_BUFFER_S:
+        eligible[idx] = False
+
+    next_override = math.inf
+    for idx in range(group_end - 1, group_start - 1, -1):
+      sample = samples[idx]
+      if sample.steering_pressed:
+        next_override = sample.t
+      if sample.steering_pressed or (next_override - sample.t) <= FTM_DRIVER_OVERRIDE_PRE_BUFFER_S:
+        eligible[idx] = False
+
+    # Force an event boundary between route segments even when lateral control stays active.
+    eligible[group_start] = False
+    eligible[group_end - 1] = False
+    group_start = group_end
+
+  return eligible
+
+
 def _build_plot_svg(samples: list[FTMSample], event: dict[str, Any]) -> str:
   start_idx = max(0, event["startIdx"] - 12)
   end_idx = min(len(samples) - 1, event["endIdx"] + 12)
@@ -685,14 +721,14 @@ def _rich_profile_supports_knob(capabilities: dict[str, Any], suffix: str) -> bo
 
 
 def _build_event_summaries(samples: list[FTMSample]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-  active_samples = [sample for sample in samples if sample.lat_active and not sample.steering_pressed]
+  eligibility = _analysis_eligibility_mask(samples)
+  active_samples = [sample for sample, allowed in zip(samples, eligibility, strict=True) if allowed]
   if not active_samples:
     return [], {"sampleCount": 0}
 
-  over_error = [abs(sample.actual_la) - abs(sample.desired_la) for sample in active_samples]
-  v_ego = [sample.v_ego for sample in active_samples]
-  desired = [sample.desired_la for sample in active_samples]
-  jerk = [sample.desired_jerk for sample in active_samples]
+  over_error = [abs(sample.actual_la) - abs(sample.desired_la) for sample in samples]
+  desired = [sample.desired_la for sample in samples]
+  jerk = [sample.desired_jerk for sample in samples]
   angle = [sample.steering_angle_deg for sample in active_samples]
   output = [sample.output for sample in active_samples]
 
@@ -700,18 +736,22 @@ def _build_event_summaries(samples: list[FTMSample]) -> tuple[list[dict[str, Any
   unwind_phase = [(abs(d) > 0.25 and abs(j) > 0.20 and d * j < 0.0) for d, j in zip(desired, jerk, strict=True)]
   steady_curve_phase = [(abs(d) > 0.35 and abs(j) < 0.18) for d, j in zip(desired, jerk, strict=True)]
   saturation_phase = [
-    bool(sample.saturated and abs(sample.desired_la) > 0.30 and (abs(sample.desired_jerk) > 0.16 or abs(sample.actual_la) > 0.45))
-    for sample in active_samples
+    bool(allowed and sample.saturated and abs(sample.desired_la) > 0.30 and (abs(sample.desired_jerk) > 0.16 or abs(sample.actual_la) > 0.45))
+    for sample, allowed in zip(samples, eligibility, strict=True)
   ]
 
   base_masks = {
-    "understeer": [(phase and (ov < -0.20)) for phase, ov in zip(steady_curve_phase, over_error, strict=True)],
-    "oversteer": [(phase and (ov > 0.20)) for phase, ov in zip(steady_curve_phase, over_error, strict=True)],
-    "late_turn_in": [(phase and ov < -0.16) for phase, ov in zip(entry_phase, over_error, strict=True)],
-    "early_turn_in": [(phase and ov > 0.16) for phase, ov in zip(entry_phase, over_error, strict=True)],
-    "unwind_too_slow": [(phase and ov > 0.14) for phase, ov in zip(unwind_phase, over_error, strict=True)],
-    "unwind_too_fast": [(phase and ov < -0.14) for phase, ov in zip(unwind_phase, over_error, strict=True)],
-    "low_speed_unwillingness": [(s.v_ego < 6.0 and abs(s.desired_la) > 0.30 and abs(s.desired_jerk) > 0.18 and (abs(s.actual_la) + 0.18) < abs(s.desired_la)) for s in active_samples],
+    "understeer": [(allowed and phase and (ov < -0.20)) for allowed, phase, ov in zip(eligibility, steady_curve_phase, over_error, strict=True)],
+    "oversteer": [(allowed and phase and (ov > 0.20)) for allowed, phase, ov in zip(eligibility, steady_curve_phase, over_error, strict=True)],
+    "late_turn_in": [(allowed and phase and ov < -0.16) for allowed, phase, ov in zip(eligibility, entry_phase, over_error, strict=True)],
+    "early_turn_in": [(allowed and phase and ov > 0.16) for allowed, phase, ov in zip(eligibility, entry_phase, over_error, strict=True)],
+    "unwind_too_slow": [(allowed and phase and ov > 0.14) for allowed, phase, ov in zip(eligibility, unwind_phase, over_error, strict=True)],
+    "unwind_too_fast": [(allowed and phase and ov < -0.14) for allowed, phase, ov in zip(eligibility, unwind_phase, over_error, strict=True)],
+    "low_speed_unwillingness": [
+      bool(allowed and sample.v_ego < 6.0 and abs(sample.desired_la) > 0.30 and abs(sample.desired_jerk) > 0.18 and
+           (abs(sample.actual_la) + 0.18) < abs(sample.desired_la))
+      for sample, allowed in zip(samples, eligibility, strict=True)
+    ],
     "saturation_limited": saturation_phase,
   }
   score_map = {
@@ -721,15 +761,17 @@ def _build_event_summaries(samples: list[FTMSample]) -> tuple[list[dict[str, Any
     "early_turn_in": [max(ov, 0.0) + abs(j) * 0.1 for ov, j in zip(over_error, jerk, strict=True)],
     "unwind_too_slow": [max(ov, 0.0) for ov in over_error],
     "unwind_too_fast": [max((-ov), 0.0) for ov in over_error],
-    "low_speed_unwillingness": [max(abs(d) - abs(a), 0.0) for d, a in zip(desired, [sample.actual_la for sample in active_samples], strict=True)],
-    "saturation_limited": [1.0 if sample.saturated else 0.0 for sample in active_samples],
+    "low_speed_unwillingness": [max(abs(d) - abs(sample.actual_la), 0.0) for d, sample in zip(desired, samples, strict=True)],
+    "saturation_limited": [1.0 if sample.saturated else 0.0 for sample in samples],
   }
 
   # Straight-road chatter detection uses a simple 4-second window.
   straight_windows = []
-  for start_idx in range(0, max(len(active_samples) - 20, 1), 10):
-    window = active_samples[start_idx:start_idx + 40]
+  for start_idx in range(0, max(len(samples) - 20, 1), 10):
+    window = samples[start_idx:start_idx + 40]
     if len(window) < 20:
+      continue
+    if not all(eligibility[start_idx:start_idx + len(window)]):
       continue
     if float(np.mean([sample.v_ego for sample in window])) < 20.0:
       continue
@@ -753,9 +795,11 @@ def _build_event_summaries(samples: list[FTMSample]) -> tuple[list[dict[str, Any
       })
 
   curve_windows = []
-  for start_idx in range(0, max(len(active_samples) - 20, 1), 8):
-    window = active_samples[start_idx:start_idx + 36]
+  for start_idx in range(0, max(len(samples) - 20, 1), 8):
+    window = samples[start_idx:start_idx + 36]
     if len(window) < 18:
+      continue
+    if not all(eligibility[start_idx:start_idx + len(window)]):
       continue
     if float(np.mean([sample.v_ego for sample in window])) < 15.0:
       continue
@@ -782,20 +826,21 @@ def _build_event_summaries(samples: list[FTMSample]) -> tuple[list[dict[str, Any
 
   summaries: list[dict[str, Any]] = []
   for bucket, mask in base_masks.items():
-    events = _group_masked_events(active_samples, mask, score_map[bucket])
+    events = _group_masked_events(samples, mask, score_map[bucket])
     if events:
-      summaries.extend(_summaries_from_events(bucket, active_samples, events))
+      summaries.extend(_summaries_from_events(bucket, samples, events))
   if straight_windows:
-    summaries.extend(_summaries_from_events("center_chatter", active_samples, straight_windows))
+    summaries.extend(_summaries_from_events("center_chatter", samples, straight_windows))
   if curve_windows:
-    summaries.extend(_summaries_from_events("notchy_mid_curve", active_samples, curve_windows))
+    summaries.extend(_summaries_from_events("notchy_mid_curve", samples, curve_windows))
 
   left_errors = [abs(sample.actual_la) - abs(sample.desired_la) for sample in active_samples if sample.desired_la > 0.25]
   right_errors = [abs(sample.actual_la) - abs(sample.desired_la) for sample in active_samples if sample.desired_la < -0.25]
   summary_stats = {
     "sampleCount": len(active_samples),
+    "excludedDriverOverrideSamples": sum(1 for sample, allowed in zip(samples, eligibility, strict=True) if sample.lat_active and not allowed),
     "qlogFallback": False,
-    "meanDesiredAbs": round(float(np.mean(np.abs(desired))), 4),
+    "meanDesiredAbs": round(float(np.mean(np.abs([sample.desired_la for sample in active_samples]))), 4),
     "meanErrorAbs": round(float(np.mean(np.abs([sample.actual_la - sample.desired_la for sample in active_samples]))), 4),
     "leftBias": round(float(np.mean(left_errors)), 4) if left_errors else 0.0,
     "rightBias": round(float(np.mean(right_errors)), 4) if right_errors else 0.0,
@@ -1376,6 +1421,7 @@ def select_primary_tuning_path(summaries: list[dict[str, Any]], summary_stats: d
   actionable = [
     summary for summary in summaries
     if summary.get("bucket") not in ("model_limited", "angle_control_diagnostic")
+    and float(summary.get("severity", 0.0)) >= 0.4
   ]
   if not actionable:
     return {
@@ -1393,6 +1439,30 @@ def select_primary_tuning_path(summaries: list[dict[str, Any]], summary_stats: d
     if summary.get("bucket") in ("understeer", "oversteer", "late_turn_in", "early_turn_in", "saturation_limited")
     and float(summary.get("severity", 0.0)) >= 0.85
   ]
+  severe_global_bands = {
+    (str(summary.get("direction", "center")), str(summary.get("speedBand", "mixed")))
+    for summary in severe_global
+  }
+  severe_global_segments = {
+    str(segment.get("label", ""))
+    for summary in severe_global
+    for segment in summary.get("evidence", {}).get("segments", [])
+    if segment.get("label")
+  }
+  severe_saturation = any(
+    summary.get("bucket") == "saturation_limited" and float(summary.get("severity", 0.0)) >= 0.85
+    for summary in actionable
+  )
+
+  if mean_error < 0.08 and not severe_saturation and not (
+    len(severe_global_bands) >= 2 and len(severe_global_segments) >= 2
+  ):
+    return {
+      "primaryPathKey": "cleanup_pass",
+      "alternatePathKey": "baseline_fix",
+      "reason": "Overall lateral-accel tracking is already strong. The remaining misses are isolated enough that changing the base tune would disturb more good behavior than it fixes.",
+      "baselineScore": 0,
+    }
 
   baseline_score = 0
   if mean_error >= 0.14:
@@ -1685,7 +1755,8 @@ def analyze_routes(route_names: list[str], footage_paths: list[str], feedback: d
   current_params = _current_param_state(car_params, params)
 
   if torque_control:
-    summaries, summary_stats = classify_torque_samples(all_samples)
+    raw_summaries, summary_stats = classify_torque_samples(all_samples)
+    summaries = _resolve_conflicting_actionable_suggestions(raw_summaries)
     paths_payload, path_decision = build_recommendation_paths(report_id, summaries, summary_stats, capabilities, current_params, feedback)
     primary_path = next((path for path in paths_payload if path.get("isPrimary")), paths_payload[0] if paths_payload else {})
     suggestions = list(primary_path.get("suggestions", []))
@@ -1761,6 +1832,7 @@ def analyze_routes(route_names: list[str], footage_paths: list[str], feedback: d
     "pathDecision": path_decision,
     "paths": paths_payload,
     "findings": summaries,
+    "rawFindings": raw_summaries if torque_control else summaries,
     "suggestions": suggestions,
     "profiles": profiles,
     "addTheseParametersAndStartHere": _add_parameters_start_here(capabilities, suggestions, path_decision["primaryPathKey"]),

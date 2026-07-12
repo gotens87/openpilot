@@ -795,9 +795,10 @@ export function Tuning() {
               <p><strong>Analyzer Recommended:</strong> ${reportPaths().find((path) => path.isPrimary)?.title || "Recommendations"}</p>
               <p><strong>Active Path:</strong> ${primaryPath()?.title || "Recommendations"}</p>
               <p><strong>Path Choice:</strong> ${state.report.pathSelectionSource === "manual" ? "Manual override" : "Automatic"}</p>
-              <p><strong>Nonlinear Torque Map:</strong> ${state.report.capabilities?.nonlinearTorqueMap?.asymmetric ? "Asymmetric left/right siglin" : (state.report.capabilities?.nonlinearTorqueMap ? "Symmetric siglin" : "Not detected")}</p>
-              <p><strong>Live Learner Refits Map:</strong> ${state.report.capabilities?.nonlinearTorqueMap ? "No" : "Not applicable"}</p>
+              <p><strong>Nonlinear Torque Map:</strong> ${state.report.capabilities?.nonlinearTorqueMap?.type === "siglin" ? (state.report.capabilities.nonlinearTorqueMap.asymmetric ? "Asymmetric left/right siglin" : "Symmetric siglin") : "Not detected"}</p>
+              <p><strong>Live Learner Refits Map:</strong> ${state.report.capabilities?.nonlinearTorqueMap?.type === "siglin" ? "No" : "Not applicable"}</p>
               <p><strong>Processed Segments:</strong> ${safeCount(state.report.summary?.processedSegments)}</p>
+              <p><strong>Driver-Override Samples Excluded:</strong> ${safeCount(state.report.summary?.excludedDriverOverrideSamples)}</p>
               <p><strong>qlog Fallback:</strong> ${state.report.summary?.usedQlogFallback ? "Yes" : "No"}</p>
               <p><strong>Samples:</strong> ${safeCount(state.report.summary?.sampleCount)}</p>
             </div>

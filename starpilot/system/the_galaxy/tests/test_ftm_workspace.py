@@ -188,8 +188,42 @@ def test_classify_torque_samples_detects_center_chatter(tmp_path):
     ))
 
   summaries, stats = module.classify_torque_samples(samples)
-  assert stats["sampleCount"] == len(samples)
+  assert stats["sampleCount"] == len(samples) - 2  # Segment edges are event boundaries, not analysis samples.
   assert any(summary["bucket"] == "center_chatter" for summary in summaries)
+
+
+def test_analysis_eligibility_masks_driver_override_with_settle_buffer(tmp_path):
+  module, _ = _load_ftm_workspace_module(tmp_path)
+  samples = [
+    _sample(module, t=idx * 0.1, steering_pressed=(idx == 20))
+    for idx in range(50)
+  ]
+
+  eligible = module._analysis_eligibility_mask(samples)
+  assert eligible[16] is True
+  assert eligible[17] is False
+  assert eligible[20] is False
+  assert eligible[30] is False
+  assert eligible[31] is True
+
+
+def test_classify_torque_samples_does_not_bridge_driver_override(tmp_path):
+  module, _ = _load_ftm_workspace_module(tmp_path)
+  samples = []
+  for idx in range(80):
+    samples.append(_sample(
+      module,
+      t=idx * 0.1,
+      desired_la=-0.5,
+      actual_la=-0.1,
+      desired_jerk=-0.5,
+      steering_pressed=30 <= idx <= 40,
+    ))
+
+  summaries, stats = module.classify_torque_samples(samples)
+  late_events = [event for summary in summaries if summary["bucket"] == "late_turn_in" for event in summary["events"]]
+  assert stats["excludedDriverOverrideSamples"] > 11
+  assert all(event["endIdx"] < 27 or event["startIdx"] > 50 for event in late_events)
 
 
 def test_build_suggestions_prefers_rich_low_speed_turn_in_knob(tmp_path):
@@ -378,6 +412,36 @@ def test_select_primary_tuning_path_prefers_cleanup_for_localized_issue(tmp_path
   decision = module.select_primary_tuning_path(summaries, stats)
   assert decision["primaryPathKey"] == "cleanup_pass"
   assert decision["alternatePathKey"] == "baseline_fix"
+
+
+def test_select_primary_tuning_path_vetoes_baseline_when_global_fit_is_strong(tmp_path):
+  module, _ = _load_ftm_workspace_module(tmp_path)
+  summaries = [
+    {
+      "bucket": "late_turn_in",
+      "severity": 1.05,
+      "direction": "right",
+      "speedBand": "mid",
+      "evidence": {"segments": [{"label": "route/37"}]},
+    },
+    {"bucket": "center_chatter", "severity": 0.55, "direction": "center", "speedBand": "highway", "evidence": {"segments": []}},
+    {"bucket": "unwind_too_slow", "severity": 0.6, "direction": "right", "speedBand": "mid", "evidence": {"segments": [{"label": "route/37"}]}},
+  ]
+
+  decision = module.select_primary_tuning_path(summaries, {"meanErrorAbs": 0.054})
+  assert decision["primaryPathKey"] == "cleanup_pass"
+  assert "already strong" in decision["reason"]
+
+
+def test_conflicting_summary_resolution_keeps_dominant_direction(tmp_path):
+  module, _ = _load_ftm_workspace_module(tmp_path)
+  summaries = [
+    {"bucket": "early_turn_in", "severity": 1.34, "evidence": {"directionBias": "right", "speedBand": "mid", "eventCount": 1}},
+    {"bucket": "late_turn_in", "severity": 1.03, "evidence": {"directionBias": "right", "speedBand": "mid", "eventCount": 18}},
+  ]
+
+  resolved = module._resolve_conflicting_actionable_suggestions(summaries)
+  assert [summary["bucket"] for summary in resolved] == ["late_turn_in"]
 
 
 def test_build_trial_profiles_suppresses_ignored_dimensions(tmp_path):

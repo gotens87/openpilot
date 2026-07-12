@@ -231,17 +231,9 @@ LEAD_CATCHUP_ACCEL_MIN_EGO = 8.0
 LEAD_CATCHUP_ACCEL_MIN_LEAD_DELTA = -0.5
 LEAD_CATCHUP_ACCEL_MAX_GAP_BUFFER_MIN = 4.0
 LEAD_CATCHUP_ACCEL_MAX_GAP_BUFFER_GAIN = 0.15
-RADAR_MATCHED_FOLLOW_PULLAWAY_BYPASS_MIN_LEAD_DELTA = 0.10
-RADAR_MATCHED_FOLLOW_PULLAWAY_BYPASS_MIN_LEAD_ACCEL = 0.12
-RADAR_MATCHED_FOLLOW_PULLAWAY_BYPASS_MIN_HEADWAY_MARGIN = 0.18
 RADAR_MATCHED_FOLLOW_CATCHUP_CAP_BUFFER_MARGIN = 0.75
 RADAR_MATCHED_FOLLOW_CATCHUP_HOLD_CAP = 0.04
 RADAR_MATCHED_FOLLOW_CATCHUP_HOLD_MAX_GAP_ERROR = 0.75
-POST_DEPARTURE_FOLLOW_BYPASS_MIN_SPEED = 12.0
-POST_DEPARTURE_FOLLOW_BYPASS_MIN_MODEL_PROB = 0.95
-POST_DEPARTURE_FOLLOW_BYPASS_MIN_LEAD_DELTA = 0.35
-POST_DEPARTURE_FOLLOW_BYPASS_MIN_LEAD_ACCEL = 0.25
-POST_DEPARTURE_FOLLOW_BYPASS_MIN_HEADWAY_MARGIN = 0.10
 POST_DEPARTURE_FOLLOW_SETTLE_LATCH_TIME = 75.0
 POST_DEPARTURE_FOLLOW_SETTLE_MIN_SPEED = 8.0
 POST_DEPARTURE_FOLLOW_SETTLE_MIN_MODEL_PROB = 0.9
@@ -250,16 +242,14 @@ POST_DEPARTURE_FOLLOW_SETTLE_MAX_CLOSING_SPEED = 0.8
 POST_DEPARTURE_FOLLOW_SETTLE_MAX_LEAD_BRAKE = 0.10
 POST_DEPARTURE_FOLLOW_SETTLE_MIN_HEADWAY_MARGIN = 0.10
 POST_DEPARTURE_FOLLOW_SETTLE_COMPLETE_HEADWAY_MARGIN = 0.05
-COMFORTABLE_PULLAWAY_FOLLOW_MIN_MODEL_PROB = 0.95
-COMFORTABLE_PULLAWAY_FOLLOW_MIN_LEAD_DELTA = -0.05
-COMFORTABLE_PULLAWAY_FOLLOW_MIN_LEAD_ACCEL = 0.20
-COMFORTABLE_PULLAWAY_FOLLOW_MIN_HEADWAY_MARGIN = 0.20
-SPACIOUS_TRACKED_FOLLOW_MIN_MODEL_PROB = 0.98
-SPACIOUS_TRACKED_FOLLOW_MIN_HEADWAY_MARGIN = 0.45
-SPACIOUS_TRACKED_FOLLOW_MAX_CLOSING_SPEED = 0.60
-SPACIOUS_TRACKED_FOLLOW_MAX_LEAD_BRAKE = 0.10
-SPACIOUS_TRACKED_FOLLOW_LATCH_TIME = 1.25
-SPACIOUS_TRACKED_FOLLOW_LATCH_MIN_LEAD_DELTA = 0.90
+FOLLOW_ACCEL_CAP_ALLOWANCE_MIN_SPEED = 12.0
+FOLLOW_ACCEL_CAP_ALLOWANCE_MIN_HEADWAY_MARGIN = 0.10
+FOLLOW_ACCEL_CAP_ALLOWANCE_FULL_HEADWAY_MARGIN = 0.90
+FOLLOW_ACCEL_CAP_ALLOWANCE_FULL_GAP_MARGIN = 4.0
+FOLLOW_ACCEL_CAP_ALLOWANCE_FULL_CLOSING_SPEED = 0.20
+FOLLOW_ACCEL_CAP_ALLOWANCE_MAX_CLOSING_SPEED = 1.50
+FOLLOW_ACCEL_CAP_ALLOWANCE_MAX_LEAD_BRAKE = 0.35
+FOLLOW_ACCEL_CAP_ALLOWANCE_MAX_ACCEL = 0.55
 LOW_SPEED_FOLLOW_ACCEL_CAP_MAX_SPEED = 12.0
 LOW_SPEED_FOLLOW_ACCEL_CAP_MIN_MODEL_PROB = 0.85
 LOW_SPEED_FOLLOW_ACCEL_CAP_MAX_LEAD_BRAKE = 0.20
@@ -286,13 +276,7 @@ CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_GAP_BUFFER_GAIN = 0.9
 CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_LATERAL_OFFSET = 1.15
 CRUISE_TRACKED_LEAD_ACCEL_CAP_UNRESOLVED_MIN_CLOSING_SPEED = 1.5
 CRUISE_TRACKED_LEAD_ACCEL_CAP_UNRESOLVED_MAX_LEAD_DELTA = 0.25
-CRUISE_TRACKED_LEAD_ACCEL_CAP_TRACKING_ONLY_MAX_HEADWAY_ABOVE_TARGET = 0.95
-CRUISE_TRACKED_LEAD_ACCEL_CAP_TRACKING_ONLY_MAX_CLOSING_SPEED = 0.8
-CRUISE_TRACKED_LEAD_ACCEL_CAP_TRACKING_ONLY_MAX_LEAD_BRAKE = 0.10
 CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_ACCEL = 0.18
-CRUISE_TRACKED_LEAD_ACCEL_CAP_ACCEL_AWAY_MIN = 0.25
-CRUISE_TRACKED_LEAD_ACCEL_CAP_ACCEL_AWAY_MIN_LEAD_DELTA = 0.35
-CRUISE_TRACKED_LEAD_ACCEL_CAP_ACCEL_AWAY_MIN_GAP_MARGIN = 1.0
 CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MIN_SPEED = 12.0
 CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MAX_SPEED = 22.0
 CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MIN_MODEL_PROB = 0.9
@@ -618,7 +602,6 @@ class LongitudinalPlanner:
     self.manual_stop_resume_override_until = 0.0
     self.lead_depart_accel_hold_until = 0.0
     self.lead_depart_accel_hold_floor = None
-    self.spacious_follow_cap_bypass_until = 0.0
     self.post_departure_follow_settle_until = 0.0
     self.duplicate_vision_comfort_lead_source = None
 
@@ -1416,50 +1399,6 @@ class LongitudinalPlanner:
     brake_floor = -hold_brake
     return brake_floor if accel_min >= 0.0 else max(accel_min, brake_floor)
 
-  def is_stable_post_departure_pullaway(self, lead, v_ego, t_follow):
-    if lead is None or not lead.status or float(v_ego) < POST_DEPARTURE_FOLLOW_BYPASS_MIN_SPEED:
-      return False
-
-    lead_radar = bool(getattr(lead, "radar", False))
-    lead_prob = float(getattr(lead, "modelProb", 1.0 if lead_radar else 0.0))
-    if not lead_radar and lead_prob < POST_DEPARTURE_FOLLOW_BYPASS_MIN_MODEL_PROB:
-      return False
-
-    if abs(float(getattr(lead, "yRel", 0.0))) > CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_LATERAL_OFFSET:
-      return False
-
-    lead_delta = float(lead.vLead) - float(v_ego)
-    lead_accel = float(getattr(lead, "aLeadK", 0.0))
-    if (lead_delta < POST_DEPARTURE_FOLLOW_BYPASS_MIN_LEAD_DELTA or
-        lead_accel < POST_DEPARTURE_FOLLOW_BYPASS_MIN_LEAD_ACCEL):
-      return False
-
-    actual_headway = float(lead.dRel) / max(float(v_ego), 1e-3)
-    headway_margin = actual_headway - float(t_follow)
-    return headway_margin >= POST_DEPARTURE_FOLLOW_BYPASS_MIN_HEADWAY_MARGIN
-
-  def is_comfortable_accelerating_away_follow(self, lead, v_ego, t_follow):
-    if lead is None or not lead.status or float(v_ego) < POST_DEPARTURE_FOLLOW_BYPASS_MIN_SPEED:
-      return False
-
-    lead_radar = bool(getattr(lead, "radar", False))
-    lead_prob = float(getattr(lead, "modelProb", 1.0 if lead_radar else 0.0))
-    if not lead_radar and lead_prob < COMFORTABLE_PULLAWAY_FOLLOW_MIN_MODEL_PROB:
-      return False
-
-    if abs(float(getattr(lead, "yRel", 0.0))) > CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_LATERAL_OFFSET:
-      return False
-
-    lead_delta = float(lead.vLead) - float(v_ego)
-    lead_accel = float(getattr(lead, "aLeadK", 0.0))
-    if (lead_delta < COMFORTABLE_PULLAWAY_FOLLOW_MIN_LEAD_DELTA or
-        lead_accel < COMFORTABLE_PULLAWAY_FOLLOW_MIN_LEAD_ACCEL):
-      return False
-
-    actual_headway = float(lead.dRel) / max(float(v_ego), 1e-3)
-    headway_margin = actual_headway - float(t_follow)
-    return headway_margin >= COMFORTABLE_PULLAWAY_FOLLOW_MIN_HEADWAY_MARGIN
-
   def post_departure_follow_settle_active(self, lead, v_ego, t_follow):
     if lead is None or not lead.status:
       return False
@@ -1495,37 +1434,39 @@ class LongitudinalPlanner:
 
     return headway_margin >= POST_DEPARTURE_FOLLOW_SETTLE_MIN_HEADWAY_MARGIN
 
-  def is_spacious_low_closure_follow(self, lead, v_ego, t_follow):
-    if lead is None or not lead.status or float(v_ego) < CRUISE_TRACKED_LEAD_ACCEL_CAP_MIN_SPEED:
-      return False
-
-    lead_radar = bool(getattr(lead, "radar", False))
-    lead_prob = float(getattr(lead, "modelProb", 1.0 if lead_radar else 0.0))
-    if not lead_radar and lead_prob < SPACIOUS_TRACKED_FOLLOW_MIN_MODEL_PROB:
-      return False
-
-    if abs(float(getattr(lead, "yRel", 0.0))) > CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_LATERAL_OFFSET:
-      return False
-
-    lead_brake = max(0.0, -float(getattr(lead, "aLeadK", 0.0)))
-    if lead_brake > SPACIOUS_TRACKED_FOLLOW_MAX_LEAD_BRAKE:
-      return False
+  @staticmethod
+  def get_follow_accel_cap_allowance(lead, v_ego, t_follow):
+    if lead is None or not lead.status or float(v_ego) < FOLLOW_ACCEL_CAP_ALLOWANCE_MIN_SPEED:
+      return 0.0
 
     closing_speed = max(float(v_ego) - float(lead.vLead), 0.0)
-    if closing_speed > SPACIOUS_TRACKED_FOLLOW_MAX_CLOSING_SPEED:
-      return False
-
-    if self.raw_close_lead_needs_control(lead, v_ego):
-      return False
-
+    lead_brake = max(0.0, -float(getattr(lead, "aLeadK", 0.0)))
     actual_headway = float(lead.dRel) / max(float(v_ego), 1e-3)
     headway_margin = actual_headway - float(t_follow)
-    return headway_margin >= SPACIOUS_TRACKED_FOLLOW_MIN_HEADWAY_MARGIN
+    if (headway_margin <= FOLLOW_ACCEL_CAP_ALLOWANCE_MIN_HEADWAY_MARGIN or
+        closing_speed >= FOLLOW_ACCEL_CAP_ALLOWANCE_MAX_CLOSING_SPEED or
+        lead_brake >= FOLLOW_ACCEL_CAP_ALLOWANCE_MAX_LEAD_BRAKE):
+      return 0.0
 
-  def spacious_follow_cap_bypass_active(self, lead, v_ego, t_follow, tracking_lead_active):
-    if not tracking_lead_active or time.monotonic() > self.spacious_follow_cap_bypass_until:
-      return False
-    return self.is_spacious_low_closure_follow(lead, v_ego, t_follow)
+    headway_factor = float(np.clip(
+      (headway_margin - FOLLOW_ACCEL_CAP_ALLOWANCE_MIN_HEADWAY_MARGIN) /
+      (FOLLOW_ACCEL_CAP_ALLOWANCE_FULL_HEADWAY_MARGIN - FOLLOW_ACCEL_CAP_ALLOWANCE_MIN_HEADWAY_MARGIN),
+      0.0,
+      1.0,
+    ))
+    closing_factor = float(np.clip(
+      (FOLLOW_ACCEL_CAP_ALLOWANCE_MAX_CLOSING_SPEED - closing_speed) /
+      (FOLLOW_ACCEL_CAP_ALLOWANCE_MAX_CLOSING_SPEED - FOLLOW_ACCEL_CAP_ALLOWANCE_FULL_CLOSING_SPEED),
+      0.0,
+      1.0,
+    ))
+    brake_factor = float(np.clip(
+      (FOLLOW_ACCEL_CAP_ALLOWANCE_MAX_LEAD_BRAKE - lead_brake) /
+      FOLLOW_ACCEL_CAP_ALLOWANCE_MAX_LEAD_BRAKE,
+      0.0,
+      1.0,
+    ))
+    return FOLLOW_ACCEL_CAP_ALLOWANCE_MAX_ACCEL * headway_factor * closing_factor * brake_factor
 
   def get_lead_catchup_accel_cap(self, lead, v_ego, t_follow, current_source=None, tracking_lead_active=False):
     if lead is None or not lead.status:
@@ -1563,18 +1504,7 @@ class LongitudinalPlanner:
       tracking_lead_active and
       self.lead_is_matched_follow_window(lead, v_ego, t_follow)
     )
-    actual_headway = float(lead.dRel) / max(float(v_ego), 1e-3)
-    headway_margin = actual_headway - float(t_follow)
     if radar_matched_follow_active and gap_error > (gap_buffer - RADAR_MATCHED_FOLLOW_CATCHUP_CAP_BUFFER_MARGIN):
-      return None
-
-    if (
-      radar_matched_follow_active and
-      current_source in ("lead0", "lead1") and
-      lead_delta >= RADAR_MATCHED_FOLLOW_PULLAWAY_BYPASS_MIN_LEAD_DELTA and
-      float(getattr(lead, "aLeadK", 0.0)) >= RADAR_MATCHED_FOLLOW_PULLAWAY_BYPASS_MIN_LEAD_ACCEL and
-      headway_margin >= RADAR_MATCHED_FOLLOW_PULLAWAY_BYPASS_MIN_HEADWAY_MARGIN
-    ):
       return None
 
     if (radar_matched_follow_active and current_source == "cruise" and
@@ -1588,17 +1518,8 @@ class LongitudinalPlanner:
     if gap_error > gap_buffer:
       return None
 
-    if tracking_lead_active and self.is_comfortable_accelerating_away_follow(lead, v_ego, t_follow):
-      return None
-    if current_source == "cruise" and self.spacious_follow_cap_bypass_active(lead, v_ego, t_follow, tracking_lead_active):
-      return None
-
-    if not low_speed_follow_window and self.is_stable_post_departure_pullaway(lead, v_ego, t_follow):
-      return None
-
-    # If the lead is already pace-matched or pulling away, keep any catch-up
-    # accel very small while we're near the follow target so we don't surge into
-    # the lead and immediately ask for brake again.
+    # Keep the near-target cap conservative, then continuously relax it when
+    # there is real headway to use. Avoid binary bypasses around zero vRel.
     if low_speed_follow_window:
       edge_cap = float(np.interp(lead_delta, [min_lead_delta, 0.0, 1.0, 2.0], [0.20, 0.24, 0.38, 0.55]))
       near_cap = min(edge_cap, 0.16)
@@ -1606,7 +1527,10 @@ class LongitudinalPlanner:
       edge_cap = float(np.interp(lead_delta, [-0.5, 0.0, 1.0], [0.16, 0.08, 0.02]))
       near_cap = min(edge_cap, 0.03)
     gap_factor = float(np.clip(max(gap_error, 0.0) / max(gap_buffer, 0.1), 0.0, 1.0))
-    return float(np.interp(gap_factor, [0.0, 1.0], [near_cap, edge_cap]))
+    cap = float(np.interp(gap_factor, [0.0, 1.0], [near_cap, edge_cap]))
+    allowance_factor = float(np.clip(gap_error / FOLLOW_ACCEL_CAP_ALLOWANCE_FULL_GAP_MARGIN, 0.0, 1.0))
+    cap += allowance_factor * self.get_follow_accel_cap_allowance(lead, v_ego, t_follow)
+    return cap
 
   def get_low_speed_follow_transition_brake_cap(self, lead, v_ego, t_follow, prev_output_a_target, output_a_target):
     if lead is None or not lead.status:
@@ -1666,9 +1590,12 @@ class LongitudinalPlanner:
     if lead_delta > CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_PULLAWAY_SPEED:
       return None
 
-    if tracking_lead_active and self.is_comfortable_accelerating_away_follow(lead, v_ego, t_follow):
-      return None
-    if self.spacious_follow_cap_bypass_active(lead, v_ego, t_follow, tracking_lead_active):
+    lead_accel = float(getattr(lead, "aLeadK", 0.0))
+    if (
+      float(v_ego) < FOLLOW_ACCEL_CAP_ALLOWANCE_MIN_SPEED and
+      lead_delta >= 0.35 and
+      lead_accel >= 0.25
+    ):
       return None
 
     closing_speed = max(float(v_ego) - float(lead.vLead), 0.0)
@@ -1680,35 +1607,11 @@ class LongitudinalPlanner:
     if not tracking_lead_active and not raw_close_lead and not unresolved_slow_lead:
       return None
 
-    # Don't let a spacious, nearly pace-matched tracked lead toggle this cap on
-    # and off while cruise remains the source. That creates the square-wave
-    # accel "surge / give up / surge" behavior seen in real logs.
-    actual_headway = float(lead.dRel) / max(float(v_ego), 1e-3)
-    headway_margin = actual_headway - float(t_follow)
-    tracking_only_follow = tracking_lead_active and not raw_close_lead and not unresolved_slow_lead
-    if (tracking_only_follow and
-        headway_margin > CRUISE_TRACKED_LEAD_ACCEL_CAP_TRACKING_ONLY_MAX_HEADWAY_ABOVE_TARGET and
-        closing_speed < CRUISE_TRACKED_LEAD_ACCEL_CAP_TRACKING_ONLY_MAX_CLOSING_SPEED and
-        lead_brake <= CRUISE_TRACKED_LEAD_ACCEL_CAP_TRACKING_ONLY_MAX_LEAD_BRAKE):
-      return None
-
     desired_gap = float(desired_follow_distance(v_ego, lead.vLead, t_follow))
     gap_error = float(lead.dRel) - desired_gap
     gap_buffer = max(CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_GAP_BUFFER_MIN,
                      CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_GAP_BUFFER_GAIN * float(v_ego))
     if gap_error > gap_buffer:
-      return None
-
-    # If the same lead is already accelerating away and we're no longer tight to
-    # the follow target, don't slam the accel cap back on just because lead_delta
-    # momentarily falls near the pull-away threshold. That produces the repeated
-    # 0.18 m/s^2 "surge / give up / surge" behavior seen in real logs.
-    lead_accel = float(getattr(lead, "aLeadK", 0.0))
-    if self.is_stable_post_departure_pullaway(lead, v_ego, t_follow) or (
-      lead_delta >= CRUISE_TRACKED_LEAD_ACCEL_CAP_ACCEL_AWAY_MIN_LEAD_DELTA and
-      lead_accel >= CRUISE_TRACKED_LEAD_ACCEL_CAP_ACCEL_AWAY_MIN and
-      gap_error >= CRUISE_TRACKED_LEAD_ACCEL_CAP_ACCEL_AWAY_MIN_GAP_MARGIN
-    ):
       return None
 
     base_cap = float(np.interp(
@@ -1722,11 +1625,10 @@ class LongitudinalPlanner:
     else:
       base_cap = min(base_cap, float(np.interp(closing_speed, [0.0, 1.0, 2.0], [0.18, 0.12, 0.06])))
 
-    if gap_error <= 0.0:
-      return max(0.0, base_cap)
-
     gap_factor = float(np.clip(gap_error / max(gap_buffer, 0.1), 0.0, 1.0))
     cap = min(CRUISE_TRACKED_LEAD_ACCEL_CAP_MAX_ACCEL, base_cap + 0.06 * gap_factor)
+    allowance_factor = float(np.clip(gap_error / FOLLOW_ACCEL_CAP_ALLOWANCE_FULL_GAP_MARGIN, 0.0, 1.0))
+    cap += allowance_factor * self.get_follow_accel_cap_allowance(lead, v_ego, t_follow)
     return max(0.0, cap)
 
   def get_cruise_tracking_lead_accel_transition_target(self, lead, v_ego, t_follow,
@@ -2483,21 +2385,6 @@ class LongitudinalPlanner:
       abs(d_rel_dot) < 0.5 and
       not recently_braked
     )
-
-    if lead_one_active and self.mpc.source == "cruise":
-      lead_delta = float(self.lead_one.vLead) - float(scene_v_ego)
-      lead_brake = max(0.0, -float(getattr(self.lead_one, "aLeadK", 0.0)))
-      if (
-        self.is_spacious_low_closure_follow(self.lead_one, scene_v_ego, effective_t_follow) and
-        lead_brake <= SPACIOUS_TRACKED_FOLLOW_MAX_LEAD_BRAKE and
-        (
-          self.is_stable_post_departure_pullaway(self.lead_one, scene_v_ego, effective_t_follow) or
-          lead_delta >= SPACIOUS_TRACKED_FOLLOW_LATCH_MIN_LEAD_DELTA
-        )
-      ):
-        self.spacious_follow_cap_bypass_until = now_t + SPACIOUS_TRACKED_FOLLOW_LATCH_TIME
-    elif not lead_one_active:
-      self.spacious_follow_cap_bypass_until = 0.0
 
     # Calculate scene uncertainty from model desire prediction entropy and disengage predictions
     uncertainty = 0.0
