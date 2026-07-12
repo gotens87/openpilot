@@ -107,6 +107,51 @@
   gap: var(--gap-xs);
 }
 
+.ftmFeedbackButtons .longManeuverButton.selected {
+  box-shadow: 0 0 0 3px var(--text-color);
+  filter: brightness(1.2);
+}
+
+.ftmTuneComparison {
+  background: rgba(255, 255, 255, 0.025);
+  border-radius: var(--border-radius-sm);
+  padding: var(--padding-base);
+}
+
+.ftmTuneComparisonTable {
+  align-items: center;
+  display: grid;
+  gap: var(--gap-xs) var(--gap-sm);
+  grid-template-columns: minmax(11rem, 1.5fr) minmax(7rem, 1fr) auto minmax(7rem, 1fr);
+  margin-top: var(--margin-sm);
+}
+
+.ftmTuneComparisonTable > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: var(--padding-xs) 0;
+}
+
+.ftmTuneComparisonHeader {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-demi-bold);
+}
+
+.ftmTuneComparisonLabel {
+  font-weight: var(--font-weight-demi-bold);
+}
+
+.ftmTuneComparisonArrow {
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.ftmTuneComparisonChanged {
+  color: var(--main-fg);
+  font-weight: var(--font-weight-demi-bold);
+}
+
 .ftmDeltaBox {
   background: rgba(255, 255, 255, 0.03);
   border-radius: var(--border-radius-sm);
@@ -126,18 +171,162 @@
   width: 100%;
 }
 
-.ftmPlotWrap {
+.ftmTrackingOverview {
+  background: rgba(255, 255, 255, 0.025);
+  border-radius: var(--border-radius-sm);
+  padding: var(--padding-base);
+}
+
+.ftmTrackingLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap-sm);
+}
+
+.ftmTrackingLegend span {
+  align-items: center;
+  color: var(--text-muted);
+  display: inline-flex;
+  font-size: var(--font-size-sm);
+  gap: var(--gap-xs);
+}
+
+.ftmTrackingLegend i {
+  border-radius: 999px;
+  display: inline-block;
+  height: 0.2rem;
+  width: 1.4rem;
+}
+
+.ftmTrackingLegend i.desired {
+  background: #ef4444;
+}
+
+.ftmTrackingLegend i.actual {
+  background: #38bdf8;
+}
+
+.ftmTrackingNotice {
+  border-left: 2px solid var(--main-fg);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  margin-top: var(--margin-sm);
+  padding: var(--padding-xs) var(--padding-sm);
+}
+
+.ftmTrackingGrid {
+  display: grid;
+  gap: var(--gap-sm);
+  grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
   margin-top: var(--margin-base);
 }
 
-.ftmPlotWrap svg {
-  height: 140px;
+.ftmTrackingCard {
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--border-radius-sm);
+  min-width: 0;
+  padding: var(--padding-sm);
+}
+
+.ftmTrackingCardHeader {
+  align-items: flex-start;
+  display: flex;
+  gap: var(--gap-sm);
+  justify-content: space-between;
+}
+
+.ftmTrackingCardHeader > div {
+  display: flex;
+  flex-direction: column;
+}
+
+.ftmTrackingCardHeader span,
+.ftmTrackingCard small {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.ftmTrackingCard small {
+  display: block;
+  margin-top: var(--margin-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ftmTrackingPlot {
+  display: block;
+  height: auto;
+  margin-top: var(--margin-xs);
   width: 100%;
+}
+
+.ftmTrackingPlotBackground {
+  fill: var(--input-bg);
+}
+
+.ftmTrackingEventRegion {
+  fill: rgba(139, 108, 197, 0.14);
+}
+
+.ftmTrackingAxis,
+.ftmTrackingZero {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.18);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.ftmTrackingZero {
+  stroke-dasharray: 3 4;
+}
+
+.ftmTrackingDesired,
+.ftmTrackingActual {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.ftmTrackingDesired {
+  stroke: #ef4444;
+}
+
+.ftmTrackingActual {
+  stroke: #38bdf8;
+}
+
+.ftmTrackingAxisLabel {
+  fill: var(--text-muted);
+  font-size: 9px;
+}
+
+.ftmTrackingMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap-xs);
+  margin-top: var(--margin-xs);
+}
+
+.ftmTrackingMeta span {
+  background: var(--input-bg);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  padding: 0.15rem 0.45rem;
 }
 
 @media only screen and (max-width: 900px) {
   .ftmTwoColumn,
   .ftmProfileGrid {
     grid-template-columns: 1fr;
+  }
+
+  .ftmTuneComparisonTable {
+    font-size: var(--font-size-sm);
+    grid-template-columns: minmax(8rem, 1.3fr) minmax(5rem, 1fr) auto minmax(5rem, 1fr);
   }
 }

@@ -6,7 +6,7 @@ import time
 
 from collections import Counter, deque
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import cv2
@@ -30,6 +30,7 @@ DETECTOR_INPUT_SIZE_CANDIDATES = (640, 512, 448, 416, 384, 320, 288, 256, 224, 1
 DEFAULT_CLASSIFIER_INPUT_SIZE = 128
 CLASSIFIER_INPUT_SIZE_CANDIDATES = (128, 112, 96, 80, 64)
 FULL_FRAME_OCR_FALLBACK_ENABLED = False
+DETECTOR_CLASSIFIER_CROP_OCR_ENABLED = False
 DETECTOR_CLASSIFIER_REGION_MODE = "right_roi"  # full, right_roi, full_and_right_roi
 DEVICE_BUSY_AVG_CPU_USAGE_PERCENT = 78.0
 DEVICE_BUSY_MAX_CPU_USAGE_PERCENT = 92.0
@@ -42,8 +43,9 @@ HISTORY_SECONDS = 2.0
 CONSISTENT_DETECTIONS = 2
 # These counts must remain achievable at the measured 1.5 Hz onroad cadence.
 CHANGE_CONSISTENT_DETECTIONS = 2
-LOW_SPEED_CHANGE_CONSISTENT_DETECTIONS = 3
+LOW_SPEED_CHANGE_CONSISTENT_DETECTIONS = 2
 LOW_SPEED_CHANGE_MIN_CONFIDENCE = 0.90
+LOW_SPEED_CHANGE_ALLOW_STRONG_CONSENSUS = True
 MODEL_DETECTION_SHORT_CIRCUIT_CONFIDENCE = 0.65
 PUBLISHED_HOLD_SECONDS = 300.0
 PUBLISHED_CHANGE_COOLDOWN_SECONDS = 1.4
@@ -153,7 +155,7 @@ US_DETECTOR_CLASSES = {
 US_CLASSIFIER_SPEED_VALUES = (15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75)
 SCHOOL_ZONE_SPEED_VALUES = frozenset((15, 20, 25))
 US_DETECTOR_MIN_CONFIDENCE = 0.06
-US_CLASSIFIER_MIN_CONFIDENCE = 0.80
+US_CLASSIFIER_MIN_CONFIDENCE = 0.60
 US_CLASSIFIER_REJECT_MIN_CONFIDENCE = 0.85
 SEPARATE_REJECT_CLASSIFIER_ENABLED = False
 US_REJECT_CLASSIFIER_MIN_CONFIDENCE = 0.85
@@ -195,10 +197,14 @@ DETECTOR_CLASSIFIER_TRUSTED_MODEL_MAX_HEIGHT = 55
 DETECTOR_CLASSIFIER_TRUSTED_MODEL_MAX_AREA_RATIO = 0.002
 DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_PROPOSAL_CONFIDENCE = 0.18
 DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_X_RATIO = 0.52
-DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_READ_CONFIDENCE = 0.98
+DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_READ_CONFIDENCE = 0.65
 DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_SUPPORT = 2
 DETECTOR_CLASSIFIER_STRONG_MODEL_MIN_PROPOSAL_CONFIDENCE = 0.60
 DETECTOR_CLASSIFIER_STRONG_MODEL_MIN_READ_CONFIDENCE = 0.995
+DETECTOR_CLASSIFIER_STRONG_MODEL_CONSENSUS_ENABLED = True
+DETECTOR_CLASSIFIER_STRONG_MODEL_CONSENSUS_MIN_SUPPORT = 3
+DETECTOR_CLASSIFIER_MODEL_ONLY_CONSENSUS_MIN_CONFIDENCE = 0.90
+DETECTOR_CLASSIFIER_MODEL_ONLY_CONSENSUS_MIN_SUPPORT = 2
 SCHOOL_ZONE_SPEED_PRIOR = 0.12
 SCHOOL_ZONE_SUPPORT_BONUS = 0.08
 SCHOOL_ZONE_MIN_SUPPORT = 2
@@ -339,7 +345,7 @@ class SpeedLimitVisionDaemon:
     if not self.use_runtime or self.params_memory is None or self.debug_session_id:
       return
 
-    timestamp = datetime.now(timezone.utc)
+    timestamp = datetime.now(UTC)
     session_id = timestamp.strftime("%Y%m%d_%H%M%S")
     debug_dir = DEBUG_BASE_DIR / session_id
     suffix = 1
@@ -501,7 +507,7 @@ class SpeedLimitVisionDaemon:
     event = {
       "event": event_type,
       "wallTimeNs": wall_time_ns,
-      "wallTime": datetime.fromtimestamp(wall_time_ns / 1e9, timezone.utc).isoformat(),
+      "wallTime": datetime.fromtimestamp(wall_time_ns / 1e9, UTC).isoformat(),
       "monoTimeNs": time.monotonic_ns(),
       "roadName": self.last_road_name,
       "stream": self.stream_name,
@@ -739,7 +745,8 @@ class SpeedLimitVisionDaemon:
       return
     if self.current_frame_bgr is None:
       return
-    if now - self.last_map_transition_miss_at < MAP_TRANSITION_MISS_CAPTURE_COOLDOWN_SECONDS and current_speed_limit_mph == self.last_map_transition_miss_speed_limit_mph:
+    capture_in_cooldown = now - self.last_map_transition_miss_at < MAP_TRANSITION_MISS_CAPTURE_COOLDOWN_SECONDS
+    if capture_in_cooldown and current_speed_limit_mph == self.last_map_transition_miss_speed_limit_mph:
       return
     if self._vision_recently_supported(current_speed_limit_mph, now):
       return
@@ -1389,7 +1396,7 @@ class SpeedLimitVisionDaemon:
 
           for school_crop, crop_weight in self._iter_school_zone_read_crops(sign_crop):
             read_result = self._classify_speed_limit_from_model(school_crop)
-            if read_result is None:
+            if read_result is None and DETECTOR_CLASSIFIER_CROP_OCR_ENABLED:
               read_result = self._read_speed_limit_from_crop(school_crop)
             if read_result is None:
               continue
@@ -1433,6 +1440,9 @@ class SpeedLimitVisionDaemon:
       speed_support_counts: dict[int, int] = {}
       speed_regulatory_support: dict[int, int] = {}
       speed_trusted_model_support: dict[int, int] = {}
+      speed_model_only_rescue_support: dict[int, int] = {}
+      speed_direct_model_support: dict[int, int] = {}
+      speed_strong_model_support: dict[int, int] = {}
 
       for expand_left, expand_top, expand_right, expand_bottom, expansion_weight in DETECTOR_CLASSIFIER_EXPANSIONS:
         expanded_x1 = max(int(x1 - box_width * expand_left), 0)
@@ -1466,22 +1476,33 @@ class SpeedLimitVisionDaemon:
           proposal_confidence >= DETECTOR_CLASSIFIER_STRONG_MODEL_MIN_PROPOSAL_CONFIDENCE and
           model_read[1] >= DETECTOR_CLASSIFIER_STRONG_MODEL_MIN_READ_CONFIDENCE
         )
+        model_only_consensus_read = (
+          not DETECTOR_CLASSIFIER_CROP_OCR_ENABLED and
+          class_id == 0 and
+          model_read is not None and
+          not is_small_box and
+          model_read[1] >= DETECTOR_CLASSIFIER_MODEL_ONLY_CONSENSUS_MIN_CONFIDENCE and
+          (is_regulatory or proposal_confidence >= DETECTOR_CLASSIFIER_STRONG_MODEL_MIN_PROPOSAL_CONFIDENCE)
+        )
         needs_ocr_confirmation = (
           class_id != 2 and
           (not is_regulatory or is_tiny_low_conf_box) and
           not trusted_model_read and
           not strong_model_read
         )
-        if model_read is None or needs_ocr_confirmation:
+        if DETECTOR_CLASSIFIER_CROP_OCR_ENABLED and (model_read is None or needs_ocr_confirmation):
           ocr_read = self._read_speed_limit_from_crop(sign_crop)
         read_result = model_read or ocr_read
         if read_result is None:
           continue
 
         if needs_ocr_confirmation:
-          if model_read is None or ocr_read is None or model_read[0] != ocr_read[0]:
+          if DETECTOR_CLASSIFIER_CROP_OCR_ENABLED:
+            if model_read is None or ocr_read is None or model_read[0] != ocr_read[0]:
+              continue
+            read_result = (model_read[0], min(model_read[1], ocr_read[1]))
+          elif not trusted_model_read and not strong_model_read and not model_only_consensus_read:
             continue
-          read_result = (model_read[0], min(model_read[1], ocr_read[1]))
 
         speed_limit_mph, read_confidence = read_result
         score_is_regulatory = is_regulatory or trusted_model_read or strong_model_read
@@ -1507,6 +1528,12 @@ class SpeedLimitVisionDaemon:
           speed_regulatory_support[speed_limit_mph] = speed_regulatory_support.get(speed_limit_mph, 0) + 1
         if trusted_model_read:
           speed_trusted_model_support[speed_limit_mph] = speed_trusted_model_support.get(speed_limit_mph, 0) + 1
+        if strong_model_read:
+          speed_strong_model_support[speed_limit_mph] = speed_strong_model_support.get(speed_limit_mph, 0) + 1
+        if needs_ocr_confirmation and model_only_consensus_read:
+          speed_model_only_rescue_support[speed_limit_mph] = speed_model_only_rescue_support.get(speed_limit_mph, 0) + 1
+        elif model_read is not None:
+          speed_direct_model_support[speed_limit_mph] = speed_direct_model_support.get(speed_limit_mph, 0) + 1
 
       if not speed_scores:
         continue
@@ -1519,6 +1546,12 @@ class SpeedLimitVisionDaemon:
         ),
       )
       if class_id == 2 and speed_limit_mph not in SCHOOL_ZONE_SPEED_VALUES:
+        continue
+      model_only_rescue_support = speed_model_only_rescue_support.get(speed_limit_mph, 0)
+      if (
+        speed_direct_model_support.get(speed_limit_mph, 0) < 1 and
+        0 < model_only_rescue_support < DETECTOR_CLASSIFIER_MODEL_ONLY_CONSENSUS_MIN_SUPPORT
+      ):
         continue
       if (
         speed_regulatory_support.get(speed_limit_mph, 0) < 1 and
@@ -1541,7 +1574,10 @@ class SpeedLimitVisionDaemon:
             speed_limit_mph = competing_speed_limit_mph
       read_confidence = speed_best_confidences[speed_limit_mph]
       support_count = speed_support_counts[speed_limit_mph]
-      strong_rescue = False
+      strong_rescue = (
+        DETECTOR_CLASSIFIER_STRONG_MODEL_CONSENSUS_ENABLED and
+        speed_strong_model_support.get(speed_limit_mph, 0) >= DETECTOR_CLASSIFIER_STRONG_MODEL_CONSENSUS_MIN_SUPPORT
+      )
       score = min(
         read_confidence * 0.72 +
         proposal_confidence * 0.24 +
@@ -1567,7 +1603,7 @@ class SpeedLimitVisionDaemon:
           continue
         if read_confidence < DETECTOR_CLASSIFIER_RESCUE_MIN_CONFIDENCE:
           continue
-        strong_rescue = (
+        strong_rescue = strong_rescue or (
           speed_trusted_model_support.get(speed_limit_mph, 0) >= DETECTOR_CLASSIFIER_STRONG_RESCUE_MIN_SUPPORT and
           proposal_confidence >= DETECTOR_CLASSIFIER_STRONG_RESCUE_MIN_PROPOSAL_CONFIDENCE and
           read_confidence >= DETECTOR_CLASSIFIER_STRONG_RESCUE_MIN_READ_CONFIDENCE
@@ -1863,7 +1899,7 @@ class SpeedLimitVisionDaemon:
       allow_single_frame_consensus = has_strong_consensus
       if current_speed_limit >= 30 and candidate_speed_limit < 30:
         required_count = LOW_SPEED_CHANGE_CONSISTENT_DETECTIONS
-        allow_single_frame_consensus = False
+        allow_single_frame_consensus = has_strong_consensus and LOW_SPEED_CHANGE_ALLOW_STRONG_CONSENSUS
         if best_confidence < LOW_SPEED_CHANGE_MIN_CONFIDENCE:
           return None
       if candidate_count < required_count and not allow_single_frame_consensus:

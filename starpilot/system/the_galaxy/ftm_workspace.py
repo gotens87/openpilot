@@ -57,6 +57,17 @@ TRIAL_PARAM_SPECS = {
   "FTMTrialApplied": "bool",
 }
 
+FTM_ADVANCED_LATERAL_PARAM_KEYS = {
+  "AdvancedLateralTune",
+  "ForceAutoTune",
+  "ForceAutoTuneOff",
+  "SteerDelay",
+  "SteerFriction",
+  "SteerKP",
+  "SteerLatAccel",
+  "SteerRatio",
+}
+
 GENERIC_PARAM_METADATA = {
   "SteerDelay": {"min": 0.01, "max": 1.0, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
   "SteerFriction": {"min": 0.0, "max": 1.0, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
@@ -483,19 +494,71 @@ def _analysis_eligibility_mask(samples: list[FTMSample]) -> list[bool]:
   return eligible
 
 
-def _build_plot_svg(samples: list[FTMSample], event: dict[str, Any]) -> str:
-  start_idx = max(0, event["startIdx"] - 12)
-  end_idx = min(len(samples) - 1, event["endIdx"] + 12)
+def _build_plot_data(samples: list[FTMSample], event: dict[str, Any], eligibility: list[bool] | None = None) -> dict[str, Any]:
+  start_idx = int(event["startIdx"])
+  end_idx = int(event["endIdx"])
+  event_route = samples[start_idx].route
+  event_segment = samples[start_idx].segment
+
+  # Add a small amount of context without crossing an intervention buffer or
+  # segment boundary. The highlighted region remains the classified event.
+  for _ in range(12):
+    candidate = start_idx - 1
+    if candidate < 0 or (eligibility is not None and not eligibility[candidate]):
+      break
+    if samples[candidate].route != event_route or samples[candidate].segment != event_segment:
+      break
+    start_idx = candidate
+  for _ in range(12):
+    candidate = end_idx + 1
+    if candidate >= len(samples) or (eligibility is not None and not eligibility[candidate]):
+      break
+    if samples[candidate].route != event_route or samples[candidate].segment != event_segment:
+      break
+    end_idx = candidate
+
   window = samples[start_idx:end_idx + 1]
   if len(window) < 2:
-    return ""
+    return {}
+
+  # Keep reports lightweight on unusually long windows while preserving both ends.
+  if len(window) > 160:
+    indices = np.linspace(0, len(window) - 1, 160, dtype=int)
+    window = [window[int(idx)] for idx in indices]
 
   times = np.array([sample.t for sample in window], dtype=float)
   desired = np.array([sample.desired_la for sample in window], dtype=float)
   actual = np.array([sample.actual_la for sample in window], dtype=float)
+  relative_times = times - float(times[0])
+  event_start_time = max(float(samples[int(event["startIdx"])].t - times[0]), 0.0)
+  event_end_time = max(float(samples[int(event["endIdx"])].t - times[0]), event_start_time)
 
-  time_min = float(times.min())
-  time_span = max(float(times.max() - time_min), 1e-3)
+  return {
+    "times": [round(float(value), 3) for value in relative_times],
+    "desired": [round(float(value), 4) for value in desired],
+    "actual": [round(float(value), 4) for value in actual],
+    "windowDurationSec": round(float(relative_times[-1]), 2),
+    "eventStartSec": round(event_start_time, 2),
+    "eventEndSec": round(event_end_time, 2),
+    "eventDurationSec": round(max(event_end_time - event_start_time, 0.0), 2),
+    "meanSpeedMph": round(float(np.mean([sample.v_ego for sample in window])) * 2.236936, 1),
+    "route": event_route,
+    "segment": event_segment,
+    "segmentLabel": _route_label(event_route, event_segment),
+    "direction": str(event.get("direction", "center")),
+    "speedBand": str(event.get("speedBand", "mixed")),
+    "driverOverrideFree": bool(eligibility is None or all(eligibility[start_idx:end_idx + 1])),
+  }
+
+
+def _build_plot_svg(plot_data: dict[str, Any]) -> str:
+  times = np.array(plot_data.get("times", []), dtype=float)
+  desired = np.array(plot_data.get("desired", []), dtype=float)
+  actual = np.array(plot_data.get("actual", []), dtype=float)
+  if len(times) < 2 or len(desired) != len(times) or len(actual) != len(times):
+    return ""
+
+  time_span = max(float(times.max()), 1e-3)
   y_min = float(min(np.min(desired), np.min(actual)))
   y_max = float(max(np.max(desired), np.max(actual)))
   y_pad = max((y_max - y_min) * 0.10, 0.1)
@@ -506,7 +569,7 @@ def _build_plot_svg(samples: list[FTMSample], event: dict[str, Any]) -> str:
   def _points(series):
     coords = []
     for t_val, y_val in zip(times, series, strict=True):
-      x = ((float(t_val) - time_min) / time_span) * 380.0
+      x = (float(t_val) / time_span) * 380.0
       y = 120.0 - (((float(y_val) - y_min) / y_span) * 120.0)
       coords.append(f"{x:.1f},{y:.1f}")
     return " ".join(coords)
@@ -614,6 +677,31 @@ def _current_param_state(CP, params: Params) -> dict[str, Any]:
     "FTMActiveProfileId": params.get("FTMActiveProfileId", encoding="utf-8") or "",
     "FTMActiveOverrides": normalize_ftm_overrides(params.get("FTMActiveOverrides", encoding="utf-8") or "{}"),
     "FTMTrialApplied": params.get_bool("FTMTrialApplied"),
+  }
+
+
+def _stock_param_state(CP, capabilities: dict[str, Any]) -> dict[str, Any]:
+  torque_tune = CP.lateralTuning.torque if CP.lateralTuning.which() == "torque" else None
+  friction_family = str(capabilities.get("frictionFamily", "standard"))
+  rich_profile = capabilities.get("richProfileKey")
+  rich_knobs = {
+    symbol: float(meta["defaultValue"])
+    for symbol, meta in get_ftm_supported_vehicle_knobs().items()
+    if rich_profile and meta.get("profile") == rich_profile
+  }
+  return {
+    "SteerDelay": float(getattr(CP, "steerActuatorDelay", 0.0) or 0.0),
+    "SteerFriction": float(getattr(torque_tune, "friction", 0.0) or 0.0) if torque_tune is not None else 0.0,
+    "SteerKP": float(KP),
+    "SteerLatAccel": float(getattr(torque_tune, "latAccelFactor", 0.0) or 0.0) if torque_tune is not None else 0.0,
+    "SteerRatio": float(getattr(CP, "steerRatio", 0.0) or 0.0),
+    "FTMBaseFrictionThresholds": {
+      friction_family: {
+        "speedKnots": list(FTM_FRICTION_SPEED_KNOTS),
+        "values": _baseline_family_curve(friction_family),
+      },
+    } if torque_tune is not None else {},
+    "FTMVehicleKnobs": rich_knobs,
   }
 
 
@@ -828,11 +916,11 @@ def _build_event_summaries(samples: list[FTMSample]) -> tuple[list[dict[str, Any
   for bucket, mask in base_masks.items():
     events = _group_masked_events(samples, mask, score_map[bucket])
     if events:
-      summaries.extend(_summaries_from_events(bucket, samples, events))
+      summaries.extend(_summaries_from_events(bucket, samples, events, eligibility))
   if straight_windows:
-    summaries.extend(_summaries_from_events("center_chatter", samples, straight_windows))
+    summaries.extend(_summaries_from_events("center_chatter", samples, straight_windows, eligibility))
   if curve_windows:
-    summaries.extend(_summaries_from_events("notchy_mid_curve", samples, curve_windows))
+    summaries.extend(_summaries_from_events("notchy_mid_curve", samples, curve_windows, eligibility))
 
   left_errors = [abs(sample.actual_la) - abs(sample.desired_la) for sample in active_samples if sample.desired_la > 0.25]
   right_errors = [abs(sample.actual_la) - abs(sample.desired_la) for sample in active_samples if sample.desired_la < -0.25]
@@ -864,12 +952,14 @@ def _build_event_summaries(samples: list[FTMSample]) -> tuple[list[dict[str, Any
       },
       "events": [],
       "plotSvg": "",
+      "plotData": {},
     })
 
   return sorted(summaries, key=lambda item: item["severity"], reverse=True), summary_stats
 
 
-def _summaries_from_events(bucket: str, samples: list[FTMSample], events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _summaries_from_events(bucket: str, samples: list[FTMSample], events: list[dict[str, Any]],
+                           eligibility: list[bool] | None = None) -> list[dict[str, Any]]:
   grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
   for event in events:
     key = (bucket, event["direction"])
@@ -890,6 +980,7 @@ def _summaries_from_events(bucket: str, samples: list[FTMSample], events: list[d
     ]
     top_event = strongest[0]
     top_speed_band = top_event["speedBand"]
+    plot_data = _build_plot_data(samples, top_event, eligibility)
     summaries.append({
       "bucket": bucket_name,
       "dimensionId": f"{bucket_name}:{direction}:{top_speed_band}",
@@ -904,7 +995,8 @@ def _summaries_from_events(bucket: str, samples: list[FTMSample], events: list[d
         "segments": strongest_labels,
       },
       "events": grouped_events,
-      "plotSvg": _build_plot_svg(samples, top_event),
+      "plotSvg": _build_plot_svg(plot_data),
+      "plotData": plot_data,
     })
   return summaries
 
@@ -1225,6 +1317,8 @@ def build_suggestions(summaries: list[dict[str, Any]], capabilities: dict[str, A
         "whatNotToTouchYet": "Do not start cutting or adding turn-in. This sample does not show a clean controller-side miss.",
         "ifThatWasWrong": "If a stronger sample later shows actual lateral accel lagging or overshooting the plan, revisit with that route.",
         "strategy": strategy,
+        "plotSvg": summary.get("plotSvg", ""),
+        "plotData": summary.get("plotData", {}),
       })
       continue
 
@@ -1267,6 +1361,7 @@ def build_suggestions(summaries: list[dict[str, Any]], capabilities: dict[str, A
       "logSupport": f"Matched in {evidence.get('eventCount', 0)} event(s); strongest samples: {', '.join(item['label'] for item in evidence.get('segments', [])[:3]) or 'none'}",
       "whyThisKnob": _why_this_knob(adjustment),
       "plotSvg": summary.get("plotSvg", ""),
+      "plotData": summary.get("plotData", {}),
     })
   return suggestions
 
@@ -1498,6 +1593,7 @@ def build_trial_profiles(report_id: str, suggestions: list[dict[str, Any]], feed
                          path_key: str = "cleanup_pass", path_label: str = "Cleanup Pass") -> list[dict[str, Any]]:
   ignored = set(str(item) for item in feedback.get("ignoredDimensions", []))
   accepted = set(str(item) for item in feedback.get("acceptedDimensions", []))
+  has_feedback_decisions = bool(ignored or accepted)
 
   considered = [
     suggestion for suggestion in suggestions
@@ -1505,7 +1601,7 @@ def build_trial_profiles(report_id: str, suggestions: list[dict[str, Any]], feed
       not accepted or suggestion.get("dimensionId") in accepted
     )
   ]
-  if not considered:
+  if not considered and not has_feedback_decisions:
     considered = [suggestion for suggestion in suggestions if suggestion.get("primaryAdjustmentRaw")]
   actionable = [
     suggestion for suggestion in considered
@@ -1753,6 +1849,7 @@ def analyze_routes(route_names: list[str], footage_paths: list[str], feedback: d
   capabilities = dict(capabilities)
   capabilities["nonlinearTorqueMap"] = _nonlinear_torque_map(car_params)
   current_params = _current_param_state(car_params, params)
+  stock_params = _stock_param_state(car_params, capabilities)
 
   if torque_control:
     raw_summaries, summary_stats = classify_torque_samples(all_samples)
@@ -1773,6 +1870,7 @@ def analyze_routes(route_names: list[str], footage_paths: list[str], feedback: d
       "evidence": {"speedBand": "mixed", "directionBias": "center", "eventCount": 1, "segments": []},
       "events": [],
       "plotSvg": "",
+      "plotData": {},
     }]
     suggestions = [{
       "dimensionId": "angle_control_diagnostic:overall",
@@ -1785,6 +1883,7 @@ def analyze_routes(route_names: list[str], footage_paths: list[str], feedback: d
       "whatNotToTouchYet": "Do not write torque-controller override blobs for an angle-control path.",
       "ifThatWasWrong": "If the car later moves to torque control, re-run FTM on a fresh route.",
       "plotSvg": "",
+      "plotData": {},
     }]
     path_decision = {
       "primaryPathKey": "cleanup_pass",
@@ -1820,6 +1919,7 @@ def analyze_routes(route_names: list[str], footage_paths: list[str], feedback: d
       "steerControlType": str(getattr(car_params, "steerControlType", car.CarParams.SteerControlType.torque)),
     },
     "capabilities": capabilities,
+    "stockParams": stock_params,
     "currentParams": current_params,
     "summary": {
       **summary_stats,
@@ -1894,6 +1994,38 @@ def select_report_path(report_id: str, path_key: str) -> dict[str, Any]:
   }
 
 
+def _active_trial_display_state(paths: dict[str, Path], snapshot: Any) -> dict[str, Any] | None:
+  if not isinstance(snapshot, dict) or not snapshot:
+    return None
+  if "appliedGenericParams" in snapshot:
+    return snapshot
+
+  report_id = str(snapshot.get("reportId", "") or "")
+  profile_id = str(snapshot.get("profileId", "") or "")
+  profiles = _read_json(paths["profiles"] / f"{report_id}.json", []) if report_id else []
+  profile = next((
+    item for item in profiles
+    if isinstance(item, dict) and item.get("id") == profile_id
+  ), None) if isinstance(profiles, list) else None
+  if profile is None:
+    return snapshot
+
+  generic_params = dict(profile.get("genericParams", {}))
+  ftm_overrides = normalize_ftm_overrides(profile.get("ftmOverrides", {}))
+  return {
+    **snapshot,
+    "profileLabel": str(profile.get("label", "FTM") or "FTM"),
+    "pathKey": str(profile.get("pathKey", "") or ""),
+    "pathLabel": str(profile.get("pathLabel", "") or ""),
+    "appliedGenericParams": {
+      key: value for key, value in generic_params.items()
+      if key in FTM_ADVANCED_LATERAL_PARAM_KEYS
+    },
+    "appliedFrictionThresholds": ftm_overrides.get("baseFrictionThresholds", {}),
+    "appliedVehicleKnobs": ftm_overrides.get("vehicleKnobs", {}),
+  }
+
+
 def list_workspace() -> dict[str, Any]:
   paths = ensure_ftm_workspace()
   reports = []
@@ -1909,11 +2041,22 @@ def list_workspace() -> dict[str, Any]:
       "controlPath": payload.get("car", {}).get("controlPath", ""),
     })
   feedback_files = sorted(paths["feedback"].glob("*.json"), reverse=True)
-  active_snapshot = _read_json(paths["snapshots"] / "active.json", {})
+  params = Params(return_defaults=True)
+  current_profile_id = params.get("FTMActiveProfileId", encoding="utf-8") or ""
+  raw_active_snapshot = _read_json(paths["snapshots"] / "active.json", {})
+  if not raw_active_snapshot and params.get_bool("FTMTrialApplied"):
+    raw_active_snapshot = _find_revert_snapshot(paths, {}, current_profile_id) or {}
+    if raw_active_snapshot:
+      raw_active_snapshot = {
+        **raw_active_snapshot,
+        "profileId": current_profile_id or raw_active_snapshot.get("profileId", ""),
+        "recoveryNeeded": True,
+      }
+  active_snapshot = _active_trial_display_state(paths, raw_active_snapshot)
   return {
     "reports": reports[:20],
     "feedbackCount": len(feedback_files),
-    "activeTrial": active_snapshot if isinstance(active_snapshot, dict) and active_snapshot else None,
+    "activeTrial": active_snapshot,
     "status": read_ftm_status(),
   }
 
@@ -1960,8 +2103,9 @@ def clear_workspace() -> dict[str, Any]:
   if status.get("running"):
     raise RuntimeError("Stop the active FTM analysis before clearing the workspace.")
 
+  params = Params(return_defaults=True)
   active_snapshot = _read_json(paths["snapshots"] / "active.json", {})
-  if isinstance(active_snapshot, dict) and active_snapshot.get("params"):
+  if params.get_bool("FTMTrialApplied") or (isinstance(active_snapshot, dict) and active_snapshot.get("params")):
     raise RuntimeError("Revert the active FTM trial before clearing the workspace.")
 
   removed = []
@@ -2007,6 +2151,50 @@ def _apply_param_bundle(params: Params, bundle: dict[str, Any]) -> None:
       params.put(key, str(value or ""))
 
 
+def _merge_ftm_override_state(base: dict[str, Any], delta: dict[str, Any]) -> dict[str, Any]:
+  base = normalize_ftm_overrides(base)
+  delta = normalize_ftm_overrides(delta)
+  merged = {
+    "schemaVersion": 1,
+    "baseFrictionThresholds": {
+      **base.get("baseFrictionThresholds", {}),
+      **delta.get("baseFrictionThresholds", {}),
+    },
+    "vehicleKnobs": {
+      **base.get("vehicleKnobs", {}),
+      **delta.get("vehicleKnobs", {}),
+    },
+  }
+  return normalize_ftm_overrides(merged)
+
+
+def _find_revert_snapshot(paths: dict[str, Path], active_snapshot: dict[str, Any],
+                          current_profile_id: str = "") -> dict[str, Any] | None:
+  if isinstance(active_snapshot, dict) and isinstance(active_snapshot.get("params"), dict):
+    if not active_snapshot["params"].get("FTMTrialApplied", False):
+      return active_snapshot
+
+  cutoff = float(active_snapshot.get("capturedAt", math.inf) or math.inf) if isinstance(active_snapshot, dict) else math.inf
+  candidates = []
+  for path in paths["snapshots"].glob("*.json"):
+    if path.name == "active.json":
+      continue
+    candidate = _read_json(path, {})
+    candidate_params = candidate.get("params", {}) if isinstance(candidate, dict) else {}
+    if not isinstance(candidate_params, dict) or candidate_params.get("FTMTrialApplied", False):
+      continue
+    captured_at = float(candidate.get("capturedAt", 0.0) or 0.0)
+    if captured_at > cutoff:
+      continue
+    candidates.append(candidate)
+
+  if not candidates:
+    return None
+  matching = [candidate for candidate in candidates if current_profile_id and candidate.get("profileId") == current_profile_id]
+  pool = matching or candidates
+  return max(pool, key=lambda candidate: float(candidate.get("capturedAt", 0.0) or 0.0))
+
+
 def apply_trial_profile(report_id: str, profile_id: str) -> dict[str, Any]:
   paths = ensure_ftm_workspace()
   params = Params(return_defaults=True)
@@ -2017,18 +2205,83 @@ def apply_trial_profile(report_id: str, profile_id: str) -> dict[str, Any]:
   if profile is None:
     raise FileNotFoundError(profile_id)
 
+  generic_params = dict(profile.get("genericParams", {}))
+  ftm_overrides = normalize_ftm_overrides(profile.get("ftmOverrides", {}))
+  current_state = _snapshot_current_trial_state(params)
+  raw_active_snapshot = _read_json(paths["snapshots"] / "active.json", {})
+  previous_display_state = _active_trial_display_state(paths, raw_active_snapshot) or {}
+  trial_already_active = bool(current_state.get("FTMTrialApplied", False))
+
+  if trial_already_active:
+    baseline_snapshot = _find_revert_snapshot(
+      paths,
+      raw_active_snapshot,
+      str(current_state.get("FTMActiveProfileId", "") or ""),
+    )
+    if baseline_snapshot is None:
+      raise RuntimeError("The active FTM trial is missing its original rollback snapshot. Revert or reset the existing trial before applying another profile.")
+    baseline_params = baseline_snapshot["params"]
+    session_started_at = float(baseline_snapshot.get("sessionStartedAt", baseline_snapshot.get("capturedAt", time.time())) or time.time())
+  else:
+    baseline_params = current_state
+    session_started_at = time.time()
+
+  previous_generic_params = dict(previous_display_state.get("appliedGenericParams", {}))
+  for key in FTM_ADVANCED_LATERAL_PARAM_KEYS:
+    if key in current_state and current_state.get(key) != baseline_params.get(key):
+      previous_generic_params[key] = current_state[key]
+
+  baseline_overrides = normalize_ftm_overrides(baseline_params.get("FTMActiveOverrides", {}))
+  current_overrides = normalize_ftm_overrides(current_state.get("FTMActiveOverrides", {}))
+  previous_friction_thresholds = dict(previous_display_state.get("appliedFrictionThresholds", {}))
+  for family, payload in current_overrides.get("baseFrictionThresholds", {}).items():
+    if payload != baseline_overrides.get("baseFrictionThresholds", {}).get(family):
+      previous_friction_thresholds[family] = payload
+  previous_vehicle_knobs = dict(previous_display_state.get("appliedVehicleKnobs", {}))
+  for symbol, value in current_overrides.get("vehicleKnobs", {}).items():
+    if value != baseline_overrides.get("vehicleKnobs", {}).get(symbol):
+      previous_vehicle_knobs[symbol] = value
+
+  applied_generic_params = {
+    **previous_generic_params,
+    **{
+      key: value for key, value in generic_params.items()
+      if key in FTM_ADVANCED_LATERAL_PARAM_KEYS
+    },
+  }
+  applied_friction_thresholds = {
+    **previous_friction_thresholds,
+    **ftm_overrides.get("baseFrictionThresholds", {}),
+  }
+  applied_vehicle_knobs = {
+    **previous_vehicle_knobs,
+    **ftm_overrides.get("vehicleKnobs", {}),
+  }
+  now = time.time()
   snapshot = {
     "reportId": report_id,
     "profileId": profile_id,
-    "capturedAt": time.time(),
-    "params": _snapshot_current_trial_state(params),
+    "profileLabel": str(profile.get("label", "FTM") or "FTM"),
+    "pathKey": str(profile.get("pathKey", "") or ""),
+    "pathLabel": str(profile.get("pathLabel", "") or ""),
+    "capturedAt": session_started_at,
+    "updatedAt": now,
+    "sessionStartedAt": session_started_at,
+    "revisionCount": int(previous_display_state.get("revisionCount", 0) or 0) + 1,
+    "params": baseline_params,
+    "appliedGenericParams": applied_generic_params,
+    "appliedFrictionThresholds": applied_friction_thresholds,
+    "appliedVehicleKnobs": applied_vehicle_knobs,
   }
   _write_json(paths["snapshots"] / "active.json", snapshot)
   _write_json(paths["snapshots"] / f"{report_id}-{profile_id.replace(':', '_')}.json", snapshot)
 
-  bundle = dict(profile.get("genericParams", {}))
+  bundle = generic_params
   bundle["FTMActiveProfileId"] = profile_id
-  bundle["FTMActiveOverrides"] = profile.get("ftmOverrides", {})
+  bundle["FTMActiveOverrides"] = _merge_ftm_override_state(
+    current_state.get("FTMActiveOverrides", {}),
+    ftm_overrides,
+  )
   bundle["FTMTrialApplied"] = True
   _apply_param_bundle(params, bundle)
   return {
@@ -2041,17 +2294,23 @@ def revert_trial_profile() -> dict[str, Any]:
   paths = ensure_ftm_workspace()
   snapshot_path = paths["snapshots"] / "active.json"
   snapshot = _read_json(snapshot_path, {})
-  if not isinstance(snapshot, dict) or "params" not in snapshot:
-    raise FileNotFoundError("active trial snapshot")
   params = Params(return_defaults=True)
-  _apply_param_bundle(params, snapshot["params"])
+  current_profile_id = params.get("FTMActiveProfileId", encoding="utf-8") or ""
+  revert_snapshot = _find_revert_snapshot(paths, snapshot if isinstance(snapshot, dict) else {}, current_profile_id)
+  if revert_snapshot is None:
+    raise FileNotFoundError("active trial snapshot")
+  _apply_param_bundle(params, revert_snapshot["params"])
   try:
     snapshot_path.unlink()
   except FileNotFoundError:
     pass
   return {
-    "message": "Reverted FTM trial state.",
-    "snapshot": snapshot,
+    "message": "Reverted the complete FTM trial session to its original baseline.",
+    "snapshot": {
+      **(snapshot if isinstance(snapshot, dict) else {}),
+      "params": revert_snapshot["params"],
+      "recoveredBaseline": revert_snapshot is not snapshot,
+    },
   }
 
 

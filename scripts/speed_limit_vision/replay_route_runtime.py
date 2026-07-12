@@ -193,6 +193,21 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--right-roi-min-confidence", type=float, help="Override the right ROI detector minimum confidence.")
   parser.add_argument("--classifier-min-confidence", type=float, help="Override the value classifier confidence threshold.")
   parser.add_argument("--full-frame-ocr", action="store_true", help="Enable the expensive full-frame OCR fallback during replay.")
+  crop_ocr_group = parser.add_mutually_exclusive_group()
+  crop_ocr_group.add_argument("--crop-ocr", action="store_true", dest="crop_ocr", default=None, help="Enable crop OCR confirmation during replay.")
+  crop_ocr_group.add_argument("--no-crop-ocr", action="store_false", dest="crop_ocr", help="Replay the model-only detector/classifier path.")
+  parser.add_argument("--low-speed-change-consistent-detections", type=int, help="Override reads required to change from 30+ mph to below 30 mph.")
+  parser.add_argument(
+    "--allow-low-speed-strong-consensus",
+    action="store_true",
+    help="Permit a strong multi-crop consensus to publish a low-speed change from one frame.",
+  )
+  parser.add_argument(
+    "--enable-strong-model-consensus",
+    action="store_true",
+    help="Mark three agreeing high-confidence regulatory model crops as strong consensus.",
+  )
+  parser.add_argument("--initial-speed-limit", type=int, default=0, help="Seed route replay with a currently published speed limit.")
   return parser.parse_args()
 
 
@@ -299,6 +314,14 @@ def configure_runtime_options(args: argparse.Namespace) -> None:
 
   if args.full_frame_ocr:
     slv.FULL_FRAME_OCR_FALLBACK_ENABLED = True
+  if args.crop_ocr is not None:
+    slv.DETECTOR_CLASSIFIER_CROP_OCR_ENABLED = args.crop_ocr
+  if args.low_speed_change_consistent_detections is not None:
+    slv.LOW_SPEED_CHANGE_CONSISTENT_DETECTIONS = args.low_speed_change_consistent_detections
+  if args.allow_low_speed_strong_consensus:
+    slv.LOW_SPEED_CHANGE_ALLOW_STRONG_CONSENSUS = True
+  if args.enable_strong_model_consensus:
+    slv.DETECTOR_CLASSIFIER_STRONG_MODEL_CONSENSUS_ENABLED = True
 
   if args.right_roi_bounds:
     parts = [float(part.strip()) for part in args.right_roi_bounds.split(",")]
@@ -347,6 +370,7 @@ def replay_route(
   measured_inference_seconds: float,
   measured_base_inference_seconds: float | None = None,
   measured_classifier_forward_seconds: float = 0.0,
+  initial_speed_limit_mph: int = 0,
 ) -> tuple[RouteSummary, list[dict[str, str]]]:
   daemon = RouteReplayDaemon(
     runtime_context,
@@ -354,6 +378,7 @@ def replay_route(
     measured_base_inference_seconds,
     measured_classifier_forward_seconds,
   )
+  daemon.published_speed_limit_mph = initial_speed_limit_mph
   for segment_path in segments:
     segment = segment_index(segment_path)
     capture = cv2.VideoCapture(str(segment_path))
@@ -397,11 +422,8 @@ def replay_route(
 
     capture.release()
     if progress:
-      print(
-        f"  seg {segment:02d}: sampled={daemon.sampled_frames} inference={daemon.inference_frames} "
-        f"events={len(daemon.events)}",
-        flush=True,
-      )
+      counts = f"sampled={daemon.sampled_frames} inference={daemon.inference_frames} events={len(daemon.events)}"
+      print(f"  seg {segment:02d}: {counts}", flush=True)
 
   return summarize(log_id, len(segments), runtime_context is not None, daemon), daemon.events
 
@@ -490,6 +512,7 @@ def main() -> int:
       args.measured_inference_seconds,
       args.measured_base_inference_seconds,
       args.measured_classifier_forward_seconds,
+      args.initial_speed_limit,
     )
     all_events.extend((log_id, event) for event in events)
     summary_line = "".join((

@@ -14,13 +14,16 @@ import cv2
 if __package__ in (None, ""):
   import sys
   sys.path.insert(0, str(Path(__file__).resolve().parent))
-  from common import DEFAULT_SPEED_VALUES, DEFAULT_WORKSPACE, ensure_dir, resolve_workspace  # type: ignore
+  from common import DEFAULT_SPEED_VALUES, DEFAULT_WORKSPACE, ensure_dir, resolve_workspace  # type: ignore  # noqa: TID251
 else:
   from .common import DEFAULT_SPEED_VALUES, DEFAULT_WORKSPACE, ensure_dir, resolve_workspace
 
 
 CLASSIFIER_FIELDNAMES = [
   "record_key",
+  "route",
+  "log_id",
+  "segment",
   "split",
   "speed_limit_mph",
   "review_sign_type",
@@ -36,6 +39,9 @@ CLASSIFIER_FIELDNAMES = [
 
 RUNTIME_FIELDNAMES = [
   "record_key",
+  "route",
+  "log_id",
+  "segment",
   "split",
   "sample_type",
   "dataset_image",
@@ -49,6 +55,9 @@ RUNTIME_FIELDNAMES = [
 
 DETECTOR_MANIFEST_FIELDNAMES = [
   "record_key",
+  "route",
+  "log_id",
+  "segment",
   "split",
   "sample_type",
   "speed_limit_mph",
@@ -60,6 +69,23 @@ DETECTOR_MANIFEST_FIELDNAMES = [
   "class_id",
   "review_status",
   "detector_class",
+]
+
+REJECT_FIELDNAMES = [
+  "record_key",
+  "route",
+  "log_id",
+  "segment",
+  "split",
+  "crop_path",
+  "frame_path",
+  "bbox",
+  "crop_bbox",
+  "candidate_speed_limit_mph",
+  "candidate_confidence",
+  "detector_class",
+  "review_ignore_reason",
+  "review_notes",
 ]
 
 POSITIVE_STATUSES = {"accepted", "corrected"}
@@ -81,6 +107,7 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--classifier-manifest-out", type=Path, help="Positive crop manifest for import_manifest_classifier_masks.py.")
   parser.add_argument("--runtime-manifest-out", type=Path, help="Full-frame eval manifest including positives and true negatives.")
   parser.add_argument("--detector-manifest-out", type=Path, help="Manifest of imported detector examples.")
+  parser.add_argument("--reject-manifest-out", type=Path, help="Reviewed proposal crops that should train the classifier reject class.")
   parser.add_argument("--source-name", default="manual_review", help="Filename prefix for detector dataset imports.")
   parser.add_argument("--mode", choices=("symlink", "copy"), default="symlink", help="How to place detector images.")
   parser.add_argument("--val-modulo", type=int, default=5, help="Hash modulo for validation split. 0 sends everything to train.")
@@ -108,6 +135,10 @@ def split_for_key(key: str, val_modulo: int, val_remainder: int) -> str:
     return "train"
   digest = hashlib.sha1(key.encode("utf-8")).hexdigest()
   return "val" if int(digest[:8], 16) % val_modulo == val_remainder else "train"
+
+
+def split_group_key(row: dict[str, str]) -> str:
+  return row.get("route") or row.get("log_id") or row["record_key"]
 
 
 def parse_speed(text: str) -> int:
@@ -227,6 +258,10 @@ def is_positive(row: dict[str, str]) -> bool:
   return Path(row.get("crop_path", "")).is_file() and Path(row.get("frame_path", "")).is_file()
 
 
+def is_advisory_positive(row: dict[str, str]) -> bool:
+  return is_positive(row) and effective_sign_type(row) == "advisory"
+
+
 def is_uncertain_positive(row: dict[str, str]) -> bool:
   if row.get("review_status") != UNCERTAIN_STATUS:
     return False
@@ -243,10 +278,40 @@ def is_true_negative(row: dict[str, str]) -> bool:
   return Path(row.get("frame_path", "")).is_file()
 
 
+def is_classifier_reject(row: dict[str, str]) -> bool:
+  if row.get("review_status") != NEGATIVE_STATUS or row.get("detector_class") == "negative_empty":
+    return False
+  if row.get("review_sign_type") != "not_speed_limit":
+    return False
+  return Path(row.get("crop_path", "")).is_file()
+
+
+def classifier_reject_row(row: dict[str, str], split: str) -> dict[str, object]:
+  return {
+    "record_key": row["record_key"],
+    "route": row.get("route", ""),
+    "log_id": row.get("log_id", ""),
+    "segment": row.get("segment", ""),
+    "split": split,
+    "crop_path": row.get("crop_path", ""),
+    "frame_path": row.get("frame_path", ""),
+    "bbox": row.get("bbox", ""),
+    "crop_bbox": row.get("crop_bbox", ""),
+    "candidate_speed_limit_mph": row.get("candidate_speed_limit_mph", ""),
+    "candidate_confidence": row.get("candidate_confidence", ""),
+    "detector_class": row.get("detector_class", ""),
+    "review_ignore_reason": row.get("review_ignore_reason", ""),
+    "review_notes": row.get("review_notes", ""),
+  }
+
+
 def positive_classifier_row(row: dict[str, str], split: str) -> dict[str, object]:
   speed = parse_speed(row.get("review_speed_limit_mph", ""))
   return {
     "record_key": row["record_key"],
+    "route": row.get("route", ""),
+    "log_id": row.get("log_id", ""),
+    "segment": row.get("segment", ""),
     "split": split,
     "speed_limit_mph": speed,
     "review_sign_type": effective_sign_type(row),
@@ -262,9 +327,13 @@ def positive_classifier_row(row: dict[str, str], split: str) -> dict[str, object
 
 
 def runtime_row(row: dict[str, str], split: str, sample_type: str) -> dict[str, object]:
-  speed = parse_speed(row.get("review_speed_limit_mph", "")) if sample_type in ("positive", "uncertain_positive") else 0
+  positive_sample_types = ("positive", "uncertain_positive", "advisory_negative")
+  speed = parse_speed(row.get("review_speed_limit_mph", "")) if sample_type in positive_sample_types else 0
   return {
     "record_key": row["record_key"],
+    "route": row.get("route", ""),
+    "log_id": row.get("log_id", ""),
+    "segment": row.get("segment", ""),
     "split": split,
     "sample_type": sample_type,
     "dataset_image": row.get("frame_path", ""),
@@ -314,6 +383,9 @@ def import_detector_example(
 
   return {
     "record_key": row["record_key"],
+    "route": row.get("route", ""),
+    "log_id": row.get("log_id", ""),
+    "segment": row.get("segment", ""),
     "split": split,
     "sample_type": sample_type,
     "speed_limit_mph": parse_speed(row.get("review_speed_limit_mph", "")) if sample_type == "positive" else "",
@@ -334,67 +406,94 @@ def main() -> int:
   queue_path = args.queue.expanduser().resolve()
   labels_path = args.labels.expanduser().resolve() if args.labels else queue_path.with_name("manual_review_labels.csv")
   output_dir = queue_path.parent
-  classifier_manifest = args.classifier_manifest_out.expanduser().resolve() if args.classifier_manifest_out else output_dir / "manual_review_classifier_manifest.csv"
-  runtime_manifest = args.runtime_manifest_out.expanduser().resolve() if args.runtime_manifest_out else output_dir / "manual_review_runtime_eval_manifest.csv"
-  detector_manifest = args.detector_manifest_out.expanduser().resolve() if args.detector_manifest_out else output_dir / "manual_review_detector_import_manifest.csv"
+  classifier_manifest = (
+    args.classifier_manifest_out.expanduser().resolve()
+    if args.classifier_manifest_out else output_dir / "manual_review_classifier_manifest.csv"
+  )
+  runtime_manifest = (
+    args.runtime_manifest_out.expanduser().resolve()
+    if args.runtime_manifest_out else output_dir / "manual_review_runtime_eval_manifest.csv"
+  )
+  detector_manifest = (
+    args.detector_manifest_out.expanduser().resolve()
+    if args.detector_manifest_out else output_dir / "manual_review_detector_import_manifest.csv"
+  )
+  reject_manifest = (
+    args.reject_manifest_out.expanduser().resolve()
+    if args.reject_manifest_out else output_dir / "manual_review_classifier_reject_manifest.csv"
+  )
 
   rows = merged_review_rows(queue_path, labels_path)
   positive_rows = [row for row in rows if is_positive(row)]
+  advisory_positive_rows = [row for row in positive_rows if is_advisory_positive(row)]
   uncertain_positive_rows = [row for row in rows if is_uncertain_positive(row)]
   true_negative_rows = [row for row in rows if is_true_negative(row)]
+  classifier_reject_rows = [row for row in rows if is_classifier_reject(row)]
   if args.max_detector_negatives > 0:
     true_negative_rows = true_negative_rows[:args.max_detector_negatives]
 
   classifier_rows: list[dict[str, object]] = []
   runtime_rows: list[dict[str, object]] = []
   detector_rows: list[dict[str, object]] = []
+  reject_rows: list[dict[str, object]] = []
 
   for row in positive_rows:
-    split = split_for_key(row["record_key"], args.val_modulo, args.val_remainder)
+    split = split_for_key(split_group_key(row), args.val_modulo, args.val_remainder)
     classifier_rows.append(positive_classifier_row(row, split))
-    runtime_rows.append(runtime_row(row, split, "positive"))
+    sample_type = "advisory_negative" if is_advisory_positive(row) else "positive"
+    runtime_rows.append(runtime_row(row, split, sample_type))
     detector_row = import_detector_example(workspace, row, split, args.source_name, "positive", args.mode, args.overwrite)
     if detector_row is not None:
       detector_rows.append(detector_row)
 
   for row in uncertain_positive_rows:
-    split = split_for_key(row["record_key"], args.val_modulo, args.val_remainder)
+    split = split_for_key(split_group_key(row), args.val_modulo, args.val_remainder)
     runtime_rows.append(runtime_row(row, split, "uncertain_positive"))
 
   for row in true_negative_rows:
-    split = split_for_key(row["record_key"], args.val_modulo, args.val_remainder)
+    split = split_for_key(split_group_key(row), args.val_modulo, args.val_remainder)
     runtime_rows.append(runtime_row(row, split, "negative_empty"))
     detector_row = import_detector_example(workspace, row, split, args.source_name, "negative_empty", args.mode, args.overwrite)
     if detector_row is not None:
       detector_rows.append(detector_row)
 
+  for row in classifier_reject_rows:
+    split = split_for_key(split_group_key(row), args.val_modulo, args.val_remainder)
+    reject_rows.append(classifier_reject_row(row, split))
+
   write_csv(classifier_manifest, CLASSIFIER_FIELDNAMES, classifier_rows)
   write_csv(runtime_manifest, RUNTIME_FIELDNAMES, runtime_rows)
   write_csv(detector_manifest, DETECTOR_MANIFEST_FIELDNAMES, detector_rows)
+  write_csv(reject_manifest, REJECT_FIELDNAMES, reject_rows)
 
   summary = {
     "queue": str(queue_path),
     "labels": str(labels_path),
     "reviewed_rows": len(rows),
     "positive_rows": len(positive_rows),
+    "advisory_positive_rows": len(advisory_positive_rows),
     "uncertain_positive_rows": len(uncertain_positive_rows),
     "true_negative_rows": len(true_negative_rows),
+    "classifier_reject_rows": len(reject_rows),
     "classifier_manifest": str(classifier_manifest),
     "runtime_manifest": str(runtime_manifest),
     "detector_manifest": str(detector_manifest),
     "detector_imported": len(detector_rows),
+    "reject_manifest": str(reject_manifest),
   }
   summary_path = output_dir / "manual_review_import_summary.json"
   summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-  print(
-    "Imported manual review queue: "
-    f"reviewed={len(rows)} positives={len(positive_rows)} uncertain_positives={len(uncertain_positive_rows)} true_negatives={len(true_negative_rows)} "
-    f"detector_imported={len(detector_rows)}"
-  )
+  review_counts = " ".join((
+    f"reviewed={len(rows)} positives={len(positive_rows)}",
+    f"uncertain_positives={len(uncertain_positive_rows)} true_negatives={len(true_negative_rows)}",
+  ))
+  import_counts = f"classifier_rejects={len(reject_rows)} detector_imported={len(detector_rows)}"
+  print(f"Imported manual review queue: {review_counts} {import_counts}")
   print(f"Classifier manifest: {classifier_manifest}")
   print(f"Runtime eval manifest: {runtime_manifest}")
   print(f"Detector import manifest: {detector_manifest}")
+  print(f"Classifier reject manifest: {reject_manifest}")
   print(f"Summary: {summary_path}")
   return 0
 

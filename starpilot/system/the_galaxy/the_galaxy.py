@@ -5739,6 +5739,8 @@ def setup(app):
       result = ftm_workspace.apply_trial_profile(report_id, profile_id)
     except FileNotFoundError:
       return jsonify({"error": "FTM profile not found."}), 404
+    except RuntimeError as error:
+      return jsonify({"error": str(error)}), 409
 
     return jsonify(result), 200
 

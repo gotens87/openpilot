@@ -430,6 +430,13 @@ function setDimensionFeedback(dimensionId, mode) {
   state.feedbackIgnored = [...ignored]
 }
 
+async function updateDimensionFeedback(dimensionId, mode) {
+  if (state.runningAction) return
+  const current = feedbackStateFor(dimensionId)
+  setDimensionFeedback(dimensionId, current === mode ? "unset" : mode)
+  await saveFeedback()
+}
+
 async function saveFeedback() {
   if (!state.report?.reportId || state.runningAction) return
   state.runningAction = true
@@ -508,6 +515,261 @@ function primaryPath() {
   return paths.find((path) => path.key === selectedPathKey) || paths.find((path) => path.isPrimary) || paths[0] || null
 }
 
+function allReportProfiles() {
+  const pathProfiles = reportPaths().flatMap((path) => path.profiles || [])
+  return pathProfiles.length ? pathProfiles : (state.report?.profiles || [])
+}
+
+function activeTrialProfile() {
+  const activeTrial = state.workspace?.activeTrial
+  if (!activeTrial || activeTrial.reportId !== state.report?.reportId) return null
+  return allReportProfiles().find((profile) => profile.id === activeTrial.profileId) || null
+}
+
+function mergedFtmOverrides() {
+  const current = state.report?.currentParams?.FTMActiveOverrides || {}
+  const trial = activeTrialProfile()?.ftmOverrides || {}
+  return {
+    baseFrictionThresholds: {
+      ...(current.baseFrictionThresholds || {}),
+      ...(trial.baseFrictionThresholds || {}),
+    },
+    vehicleKnobs: {
+      ...(current.vehicleKnobs || {}),
+      ...(trial.vehicleKnobs || {}),
+    },
+  }
+}
+
+function formatTuneComparisonValue(value) {
+  if (Array.isArray(value)) return renderCurve(value)
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric.toFixed(3) : String(value ?? "-")
+}
+
+function tuneComparisonRows() {
+  const stock = state.report?.stockParams
+  const current = state.report?.currentParams
+  if (!stock || !current) return []
+
+  const trialGeneric = activeTrialProfile()?.genericParams || {}
+  const rows = [
+    ["Lat accel", "SteerLatAccel"],
+    ["Friction", "SteerFriction"],
+    ["Steer delay", "SteerDelay"],
+    ["Steer ratio", "SteerRatio"],
+    ["KP", "SteerKP"],
+  ].map(([label, key]) => ({
+    key,
+    label,
+    stock: stock[key],
+    current: Object.hasOwn(trialGeneric, key) ? trialGeneric[key] : current[key],
+  }))
+
+  const overrides = mergedFtmOverrides()
+  for (const [family, payload] of Object.entries(stock.FTMBaseFrictionThresholds || {})) {
+    rows.push({
+      key: `friction-threshold-${family}`,
+      label: `${family} friction threshold`,
+      stock: payload?.values || [],
+      current: overrides.baseFrictionThresholds?.[family]?.values || payload?.values || [],
+    })
+  }
+
+  for (const [symbol, currentValue] of Object.entries(overrides.vehicleKnobs || {})) {
+    if (!Object.hasOwn(stock.FTMVehicleKnobs || {}, symbol)) continue
+    rows.push({
+      key: symbol,
+      label: symbol.split(".").slice(1).join("."),
+      stock: stock.FTMVehicleKnobs[symbol],
+      current: currentValue,
+      codeLabel: symbol,
+    })
+  }
+  return rows
+}
+
+function comparisonValueChanged(row) {
+  if (Array.isArray(row.stock) || Array.isArray(row.current)) {
+    return JSON.stringify(row.stock || []) !== JSON.stringify(row.current || [])
+  }
+  return Math.abs(Number(row.stock) - Number(row.current)) > 0.0005
+}
+
+function renderTuneComparison() {
+  const rows = tuneComparisonRows()
+  if (!rows.length) return ""
+  const profile = activeTrialProfile()
+  return html`
+    <div class="ftmCardSubsection ftmTuneComparison">
+      <div class="ftmCardHeader">
+        <div>
+          <h4>Stock vs Current FTM</h4>
+          <p class="longManeuverMuted">
+            ${profile ? `Includes active trial: ${profile.pathLabel || "FTM"} / ${profile.label}` : "Current values captured when this route was analyzed."}
+          </p>
+        </div>
+      </div>
+      <div class="ftmTuneComparisonTable">
+        <div class="ftmTuneComparisonHeader">Parameter</div>
+        <div class="ftmTuneComparisonHeader">Stock</div>
+        <div class="ftmTuneComparisonArrow"></div>
+        <div class="ftmTuneComparisonHeader">FTM</div>
+        ${rows.map((row) => html`
+          <div class="ftmTuneComparisonLabel" title="${row.codeLabel || row.key}">${row.label}</div>
+          <div>${formatTuneComparisonValue(row.stock)}</div>
+          <div class="ftmTuneComparisonArrow">&gt;</div>
+          <div class="${comparisonValueChanged(row) ? "ftmTuneComparisonChanged" : ""}">${formatTuneComparisonValue(row.current)}</div>
+        `)}
+      </div>
+    </div>
+  `
+}
+
+const TRACKING_OVERVIEW_GROUPS = [
+  { title: "Straight Tracking", buckets: new Set(["center_chatter"]) },
+  {
+    title: "Curve Response",
+    buckets: new Set([
+      "understeer", "oversteer", "early_turn_in", "late_turn_in",
+      "notchy_mid_curve", "low_speed_unwillingness", "saturation_limited",
+    ]),
+  },
+  { title: "Unwind Response", buckets: new Set(["unwind_too_slow", "unwind_too_fast"]) },
+]
+
+function hasUsablePlotData(suggestion) {
+  const plot = suggestion?.plotData
+  return !!(
+    plot?.driverOverrideFree !== false &&
+    Array.isArray(plot?.times) && plot.times.length > 1 &&
+    Array.isArray(plot?.desired) && plot.desired.length === plot.times.length &&
+    Array.isArray(plot?.actual) && plot.actual.length === plot.times.length
+  )
+}
+
+function trackingOverviewItems() {
+  const suggestions = [...(primaryPath()?.suggestions || [])]
+    .filter(hasUsablePlotData)
+    .sort((left, right) => Number(right.severity || 0) - Number(left.severity || 0))
+  const selected = []
+  const selectedDimensions = new Set()
+
+  for (const group of TRACKING_OVERVIEW_GROUPS) {
+    const match = suggestions.find((suggestion) => (
+      group.buckets.has(suggestion.bucket) && !selectedDimensions.has(suggestion.dimensionId)
+    ))
+    if (!match) continue
+    selected.push({ ...match, overviewTitle: group.title })
+    selectedDimensions.add(match.dimensionId)
+  }
+
+  for (const suggestion of suggestions) {
+    if (selected.length >= 3) break
+    if (selectedDimensions.has(suggestion.dimensionId)) continue
+    selected.push({ ...suggestion, overviewTitle: "Additional Evidence" })
+    selectedDimensions.add(suggestion.dimensionId)
+  }
+
+  return selected.slice(0, 3)
+}
+
+function plotPoints(times, values, duration, yMin, yMax) {
+  const xStart = 34
+  const xEnd = 410
+  const yStart = 12
+  const yEnd = 136
+  const ySpan = Math.max(yMax - yMin, 0.001)
+  return times.map((time, index) => {
+    const x = xStart + (Math.max(0, Number(time)) / duration) * (xEnd - xStart)
+    const y = yEnd - ((Number(values[index]) - yMin) / ySpan) * (yEnd - yStart)
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(" ")
+}
+
+function renderTrackingPlot(plot) {
+  const times = plot.times.map(Number)
+  const desired = plot.desired.map(Number)
+  const actual = plot.actual.map(Number)
+  const duration = Math.max(Number(plot.windowDurationSec), times[times.length - 1] || 0, 0.1)
+  const allValues = [...desired, ...actual, 0].filter(Number.isFinite)
+  const rawMin = Math.min(...allValues)
+  const rawMax = Math.max(...allValues)
+  const padding = Math.max((rawMax - rawMin) * 0.12, 0.08)
+  const yMin = rawMin - padding
+  const yMax = rawMax + padding
+  const desiredPoints = plotPoints(times, desired, duration, yMin, yMax)
+  const actualPoints = plotPoints(times, actual, duration, yMin, yMax)
+  const eventStart = Math.max(0, Math.min(Number(plot.eventStartSec) || 0, duration))
+  const eventEnd = Math.max(eventStart, Math.min(Number(plot.eventEndSec) || eventStart, duration))
+  const eventX = 34 + (eventStart / duration) * 376
+  const eventWidth = Math.max(((eventEnd - eventStart) / duration) * 376, 2)
+  const zeroY = 136 - ((0 - yMin) / Math.max(yMax - yMin, 0.001)) * 124
+
+  return html`
+    <svg class="ftmTrackingPlot" viewBox="0 0 420 158" role="img" aria-label="Desired versus actual lateral acceleration">
+      <rect class="ftmTrackingPlotBackground" x="0" y="0" width="420" height="158" rx="10"></rect>
+      <rect class="ftmTrackingEventRegion" x="${eventX}" y="12" width="${eventWidth}" height="124"></rect>
+      <line class="ftmTrackingZero" x1="34" y1="${zeroY}" x2="410" y2="${zeroY}"></line>
+      <line class="ftmTrackingAxis" x1="34" y1="12" x2="34" y2="136"></line>
+      <line class="ftmTrackingAxis" x1="34" y1="136" x2="410" y2="136"></line>
+      <polyline class="ftmTrackingDesired" points="${desiredPoints}"></polyline>
+      <polyline class="ftmTrackingActual" points="${actualPoints}"></polyline>
+      <text class="ftmTrackingAxisLabel" x="2" y="18">${yMax.toFixed(1)}</text>
+      <text class="ftmTrackingAxisLabel" x="2" y="138">${yMin.toFixed(1)}</text>
+      <text class="ftmTrackingAxisLabel" x="34" y="152">0s</text>
+      <text class="ftmTrackingAxisLabel" x="384" y="152">${duration.toFixed(1)}s</text>
+    </svg>
+  `
+}
+
+function renderTrackingOverview() {
+  const items = trackingOverviewItems()
+  if (!items.length) return ""
+
+  return html`
+    <div class="ftmCardSubsection ftmTrackingOverview">
+      <div class="ftmCardHeader">
+        <div>
+          <h4>Tracking Overview</h4>
+          <p class="longManeuverMuted">
+            Desired vs actual lateral acceleration (m/s^2) in representative intervention-free windows. The shaded area is the classified event.
+          </p>
+        </div>
+        <div class="ftmTrackingLegend" aria-label="Plot legend">
+          <span><i class="desired"></i>Desired</span>
+          <span><i class="actual"></i>Actual</span>
+        </div>
+      </div>
+
+      <div class="ftmTrackingNotice">
+        No fit score by design. Small phase separation is normal, and closer traces do not automatically mean the steering feels better.
+      </div>
+
+      <div class="ftmTrackingGrid">
+        ${items.map((item) => html`
+          <article class="ftmTrackingCard">
+            <div class="ftmTrackingCardHeader">
+              <div>
+                <strong>${item.overviewTitle}</strong>
+                <span>${String(item.bucket || "event").replace(/_/g, " ")}</span>
+              </div>
+              <span>${Number(item.plotData.meanSpeedMph || 0).toFixed(1)} mph</span>
+            </div>
+            ${renderTrackingPlot(item.plotData)}
+            <div class="ftmTrackingMeta">
+              <span>${item.evidence?.directionBias || item.plotData.direction || "center"}</span>
+              <span>${item.evidence?.speedBand || item.plotData.speedBand || "mixed"}</span>
+              <span>${Number(item.plotData.eventDurationSec || 0).toFixed(1)}s event</span>
+            </div>
+            <small title="${item.plotData.segmentLabel || ""}">${item.plotData.segmentLabel || "Unknown segment"}</small>
+          </article>
+        `)}
+      </div>
+    </div>
+  `
+}
+
 function renderProfile(profile) {
   const genericEntries = Object.entries(profile.genericParams || {}).filter(([key]) => key !== "AdvancedLateralTune")
   const frictionEntries = Object.entries(profile.ftmOverrides?.baseFrictionThresholds || {})
@@ -551,7 +813,6 @@ function renderProfile(profile) {
 
 function renderSuggestion(suggestion) {
   const currentVsSuggested = suggestion.currentVsSuggested
-  const feedbackState = feedbackStateFor(suggestion.dimensionId)
   return html`
     <div class="ftmCard">
       <div class="ftmCardHeader">
@@ -565,14 +826,18 @@ function renderSuggestion(suggestion) {
         </div>
         <div class="ftmFeedbackButtons">
           <button
-            class="longManeuverButton ${feedbackState === "accepted" ? "selected" : ""}"
-            @click="${() => setDimensionFeedback(suggestion.dimensionId, feedbackState === "accepted" ? "unset" : "accepted")}">
-            Matches Experience
+            class="${() => `longManeuverButton ${feedbackStateFor(suggestion.dimensionId) === "accepted" ? "selected" : ""}`}"
+            aria-pressed="${() => feedbackStateFor(suggestion.dimensionId) === "accepted" ? "true" : "false"}"
+            disabled="${() => state.runningAction}"
+            @click="${() => updateDimensionFeedback(suggestion.dimensionId, "accepted")}">
+            ${() => feedbackStateFor(suggestion.dimensionId) === "accepted" ? "Matched" : "Matches Experience"}
           </button>
           <button
-            class="longManeuverButton ${feedbackState === "ignored" ? "danger selected" : "danger"}"
-            @click="${() => setDimensionFeedback(suggestion.dimensionId, feedbackState === "ignored" ? "unset" : "ignored")}">
-            Ignore
+            class="${() => `longManeuverButton danger ${feedbackStateFor(suggestion.dimensionId) === "ignored" ? "selected" : ""}`}"
+            aria-pressed="${() => feedbackStateFor(suggestion.dimensionId) === "ignored" ? "true" : "false"}"
+            disabled="${() => state.runningAction}"
+            @click="${() => updateDimensionFeedback(suggestion.dimensionId, "ignored")}">
+            ${() => feedbackStateFor(suggestion.dimensionId) === "ignored" ? "Ignored" : "Ignore"}
           </button>
         </div>
       </div>
@@ -603,9 +868,6 @@ function renderSuggestion(suggestion) {
         `
         : html`<p class="longManeuverMuted">No trial adjustment suggested for this dimension.</p>`}
 
-      ${suggestion.plotSvg
-        ? html`<div class="ftmPlotWrap"><p class="longManeuverMuted">Saved report includes an inline event plot for this finding.</p></div>`
-        : ""}
     </div>
   `
 }
@@ -803,6 +1065,10 @@ export function Tuning() {
               <p><strong>Samples:</strong> ${safeCount(state.report.summary?.sampleCount)}</p>
             </div>
 
+            ${() => renderTrackingOverview()}
+
+            ${() => renderTuneComparison()}
+
             <div class="ftmFindings">
               ${reportPaths().map((path) => renderPathSummary(path))}
             </div>
@@ -833,12 +1099,13 @@ export function Tuning() {
                 <p class="longManeuverMuted">
                   ${primaryPath()?.whySelected || "Mark the dimensions that match what the driver felt."}
                 </p>
+                <p class="longManeuverMuted">Finding decisions save immediately and regenerate the trial profiles below.</p>
               </div>
               <button
                 class="longManeuverButton"
                 disabled="${() => state.runningAction || !state.report}"
                 @click="${saveFeedback}">
-                Save Feedback
+                Save Notes
               </button>
             </div>
 
