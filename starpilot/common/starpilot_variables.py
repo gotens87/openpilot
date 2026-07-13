@@ -234,6 +234,7 @@ EXCLUDED_KEYS = {
   "ExperimentalLongitudinalEnabled",
   "FTMActiveOverrides",
   "FTMActiveProfileId",
+  "FTMTrialBaseline",
   "FTMTrialApplied",
   "InstallDate",
   "StarPilotCarParamsPersistent",

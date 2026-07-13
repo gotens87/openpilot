@@ -191,3 +191,31 @@ def test_rescore_row_preserves_before_values_and_marks_gained_read(tmp_path):
   assert rescored["before_speed_limit_mph"] == ""
   assert rescored["candidate_speed_limit_mph"] == "20"
   assert rescored["comparison_change"] == "gained_read"
+
+
+def test_corrected_bbox_regenerates_classifier_crop(tmp_path):
+  import cv2
+  import numpy as np
+
+  frame_path = tmp_path / "frame.jpg"
+  original_crop_path = tmp_path / "original_crop.jpg"
+  frame = np.zeros((100, 200, 3), dtype=np.uint8)
+  frame[20:80, 60:140] = 255
+  cv2.imwrite(str(frame_path), frame)
+  cv2.imwrite(str(original_crop_path), np.zeros((20, 20, 3), dtype=np.uint8))
+  row = {
+    "record_key": "corrected-box",
+    "frame_path": str(frame_path),
+    "crop_path": str(original_crop_path),
+    "bbox": "0,0,20,20",
+    "crop_bbox": "0,0,24,24",
+    "review_bbox": "60,20,140,80",
+  }
+
+  crop_path, crop_bbox, corrected = import_queue.corrected_classifier_crop(row, tmp_path, overwrite=False)
+  crop = cv2.imread(crop_path)
+
+  assert corrected
+  assert crop is not None and crop.shape[:2] == (72, 96)
+  assert crop.mean() > 150
+  assert crop_bbox == "52,14,148,86"

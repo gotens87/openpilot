@@ -5790,6 +5790,15 @@ def setup(app):
 
     return jsonify(result), 200
 
+  @app.route("/api/ftm/trials/accept", methods=["POST"])
+  def accept_ftm_trial():
+    try:
+      result = ftm_workspace.accept_trial_as_baseline()
+    except FileNotFoundError:
+      return jsonify({"error": "No active FTM trial was found."}), 404
+
+    return jsonify(result), 200
+
   @app.route("/api/ftm/feedback", methods=["POST"])
   def save_ftm_feedback():
     data = request.get_json(silent=True) or {}

@@ -114,8 +114,8 @@ HTML = r"""<!doctype html>
         <button data-status="uncertain">Uncertain (u)</button>
         <button data-status="needs_later">Needs Later</button>
       </div>
-      <label>Box</label>
-      <input id="bboxInput" placeholder="x1,y1,x2,y2 - drag on frame to set">
+      <label>Box (optional - redraw only when the current box is wrong)</label>
+      <input id="bboxInput" placeholder="Drag around the complete sign only when correction is needed">
       <div class="buttons">
         <button id="clearBBoxBtn">Clear Box (b)</button>
       </div>

@@ -305,7 +305,53 @@ def classifier_reject_row(row: dict[str, str], split: str) -> dict[str, object]:
   }
 
 
-def positive_classifier_row(row: dict[str, str], split: str) -> dict[str, object]:
+def corrected_classifier_crop(
+  row: dict[str, str],
+  output_dir: Path,
+  overwrite: bool,
+) -> tuple[str, str, bool]:
+  original_crop = Path(row.get("crop_path", "")).expanduser()
+  original_bbox = parse_bbox(row.get("bbox", ""))
+  review_bbox = parse_bbox(row.get("review_bbox", ""))
+  if review_bbox is None or review_bbox == original_bbox:
+    return str(original_crop), row.get("crop_bbox", ""), False
+
+  frame_path = Path(row.get("frame_path", "")).expanduser()
+  frame = cv2.imread(str(frame_path))
+  if frame is None:
+    raise RuntimeError(f"Cannot regenerate corrected crop for {row['record_key']}: unreadable frame {frame_path}")
+
+  image_h, image_w = frame.shape[:2]
+  x1, y1, x2, y2 = review_bbox
+  pad_x = max(round((x2 - x1) * 0.10), 2)
+  pad_y = max(round((y2 - y1) * 0.10), 2)
+  crop_bbox = (
+    max(x1 - pad_x, 0),
+    max(y1 - pad_y, 0),
+    min(x2 + pad_x, image_w),
+    min(y2 + pad_y, image_h),
+  )
+  crop_x1, crop_y1, crop_x2, crop_y2 = crop_bbox
+  crop = frame[crop_y1:crop_y2, crop_x1:crop_x2]
+  if crop.size == 0:
+    raise RuntimeError(f"Cannot regenerate corrected crop for {row['record_key']}: empty review bbox {review_bbox}")
+
+  corrected_dir = output_dir / "corrected_classifier_crops"
+  corrected_path = corrected_dir / f"{safe_stem(row['record_key'])}_crop.jpg"
+  if overwrite or not corrected_path.is_file():
+    ensure_dir(corrected_dir)
+    if not cv2.imwrite(str(corrected_path), crop, [cv2.IMWRITE_JPEG_QUALITY, 94]):
+      raise RuntimeError(f"Cannot write corrected crop for {row['record_key']}: {corrected_path}")
+  crop_bbox_text = ",".join(str(value) for value in crop_bbox)
+  return str(corrected_path), crop_bbox_text, True
+
+
+def positive_classifier_row(
+  row: dict[str, str],
+  split: str,
+  crop_path: str | None = None,
+  crop_bbox: str | None = None,
+) -> dict[str, object]:
   speed = parse_speed(row.get("review_speed_limit_mph", ""))
   return {
     "record_key": row["record_key"],
@@ -315,10 +361,10 @@ def positive_classifier_row(row: dict[str, str], split: str) -> dict[str, object
     "split": split,
     "speed_limit_mph": speed,
     "review_sign_type": effective_sign_type(row),
-    "crop_path": row.get("crop_path", ""),
+    "crop_path": crop_path if crop_path is not None else row.get("crop_path", ""),
     "frame_path": row.get("frame_path", ""),
-    "bbox": row.get("bbox", ""),
-    "crop_bbox": row.get("crop_bbox", ""),
+    "bbox": row.get("review_bbox") or row.get("bbox", ""),
+    "crop_bbox": crop_bbox if crop_bbox is not None else row.get("crop_bbox", ""),
     "review_status": row.get("review_status", ""),
     "candidate_speed_limit_mph": row.get("candidate_speed_limit_mph", ""),
     "candidate_confidence": row.get("candidate_confidence", ""),
@@ -436,10 +482,13 @@ def main() -> int:
   runtime_rows: list[dict[str, object]] = []
   detector_rows: list[dict[str, object]] = []
   reject_rows: list[dict[str, object]] = []
+  corrected_classifier_crops = 0
 
   for row in positive_rows:
     split = split_for_key(split_group_key(row), args.val_modulo, args.val_remainder)
-    classifier_rows.append(positive_classifier_row(row, split))
+    classifier_crop_path, classifier_crop_bbox, corrected = corrected_classifier_crop(row, output_dir, args.overwrite)
+    classifier_rows.append(positive_classifier_row(row, split, classifier_crop_path, classifier_crop_bbox))
+    corrected_classifier_crops += int(corrected)
     sample_type = "advisory_negative" if is_advisory_positive(row) else "positive"
     runtime_rows.append(runtime_row(row, split, sample_type))
     detector_row = import_detector_example(workspace, row, split, args.source_name, "positive", args.mode, args.overwrite)
@@ -475,6 +524,7 @@ def main() -> int:
     "uncertain_positive_rows": len(uncertain_positive_rows),
     "true_negative_rows": len(true_negative_rows),
     "classifier_reject_rows": len(reject_rows),
+    "corrected_classifier_crops": corrected_classifier_crops,
     "classifier_manifest": str(classifier_manifest),
     "runtime_manifest": str(runtime_manifest),
     "detector_manifest": str(detector_manifest),

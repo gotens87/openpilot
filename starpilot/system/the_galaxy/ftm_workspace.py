@@ -70,6 +70,7 @@ FTM_ADVANCED_LATERAL_PARAM_KEYS = {
   "SteerLatAccel",
   "SteerRatio",
 }
+FTM_TRIAL_BASELINE_PARAM = "FTMTrialBaseline"
 
 GENERIC_PARAM_METADATA = {
   "SteerDelay": {"min": 0.01, "max": 1.0, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
@@ -2052,13 +2053,23 @@ def list_workspace() -> dict[str, Any]:
   params = Params(return_defaults=True)
   current_profile_id = params.get("FTMActiveProfileId", encoding="utf-8") or ""
   raw_active_snapshot = _read_json(paths["snapshots"] / "active.json", {})
-  if not raw_active_snapshot and params.get_bool("FTMTrialApplied"):
-    raw_active_snapshot = _find_revert_snapshot(paths, {}, current_profile_id) or {}
-    if raw_active_snapshot:
+  if params.get_bool("FTMTrialApplied"):
+    active_payload = raw_active_snapshot if isinstance(raw_active_snapshot, dict) else {}
+    baseline_snapshot = _find_revert_snapshot(paths, raw_active_snapshot, current_profile_id, params)
+    if baseline_snapshot is not None:
       raw_active_snapshot = {
-        **raw_active_snapshot,
-        "profileId": current_profile_id or raw_active_snapshot.get("profileId", ""),
+        **active_payload,
+        "params": baseline_snapshot["params"],
+        "profileId": current_profile_id or active_payload.get("profileId", ""),
+        "recoveryNeeded": baseline_snapshot is not raw_active_snapshot,
+        "rollbackAvailable": True,
+      }
+    else:
+      raw_active_snapshot = {
+        **active_payload,
+        "profileId": current_profile_id or active_payload.get("profileId", ""),
         "recoveryNeeded": True,
+        "rollbackAvailable": False,
       }
   active_snapshot = _active_trial_display_state(paths, raw_active_snapshot)
   return {
@@ -2071,6 +2082,9 @@ def list_workspace() -> dict[str, Any]:
 
 def delete_report(report_id: str) -> dict[str, Any]:
   paths = ensure_ftm_workspace()
+  params = Params(return_defaults=True)
+  if params.get_bool("FTMTrialApplied"):
+    raise RuntimeError("Revert or keep the active FTM trial before deleting tuning reports.")
   active_snapshot = _read_json(paths["snapshots"] / "active.json", {})
   if isinstance(active_snapshot, dict) and active_snapshot.get("reportId") == report_id:
     raise RuntimeError("Revert the active FTM trial before deleting its source report.")
@@ -2114,7 +2128,7 @@ def clear_workspace() -> dict[str, Any]:
   params = Params(return_defaults=True)
   active_snapshot = _read_json(paths["snapshots"] / "active.json", {})
   if params.get_bool("FTMTrialApplied") or (isinstance(active_snapshot, dict) and active_snapshot.get("params")):
-    raise RuntimeError("Revert the active FTM trial before clearing the workspace.")
+    raise RuntimeError("Revert or keep the active FTM trial before clearing the workspace.")
 
   removed = []
   for key in ("reports", "profiles", "feedback", "snapshots"):
@@ -2123,6 +2137,7 @@ def clear_workspace() -> dict[str, Any]:
         path.unlink()
         removed.append(str(path))
 
+  _clear_persistent_trial_baseline(params)
   _clear_ftm_status()
 
   return {
@@ -2144,6 +2159,73 @@ def _snapshot_current_trial_state(params: Params) -> dict[str, Any]:
     else:
       snapshot[key] = params.get(key, encoding="utf-8") or ""
   return snapshot
+
+
+def _read_persistent_trial_baseline(params: Params) -> dict[str, Any] | None:
+  raw = params.get(FTM_TRIAL_BASELINE_PARAM, encoding="utf-8") or {}
+  if isinstance(raw, str):
+    try:
+      raw = json.loads(raw)
+    except (TypeError, ValueError):
+      return None
+  if not isinstance(raw, dict) or not isinstance(raw.get("params"), dict):
+    return None
+  if raw["params"].get("FTMTrialApplied", False):
+    return None
+  return raw
+
+
+def _persist_trial_baseline(params: Params, snapshot: dict[str, Any]) -> None:
+  if isinstance(snapshot.get("params"), dict) and not snapshot["params"].get("FTMTrialApplied", False):
+    params.put(FTM_TRIAL_BASELINE_PARAM, snapshot)
+
+
+def _clear_persistent_trial_baseline(params: Params) -> None:
+  params.remove(FTM_TRIAL_BASELINE_PARAM)
+
+
+def _profile_report_id(profile_id: str) -> str:
+  return str(profile_id or "").split(":", 1)[0]
+
+
+def _recover_report_baseline(paths: dict[str, Path], profile_id: str,
+                             visited_profiles: set[str] | None = None) -> dict[str, Any] | None:
+  profile_id = str(profile_id or "")
+  if not profile_id:
+    return None
+
+  visited_profiles = set(visited_profiles or set())
+  if profile_id in visited_profiles:
+    return None
+  visited_profiles.add(profile_id)
+
+  report_id = _profile_report_id(profile_id)
+  report = _read_json(paths["reports"] / f"{report_id}.json", {})
+  report_params = report.get("currentParams") if isinstance(report, dict) else None
+  if not isinstance(report_params, dict) or not report_params:
+    return None
+
+  baseline_params = {
+    key: value for key, value in report_params.items()
+    if key in TRIAL_PARAM_SPECS
+  }
+  if not baseline_params:
+    return None
+  if not baseline_params.get("FTMTrialApplied", False):
+    baseline_params["FTMTrialApplied"] = False
+    baseline_params.setdefault("FTMActiveProfileId", "")
+    return {
+      "reportId": report_id,
+      "profileId": profile_id,
+      "capturedAt": float(report.get("createdAt", 0.0) or 0.0),
+      "params": baseline_params,
+      "recoverySource": "report",
+    }
+
+  previous_profile_id = str(baseline_params.get("FTMActiveProfileId", "") or "")
+  if previous_profile_id and previous_profile_id != profile_id:
+    return _recover_report_baseline(paths, previous_profile_id, visited_profiles)
+  return None
 
 
 def _apply_param_bundle(params: Params, bundle: dict[str, Any]) -> None:
@@ -2177,10 +2259,15 @@ def _merge_ftm_override_state(base: dict[str, Any], delta: dict[str, Any]) -> di
 
 
 def _find_revert_snapshot(paths: dict[str, Path], active_snapshot: dict[str, Any],
-                          current_profile_id: str = "") -> dict[str, Any] | None:
+                          current_profile_id: str = "", params: Params | None = None) -> dict[str, Any] | None:
   if isinstance(active_snapshot, dict) and isinstance(active_snapshot.get("params"), dict):
     if not active_snapshot["params"].get("FTMTrialApplied", False):
       return active_snapshot
+
+  if params is not None:
+    persistent_baseline = _read_persistent_trial_baseline(params)
+    if persistent_baseline is not None:
+      return persistent_baseline
 
   cutoff = float(active_snapshot.get("capturedAt", math.inf) or math.inf) if isinstance(active_snapshot, dict) else math.inf
   candidates = []
@@ -2196,11 +2283,12 @@ def _find_revert_snapshot(paths: dict[str, Path], active_snapshot: dict[str, Any
       continue
     candidates.append(candidate)
 
-  if not candidates:
-    return None
-  matching = [candidate for candidate in candidates if current_profile_id and candidate.get("profileId") == current_profile_id]
-  pool = matching or candidates
-  return max(pool, key=lambda candidate: float(candidate.get("capturedAt", 0.0) or 0.0))
+  if candidates:
+    matching = [candidate for candidate in candidates if current_profile_id and candidate.get("profileId") == current_profile_id]
+    pool = matching or candidates
+    return max(pool, key=lambda candidate: float(candidate.get("capturedAt", 0.0) or 0.0))
+
+  return _recover_report_baseline(paths, current_profile_id)
 
 
 def apply_trial_profile(report_id: str, profile_id: str) -> dict[str, Any]:
@@ -2225,9 +2313,10 @@ def apply_trial_profile(report_id: str, profile_id: str) -> dict[str, Any]:
       paths,
       raw_active_snapshot,
       str(current_state.get("FTMActiveProfileId", "") or ""),
+      params,
     )
     if baseline_snapshot is None:
-      raise RuntimeError("The active FTM trial is missing its original rollback snapshot. Revert or reset the existing trial before applying another profile.")
+      raise RuntimeError("The active FTM trial has no recoverable rollback baseline. Keep the current tune as the new baseline before applying another profile.")
     baseline_params = baseline_snapshot["params"]
     session_started_at = float(baseline_snapshot.get("sessionStartedAt", baseline_snapshot.get("capturedAt", time.time())) or time.time())
   else:
@@ -2283,6 +2372,7 @@ def apply_trial_profile(report_id: str, profile_id: str) -> dict[str, Any]:
   }
   _write_json(paths["snapshots"] / "active.json", snapshot)
   _write_json(paths["snapshots"] / f"{report_id}-{profile_id.replace(':', '_')}.json", snapshot)
+  _persist_trial_baseline(params, snapshot)
 
   bundle = generic_params
   bundle["FTMActiveProfileId"] = profile_id
@@ -2304,10 +2394,11 @@ def revert_trial_profile() -> dict[str, Any]:
   snapshot = _read_json(snapshot_path, {})
   params = Params(return_defaults=True)
   current_profile_id = params.get("FTMActiveProfileId", encoding="utf-8") or ""
-  revert_snapshot = _find_revert_snapshot(paths, snapshot if isinstance(snapshot, dict) else {}, current_profile_id)
+  revert_snapshot = _find_revert_snapshot(paths, snapshot if isinstance(snapshot, dict) else {}, current_profile_id, params)
   if revert_snapshot is None:
     raise FileNotFoundError("active trial snapshot")
   _apply_param_bundle(params, revert_snapshot["params"])
+  _clear_persistent_trial_baseline(params)
   try:
     snapshot_path.unlink()
   except FileNotFoundError:
@@ -2319,6 +2410,25 @@ def revert_trial_profile() -> dict[str, Any]:
       "params": revert_snapshot["params"],
       "recoveredBaseline": revert_snapshot is not snapshot,
     },
+  }
+
+
+def accept_trial_as_baseline() -> dict[str, Any]:
+  paths = ensure_ftm_workspace()
+  params = Params(return_defaults=True)
+  active_snapshot = _read_json(paths["snapshots"] / "active.json", {})
+  if not params.get_bool("FTMTrialApplied") and not (isinstance(active_snapshot, dict) and active_snapshot):
+    raise FileNotFoundError("active trial")
+
+  params.put_bool("FTMTrialApplied", False)
+  params.put("FTMActiveProfileId", "")
+  _clear_persistent_trial_baseline(params)
+  for path in paths["snapshots"].glob("*.json"):
+    path.unlink()
+
+  return {
+    "message": "Kept the current tuning values and made them the new FTM baseline.",
+    "workspace": list_workspace(),
   }
 
 

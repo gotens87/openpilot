@@ -321,6 +321,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"ForceTorqueController", {PERSISTENT, BOOL, "0", "0", 3}},
     {"FTMActiveOverrides", {PERSISTENT, JSON, "{}", "{}", 2}},
     {"FTMActiveProfileId", {PERSISTENT, STRING, "", "", 2}},
+    {"FTMTrialBaseline", {PERSISTENT | DONT_LOG, JSON, "{}", "{}"}},
     {"FTMTrialApplied", {PERSISTENT, BOOL, "0", "0", 2}},
     {"FPSCounter", {PERSISTENT, BOOL, "1", "0", 3}},
     {"GalaxyDashboardStats", {PERSISTENT | DONT_LOG, JSON, "{}", "{}"}},

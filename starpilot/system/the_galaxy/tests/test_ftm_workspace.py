@@ -56,6 +56,9 @@ def _install_ftm_import_stubs(tmp_path):
     def put_float(self, key, value):
       self._store[key] = float(value)
 
+    def remove(self, key):
+      self._store.pop(key, None)
+
   FakeParams._store = {}
 
   class FakeHyundaiFlags:
@@ -642,6 +645,7 @@ def test_apply_and_revert_trial_profile_round_trip(tmp_path):
   assert fake_params_cls._store["SteerLatAccel"] == pytest.approx(1.9)
   assert fake_params_cls._store["FTMActiveProfileId"] == profile_id
   assert fake_params_cls._store["FTMTrialApplied"] is True
+  assert fake_params_cls._store["FTMTrialBaseline"]["params"]["SteerLatAccel"] == pytest.approx(1.5)
   assert fake_params_cls._store["FTMActiveOverrides"]["vehicleKnobs"]["hyundai_ioniq_6.turn_in_boost_left"] == pytest.approx(0.08)
   assert fake_params_cls._store["FTMActiveOverrides"]["vehicleKnobs"]["hyundai_ioniq_6.unwind_taper_left"] == pytest.approx(0.55)
 
@@ -650,6 +654,7 @@ def test_apply_and_revert_trial_profile_round_trip(tmp_path):
   assert fake_params_cls._store["AdvancedLateralTune"] is False
   assert fake_params_cls._store["SteerLatAccel"] == pytest.approx(1.5)
   assert fake_params_cls._store["FTMTrialApplied"] is False
+  assert "FTMTrialBaseline" not in fake_params_cls._store
   assert fake_params_cls._store["FTMActiveOverrides"]["vehicleKnobs"]["hyundai_ioniq_6.unwind_taper_left"] == pytest.approx(0.55)
 
 
@@ -747,6 +752,94 @@ def test_orphaned_previous_revision_can_recover_its_baseline(tmp_path):
   assert fake_params_cls._store["FTMTrialApplied"] is False
 
 
+def test_persistent_baseline_recovers_when_snapshot_files_are_missing(tmp_path):
+  module, fake_params_cls = _load_ftm_workspace_module(tmp_path)
+  workspace = module.ensure_ftm_workspace()
+  report_id = "report-persistent-recovery"
+  profile_id = f"{report_id}:cleanup_pass:recommended"
+  profile = {
+    "id": profile_id,
+    "label": "Recommended",
+    "genericParams": {"AdvancedLateralTune": True, "SteerLatAccel": 1.8},
+    "ftmOverrides": {},
+  }
+  (workspace["profiles"] / f"{report_id}.json").write_text(json.dumps([profile]), encoding="utf-8")
+  fake_params_cls._store = {
+    "AdvancedLateralTune": False,
+    "SteerLatAccel": 1.5,
+    "FTMActiveProfileId": "",
+    "FTMActiveOverrides": {},
+    "FTMTrialApplied": False,
+  }
+
+  module.apply_trial_profile(report_id, profile_id)
+  for path in workspace["snapshots"].glob("*.json"):
+    path.unlink()
+
+  active_trial = module.list_workspace()["activeTrial"]
+  assert active_trial["rollbackAvailable"] is True
+  assert active_trial["recoveryNeeded"] is True
+
+  module.revert_trial_profile()
+  assert fake_params_cls._store["SteerLatAccel"] == pytest.approx(1.5)
+  assert fake_params_cls._store["FTMTrialApplied"] is False
+
+
+def test_legacy_orphan_recovers_baseline_from_source_report(tmp_path):
+  module, fake_params_cls = _load_ftm_workspace_module(tmp_path)
+  workspace = module.ensure_ftm_workspace()
+  report_id = "report-source-recovery"
+  profile_id = f"{report_id}:baseline_fix:assertive"
+  (workspace["reports"] / f"{report_id}.json").write_text(json.dumps({
+    "reportId": report_id,
+    "createdAt": 123.0,
+    "currentParams": {
+      "AdvancedLateralTune": False,
+      "SteerLatAccel": 1.5,
+      "FTMActiveProfileId": "",
+      "FTMActiveOverrides": {},
+      "FTMTrialApplied": False,
+    },
+  }), encoding="utf-8")
+  fake_params_cls._store = {
+    "AdvancedLateralTune": True,
+    "SteerLatAccel": 1.9,
+    "FTMActiveProfileId": profile_id,
+    "FTMActiveOverrides": {},
+    "FTMTrialApplied": True,
+  }
+
+  active_trial = module.list_workspace()["activeTrial"]
+  assert active_trial["rollbackAvailable"] is True
+  assert active_trial["recoveryNeeded"] is True
+
+  module.revert_trial_profile()
+  assert fake_params_cls._store["AdvancedLateralTune"] is False
+  assert fake_params_cls._store["SteerLatAccel"] == pytest.approx(1.5)
+  assert fake_params_cls._store["FTMTrialApplied"] is False
+
+
+def test_irrecoverable_trial_can_keep_current_values_as_new_baseline(tmp_path):
+  module, fake_params_cls = _load_ftm_workspace_module(tmp_path)
+  module.ensure_ftm_workspace()
+  fake_params_cls._store = {
+    "AdvancedLateralTune": True,
+    "SteerLatAccel": 1.9,
+    "FTMActiveProfileId": "missing-report:baseline_fix:assertive",
+    "FTMActiveOverrides": {"vehicleKnobs": {"generic.turn_in_boost_left": 0.1}},
+    "FTMTrialApplied": True,
+  }
+
+  active_trial = module.list_workspace()["activeTrial"]
+  assert active_trial["rollbackAvailable"] is False
+
+  module.accept_trial_as_baseline()
+  assert fake_params_cls._store["SteerLatAccel"] == pytest.approx(1.9)
+  assert fake_params_cls._store["FTMActiveOverrides"]["vehicleKnobs"]["generic.turn_in_boost_left"] == pytest.approx(0.1)
+  assert fake_params_cls._store["FTMActiveProfileId"] == ""
+  assert fake_params_cls._store["FTMTrialApplied"] is False
+
+
 def test_workspace_hydrates_display_metadata_for_existing_active_trial(tmp_path):
   module, _ = _load_ftm_workspace_module(tmp_path)
   workspace = module.ensure_ftm_workspace()
@@ -798,6 +891,19 @@ def test_delete_report_removes_saved_artifacts(tmp_path):
   assert not (workspace["profiles"] / f"{report_id}.json").exists()
   assert not (workspace["feedback"] / f"{report_id}.json").exists()
   assert not (workspace["snapshots"] / f"{report_id}-recommended.json").exists()
+
+
+def test_delete_report_is_blocked_while_trial_is_active(tmp_path):
+  module, fake_params_cls = _load_ftm_workspace_module(tmp_path)
+  workspace = module.ensure_ftm_workspace()
+  report_id = "report-active-delete"
+  report_path = workspace["reports"] / f"{report_id}.json"
+  report_path.write_text("{}", encoding="utf-8")
+  fake_params_cls._store = {"FTMTrialApplied": True}
+
+  with pytest.raises(RuntimeError, match="Revert or keep"):
+    module.delete_report(report_id)
+  assert report_path.exists()
 
 
 def test_select_report_path_persists_manual_override(tmp_path):

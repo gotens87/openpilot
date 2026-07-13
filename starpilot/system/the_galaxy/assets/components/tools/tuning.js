@@ -368,6 +368,7 @@ async function applyProfile(profileId) {
     })
     const payload = await response.json()
     if (!response.ok) throw new Error(payload.error || "Failed to apply trial profile.")
+    state.error = ""
     await fetchWorkspace()
     showSnackbar(payload.message || "Trial profile applied.")
   } catch (error) {
@@ -409,10 +410,31 @@ async function revertProfile() {
     const response = await fetch("/api/ftm/trials/revert", { method: "POST" })
     const payload = await response.json()
     if (!response.ok) throw new Error(payload.error || "Failed to revert trial profile.")
+    state.error = ""
     await fetchWorkspace()
     showSnackbar(payload.message || "Trial profile reverted.")
   } catch (error) {
     state.error = error?.message || "Failed to revert trial profile."
+    showSnackbar(state.error, "error")
+  } finally {
+    state.runningAction = false
+  }
+}
+
+async function acceptCurrentAsBaseline() {
+  if (state.runningAction || !state.workspace?.activeTrial) return
+  if (!window.confirm("Keep the currently applied tuning values and end this trial? This does not restore the previous tune.")) return
+
+  state.runningAction = true
+  try {
+    const response = await fetch("/api/ftm/trials/accept", { method: "POST" })
+    const payload = await response.json()
+    if (!response.ok) throw new Error(payload.error || "Failed to keep the current tune.")
+    state.error = ""
+    state.workspace = payload.workspace || state.workspace
+    showSnackbar(payload.message || "Current tune kept as the new baseline.")
+  } catch (error) {
+    state.error = error?.message || "Failed to keep the current tune."
     showSnackbar(state.error, "error")
   } finally {
     state.runningAction = false
@@ -785,7 +807,7 @@ function renderProfile(profile) {
         </div>
         <button
           class="longManeuverButton"
-          disabled="${() => state.runningAction || false}"
+          disabled="${() => state.runningAction || state.workspace?.activeTrial?.rollbackAvailable === false}"
           @click="${() => applyProfile(profile.id)}">
           Apply Trial
         </button>
@@ -926,10 +948,18 @@ export function Tuning() {
           </button>
           <button
             class="longManeuverButton"
-            disabled="${() => state.runningAction || !state.workspace?.activeTrial}"
+            disabled="${() => state.runningAction || !state.workspace?.activeTrial || state.workspace.activeTrial.rollbackAvailable === false}"
             @click="${revertProfile}">
             Revert Trial
           </button>
+          ${() => state.workspace?.activeTrial?.rollbackAvailable === false ? html`
+            <button
+              class="longManeuverButton"
+              disabled="${() => state.runningAction}"
+              @click="${acceptCurrentAsBaseline}">
+              Keep Current as Baseline
+            </button>
+          ` : ""}
           <button
             class="longManeuverButton"
             disabled="${() => state.runningAction}"
@@ -961,6 +991,12 @@ export function Tuning() {
 
         ${() => state.status?.isOnroad ? html`
           <p class="longManeuverError">FTM analysis is offroad-only. Stop the car and go offroad before starting a run.</p>
+        ` : ""}
+
+        ${() => state.workspace?.activeTrial?.rollbackAvailable === false ? html`
+          <p class="longManeuverError">
+            The original rollback data is unavailable. Keep the current tune as the new baseline before applying another trial.
+          </p>
         ` : ""}
 
         ${() => state.status?.currentSegment ? html`
