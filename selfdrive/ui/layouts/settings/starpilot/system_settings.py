@@ -107,8 +107,8 @@ class SystemSettingsManagerView(PanelManagerView):
   TAB_BOTTOM_GAP = 26
   ACTION_PILL_WIDTH = 132
   DANGER_PILL_WIDTH = 112
-  _TOPBAR_HEIGHT = 76.0
-  _TOPBAR_GAP = 16.0
+  _TOPBAR_HEIGHT = 120.0
+  _TOPBAR_GAP = 0.0
   METRICS = SYSTEM_PANEL_METRICS
 
   @property
