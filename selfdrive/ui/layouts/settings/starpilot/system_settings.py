@@ -33,7 +33,6 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   DEFAULT_PANEL_STYLE,
   PanelManagerView,
   TileGrid,
-  ToggleTile,
   draw_list_group_shell,
   draw_selection_list_row,
   draw_settings_panel_header,
@@ -53,6 +52,9 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   wrap_text,
   SECTION_GAP,
   ROW_HEIGHT,
+  SPACING,
+  TOGGLE_MIN_HEIGHT,
+  TOGGLE_ROW_HEIGHT,
 )
 from openpilot.starpilot.common.connect_server import prepare_konik_server_switch
 
@@ -293,12 +295,16 @@ class SystemSettingsManagerView(PanelManagerView):
 
     self._basics_tile_grid_h = 0.0
 
-    self._connectivity_tile_grid = TileGrid(columns=2, padding=12, min_tile_height=130.0)
+    if self.PANEL_STYLE.toggle_row_mode:
+      self._connectivity_tile_grid = TileGrid(columns=1, padding=SPACING.md, min_tile_height=TOGGLE_MIN_HEIGHT)
+    else:
+      self._connectivity_tile_grid = TileGrid(columns=2, padding=12, min_tile_height=130.0)
     for toggle_def in self._toggle_defs:
       tile = self._make_toggle_tile(toggle_def)
       self._connectivity_tile_grid.add_tile(tile)
     self.register_page_grid(self._connectivity_tile_grid)
-    self._set_toggle_pages([self._toggle_defs[i:i+4] for i in range(0, len(self._toggle_defs), 4)])
+    page_size = self._compute_page_size(TOGGLE_ROW_HEIGHT)
+    self._set_toggle_pages([self._toggle_defs[i:i+page_size] for i in range(0, len(self._toggle_defs), page_size)])
 
     self._drive_mode_control = self._child(
       AetherSegmentedControl(
@@ -487,7 +493,6 @@ class SystemSettingsManagerView(PanelManagerView):
       # Reset custom heights to calculate natural measurements first
       for key in self._display_slider_keys + self._power_slider_keys:
         self._adjustor_rows[key].custom_row_height = None
-      self._connectivity_tile_grid._tile_height = None
 
       display_container_h = self._slider_section_height(self._display_slider_keys, column_w)
       power_container_h = self._slider_section_height(self._power_slider_keys, column_w)
@@ -522,7 +527,6 @@ class SystemSettingsManagerView(PanelManagerView):
       # Ensure defaults are restored in single column mode
       for key in self._display_slider_keys + self._power_slider_keys:
         self._adjustor_rows[key].custom_row_height = None
-      self._connectivity_tile_grid._tile_height = None
       tiles_content_h = self.measure_page_grid_height(self._connectivity_tile_grid, width - 24)
       return self._stacked_section_height([display_h, power_h, tiles_content_h + 24])
 
@@ -555,7 +559,10 @@ class SystemSettingsManagerView(PanelManagerView):
       for index, key in enumerate(self._power_slider_keys):
         current_y = self._draw_slider_row(rl.Rectangle(x, current_y, column_w, 0), key, is_last=index == len(self._power_slider_keys) - 1)
 
-      self._draw_two_column_tile_grid(self._connectivity_tile_grid, x + column_w + self.COLUMN_GAP, y, column_w, self._system_max_container_h)
+      tg_cols = 1 if self.PANEL_STYLE.toggle_row_mode else 2
+      self._draw_two_column_tile_grid(
+        self._connectivity_tile_grid, x + column_w + self.COLUMN_GAP, y, column_w,
+        self._system_max_container_h, columns=tg_cols)
       return
 
     y = self._draw_slider_section(y, x, width, tr("Display"), self._display_slider_keys)

@@ -18,8 +18,11 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   COMPACT_PANEL_METRICS,
   DEFAULT_PANEL_STYLE,
   PanelManagerView,
+  SPACING,
   SettingRow,
   TileGrid,
+  TOGGLE_MIN_HEIGHT,
+  TOGGLE_ROW_HEIGHT,
   GROUP_HEADER_GAP,
   GROUP_HEADER_HEIGHT,
   GROUP_HEADER_LINE_GAP,
@@ -77,7 +80,10 @@ class VehicleSettingsManagerView(PanelManagerView):
     super().__init__()
     self._controller = controller
     self._shell_rect = rl.Rectangle(0, 0, 0, 0)
-    self._toggle_grid = TileGrid(columns=2, padding=12, min_tile_height=130.0)
+    if PANEL_STYLE.toggle_row_mode:
+      self._toggle_grid = TileGrid(columns=1, padding=SPACING.md, min_tile_height=TOGGLE_MIN_HEIGHT)
+    else:
+      self._toggle_grid = TileGrid(columns=2, padding=12, min_tile_height=130.0)
     self.register_page_grid(self._toggle_grid)
     self._last_make = ""
     self._last_model = ""
@@ -218,7 +224,8 @@ class VehicleSettingsManagerView(PanelManagerView):
       y += SECTION_GAP
 
       if self._toggle_grid.tiles:
-        self._toggle_grid._columns = 3
+        if not PANEL_STYLE.toggle_row_mode:
+          self._toggle_grid._columns = 3
         avail = width - 24
         th = self.measure_page_grid_height(self._toggle_grid, avail)
         hdr_oh = GROUP_HEADER_HEIGHT + GROUP_HEADER_LINE_GAP + GROUP_HEADER_GAP
@@ -237,11 +244,13 @@ class VehicleSettingsManagerView(PanelManagerView):
     tiles_h = 0.0
     if self._toggle_grid.tiles:
       if self._uses_two_columns(width):
-        self._toggle_grid._columns = 2
+        if not PANEL_STYLE.toggle_row_mode:
+          self._toggle_grid._columns = 2
         col_w = self._column_width(width)
         tiles_h = self.measure_page_grid_height(self._toggle_grid, col_w - 24)
       else:
-        self._toggle_grid._columns = 3
+        if not PANEL_STYLE.toggle_row_mode:
+          self._toggle_grid._columns = 3
         tiles_h = self.measure_page_grid_height(self._toggle_grid, width - 24)
 
     if self._uses_two_columns(width):
@@ -384,7 +393,8 @@ class VehicleSettingsManagerView(PanelManagerView):
 
   def _rebuild_toggle_grid(self):
     defs = self._build_driving_toggles()
-    self._set_toggle_pages([defs[i:i+4] for i in range(0, len(defs), 4)])
+    page_size = self._compute_page_size(TOGGLE_ROW_HEIGHT)
+    self._set_toggle_pages([defs[i:i+page_size] for i in range(0, len(defs), page_size)])
 
   def _check_rebuild_grid(self):
     current_make = self._controller._get_display_make()

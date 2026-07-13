@@ -24,6 +24,8 @@ TILE_INSET = 1.0
 TILE_RADIUS_PX = 18.0
 TILE_SIGNAL_WIDTH = 1
 MIN_TILE_WIDTH = 300
+TOGGLE_ROW_HEIGHT = 128
+TOGGLE_MIN_HEIGHT = 80
 
 _HUD_BG_ON = rl.Color(12, 10, 18, 230)
 _HUD_BG_DISABLED = rl.Color(6, 5, 10, 235)
@@ -359,6 +361,7 @@ class PanelStyle:
   danger_fill: rl.Color
   danger_border: rl.Color
   danger_text: rl.Color
+  toggle_row_mode: bool = False
 
 
 DEFAULT_PANEL_STYLE = PanelStyle(
@@ -378,6 +381,7 @@ DEFAULT_PANEL_STYLE = PanelStyle(
   danger_fill=AetherListColors.DANGER_SOFT,
   danger_border=rl.Color(173, 78, 90, 50),
   danger_text=AetherListColors.DANGER,
+  toggle_row_mode=True,
 )
 
 
@@ -719,10 +723,10 @@ class PanelManagerView(AetherInteractiveMixin, Widget):
   def _compute_two_column_height(self, left_height: float) -> float:
     return max(self._scroll_rect.height if self._scroll_rect else 0.0, left_height)
 
-  def _draw_two_column_tile_grid(self, grid: TileGrid, x: float, y: float, column_width: float, matching_height: float, title: str | None = None, style: PanelStyle | None = None):
+  def _draw_two_column_tile_grid(self, grid: TileGrid, x: float, y: float, column_width: float, matching_height: float, title: str | None = None, style: PanelStyle | None = None, columns: int = 2):
     if style is None:
       style = self.PANEL_STYLE
-    grid._columns = 2
+    grid._columns = columns
     if title:
       draw_section_header(rl.Rectangle(x, y, column_width, self.METRICS.section_header_height), title, style=style)
       draw_y = y + self.METRICS.section_header_height + self.METRICS.section_header_gap
@@ -737,7 +741,8 @@ class PanelManagerView(AetherInteractiveMixin, Widget):
   # ── convenience builders ──────────────────────────────────
 
   def _make_toggle_tile(self, d: dict) -> ToggleTile:
-    return ToggleTile(
+    cls = RowToggleTile if self.PANEL_STYLE.toggle_row_mode else ToggleTile
+    return cls(
       title=d["title"],
       get_state=d["get_state"],
       set_state=d["set_state"],
@@ -757,6 +762,12 @@ class PanelManagerView(AetherInteractiveMixin, Widget):
       desc=d.get("subtitle", ""),
       is_enabled=d.get("is_enabled"),
     )
+
+  def _compute_page_size(self, tile_height: float, default: int = 4) -> int:
+    if not self._scroll_rect or self._scroll_rect.height <= 0.0:
+      return default
+    available = self._scroll_rect.height - GROUP_OVERHEAD - 24
+    return max(2, int((available + SPACING.tile_gap) / (tile_height + SPACING.tile_gap)))
 
   # ── pagination ─────────────────────────────────────────────
 

@@ -20,8 +20,10 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AetherAdjustorRow,
   AetherListColors,
   PanelManagerView,
+  SPACING,
   TileGrid,
-  ToggleTile,
+  TOGGLE_MIN_HEIGHT,
+  TOGGLE_ROW_HEIGHT,
   DEFAULT_PANEL_STYLE,
   point_hits,
   draw_list_group_shell,
@@ -69,7 +71,10 @@ class SoundsManagerView(PanelManagerView):
     )
 
   def _init_toggles(self):
-    self._toggle_grid = TileGrid(columns=2, padding=12, min_tile_height=130.0)
+    if self.PANEL_STYLE.toggle_row_mode:
+      self._toggle_grid = TileGrid(columns=1, padding=SPACING.md, min_tile_height=TOGGLE_MIN_HEIGHT)
+    else:
+      self._toggle_grid = TileGrid(columns=2, padding=12, min_tile_height=130.0)
     self._child(self._toggle_grid)
     self._page_grid = self._toggle_grid
 
@@ -85,7 +90,8 @@ class SoundsManagerView(PanelManagerView):
         "disabled_label": tr(info.get("disabled_label", "")) if info.get("disabled_label") else "",
       })
 
-    self._set_toggle_pages([toggle_defs[i:i+4] for i in range(0, len(toggle_defs), 4)])
+    page_size = self._compute_page_size(TOGGLE_ROW_HEIGHT)
+    self._set_toggle_pages([toggle_defs[i:i+page_size] for i in range(0, len(toggle_defs), page_size)])
 
   def _set_active_adjustor(self, key: str, active: bool):
     if active:
@@ -233,7 +239,6 @@ class SoundsManagerView(PanelManagerView):
   def _measure_content_height(self, content_width: float) -> float:
     col_width = (content_width - SECTION_GAP) / 2
 
-    self._toggle_grid._tile_height = None
     for key in self._controller.VOLUME_KEYS:
       self._adjustor_rows[key].custom_row_height = None
     self._adjustor_rows[self._controller.COOLDOWN_KEY].custom_row_height = None

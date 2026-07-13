@@ -29,6 +29,9 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AetherSettingsView,
   TileGrid,
   HubTile,
+  TOGGLE_MIN_HEIGHT,
+  TOGGLE_ROW_HEIGHT,
+  RowToggleTile,
   ToggleTile,
   draw_section_header,
   draw_list_group_shell,
@@ -269,7 +272,10 @@ class ConditionalDriveModeView(PanelManagerView):
     self._update_pagination()
 
   def _init_toggles(self):
-    self._toggle_grid = TileGrid(columns=2, padding=12, min_tile_height=130.0)
+    if PANEL_STYLE.toggle_row_mode:
+      self._toggle_grid = TileGrid(columns=1, padding=12, min_tile_height=TOGGLE_MIN_HEIGHT)
+    else:
+      self._toggle_grid = TileGrid(columns=2, padding=12, min_tile_height=130.0)
     self._child(self._toggle_grid)
     self.register_page_grid(self._toggle_grid)
 
@@ -299,16 +305,18 @@ class ConditionalDriveModeView(PanelManagerView):
 
   def _update_pagination(self):
     mode = self._get_drive_mode_index()
+    page_size = self._compute_page_size(TOGGLE_ROW_HEIGHT)
     if mode == 1:
-      pages = [self._cem_toggle_defs[i:i+4] for i in range(0, len(self._cem_toggle_defs), 4)]
+      pages = [self._cem_toggle_defs[i:i+page_size] for i in range(0, len(self._cem_toggle_defs), page_size)]
       self._set_toggle_pages(pages)
     elif mode == 2:
-      pages = [self._ccm_toggle_defs[i:i+4] for i in range(0, len(self._ccm_toggle_defs), 4)]
+      pages = [self._ccm_toggle_defs[i:i+page_size] for i in range(0, len(self._ccm_toggle_defs), page_size)]
       self._set_toggle_pages(pages)
     else:
       self._set_toggle_pages([])
 
   def _make_toggle_tile(self, info: dict) -> ToggleTile:
+    cls = RowToggleTile if PANEL_STYLE.toggle_row_mode else ToggleTile
     kwargs = {
       "title": info["title"],
       "desc": info.get("subtitle", ""),
@@ -321,7 +329,7 @@ class ConditionalDriveModeView(PanelManagerView):
     if "disabled_label" in info:
       kwargs["disabled_label"] = info["disabled_label"]
       
-    return ToggleTile(**kwargs)
+    return cls(**kwargs)
 
   def _set_active_adjustor(self, key: str, active: bool):
     if active:
@@ -422,16 +430,20 @@ class ConditionalDriveModeView(PanelManagerView):
 
     for key in keys:
       self._adjustor_rows[key].custom_row_height = None
-    grid._tile_height = None
 
     default_adjustor_h = float(AETHER_LIST_METRICS.adjustor_row_height)
     left_h = len(keys) * default_adjustor_h + 16.0
     
     num_tiles = 4 if self._has_pagination else len(grid.tiles)
-    rows = (num_tiles + 1) // 2 if self._uses_two_columns(content_width) else num_tiles
+    if PANEL_STYLE.toggle_row_mode:
+      rows = num_tiles
+      tile_h = TOGGLE_ROW_HEIGHT
+    else:
+      rows = (num_tiles + 1) // 2 if self._uses_two_columns(content_width) else num_tiles
+      tile_h = grid.min_tile_height
     
     pagination_space = 32.0 if self._has_pagination else 0.0
-    tiles_h = rows * grid.min_tile_height + (rows - 1) * grid.gap + grid.gap * 2 + pagination_space
+    tiles_h = rows * tile_h + (rows - 1) * grid.gap + grid.gap * 2 + pagination_space
 
     right_h = tiles_h
 
@@ -485,14 +497,21 @@ class ConditionalDriveModeView(PanelManagerView):
     y += SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
     
     self._draw_adjustors(y, rect.x, col_width, keys)
-    
+
+    tg_columns = 1 if PANEL_STYLE.toggle_row_mode else 2
     if self._uses_two_columns(content_width):
-      self._draw_two_column_tile_grid(grid, rect.x + col_width + SECTION_GAP, y, col_width, self._tiles_container_h, title=None, style=PANEL_STYLE)
+      self._draw_two_column_tile_grid(
+        grid, rect.x + col_width + SECTION_GAP, y, col_width,
+        self._tiles_container_h, title=None, style=PANEL_STYLE,
+        columns=tg_columns)
     else:
       y += self._left_container_h + SECTION_GAP
       draw_section_header(rl.Rectangle(rect.x, y, col_width, SECTION_HEADER_HEIGHT), tr("Triggers"), style=PANEL_STYLE)
       y += SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
-      self._draw_two_column_tile_grid(grid, rect.x, y, col_width, self._tiles_container_h, title=None, style=PANEL_STYLE)
+      self._draw_two_column_tile_grid(
+        grid, rect.x, y, col_width,
+        self._tiles_container_h, title=None, style=PANEL_STYLE,
+        columns=tg_columns)
 
   def _draw_adjustors(self, y: float, x: float, width: float, keys: list[str]):
     draw_list_group_shell(rl.Rectangle(x, y, width, self._left_container_h), style=PANEL_STYLE)
