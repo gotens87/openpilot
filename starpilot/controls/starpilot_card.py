@@ -118,7 +118,8 @@ class StarPilotCard:
   def update(self, carState, starpilotCarState, sm, starpilot_toggles):
     self.switchback_mode_enabled = self.params_memory.get_bool("SwitchbackModeEnabled")
     button_event_types = [self._button_type_raw(be) for be in carState.buttonEvents]
-    button_managed_aol = starpilot_toggles.always_on_lateral_lkas or starpilot_toggles.main_cruise_aol_toggle
+    button_aol_supported = self.CP.brand == "hyundai" or starpilot_toggles.lkas_allowed_for_aol
+    button_managed_aol = starpilot_toggles.always_on_lateral_lkas or (button_aol_supported and starpilot_toggles.main_cruise_aol_toggle)
 
     if self.hyundai_aol_needs_engagement:
       if carState.gearShifter in NON_DRIVING_GEARS:
@@ -136,7 +137,7 @@ class StarPilotCard:
       elif sm["selfdriveState"].active:
         self.nissan_aol_ready = True
 
-    if self.CP.brand == "hyundai" or starpilot_toggles.lkas_allowed_for_aol:
+    if button_aol_supported:
       for be, be_type in zip(carState.buttonEvents, button_event_types, strict=False):
         if be_type == ButtonType.lkas and be.pressed and starpilot_toggles.always_on_lateral_lkas:
           if self.hyundai_aol_needs_engagement:
