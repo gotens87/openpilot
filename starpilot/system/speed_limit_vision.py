@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 
 from collections import Counter, deque
@@ -20,6 +21,19 @@ RUNTIME_LOOP_HZ = 20
 INFERENCE_INTERVAL = 0.15
 FOLLOWUP_INFERENCE_INTERVAL = 0.10
 FOLLOWUP_WINDOW_SECONDS = 2.0
+TEMPORAL_TRACKING_ENABLED = True
+TRACK_CONFIRMED_PROPOSALS_ENABLED = False
+TRACK_CLASSIFICATION_INTERVAL = 0.12
+TRACK_BUSY_CLASSIFICATION_INTERVAL = 0.35
+TRACK_DETECTOR_INTERVAL = 0.55
+TRACK_MAX_AGE_SECONDS = 2.0
+TRACK_MIN_PROPOSAL_CONFIDENCE = 0.10
+TRACK_UNREADABLE_MIN_PROPOSAL_CONFIDENCE = 0.22
+TRACK_MAX_CONSECUTIVE_FAILED_READS = 2
+TRACK_MIN_FEATURE_COUNT = 4
+TRACK_MAX_AREA_RATIO = 0.18
+TRACK_CROP_PADDING_RATIO = 0.06
+TRACK_REPEAT_CONFIDENCE_BONUS = 0.12
 BUSY_INFERENCE_INTERVAL = 1.0
 LIVE_POSE_RECOVERY_THROTTLE_SECONDS = 2.0
 LIVE_POSE_RECOVERY_INFERENCE_INTERVAL = 1.0
@@ -238,6 +252,27 @@ class Detection:
   strong_consensus: bool = False
 
 
+@dataclass(frozen=True)
+class DetectorProposal:
+  confidence: float
+  class_id: int
+  bbox: tuple[int, int, int, int]
+  speed_limit_mph: int = 0
+
+
+@dataclass
+class ProposalTrack:
+  proposal: DetectorProposal
+  bbox: tuple[int, int, int, int]
+  previous_gray: np.ndarray
+  points: np.ndarray
+  started_at: float
+  last_classified_at: float
+  last_speed_limit_mph: int = 0
+  consistent_reads: int = 0
+  consecutive_failed_reads: int = 0
+
+
 @dataclass
 class HistoryEntry:
   speed_limit_mph: int
@@ -288,6 +323,12 @@ class SpeedLimitVisionDaemon:
     self.last_live_pose_inputs_not_ok_at = -float("inf")
     self.last_road_name = ""
     self.followup_until = 0.0
+    self.latest_detector_proposal = None
+    self.proposal_track = None
+    self.track_inference_count = 0
+    self.track_failure_count = 0
+    self.track_start_count = 0
+    self.max_track_proposal_confidence = 0.0
     self.started_prev = False
 
     self.history: deque[HistoryEntry] = deque()
@@ -324,6 +365,7 @@ class SpeedLimitVisionDaemon:
     self.last_debug_heartbeat_at = 0.0
     self.loop_count = 0
     self.inference_count = 0
+    self.detector_inference_count = 0
     self.interval_skip_count = 0
     self.busy_skip_count = 0
     self.camera_unavailable_count = 0
@@ -985,7 +1027,211 @@ class SpeedLimitVisionDaemon:
     image = cv2.copyMakeBorder(image, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)
     return image, ratio, pad_width, pad_height
 
+  @staticmethod
+  def _clamp_track_bbox(bbox, width, height):
+    x1, y1, x2, y2 = bbox
+    result = (
+      max(int(round(x1)), 0),
+      max(int(round(y1)), 0),
+      min(int(round(x2)), width),
+      min(int(round(y2)), height),
+    )
+    return result if result[2] > result[0] and result[3] > result[1] else None
+
+  @staticmethod
+  def _track_feature_points(gray, bbox):
+    height, width = gray.shape[:2]
+    x1, y1, x2, y2 = bbox
+    box_width = x2 - x1
+    box_height = y2 - y1
+    pad_x = max(int(box_width * 0.20), 2)
+    pad_y = max(int(box_height * 0.20), 2)
+    mask = np.zeros_like(gray)
+    mask[max(y1 - pad_y, 0):min(y2 + pad_y, height), max(x1 - pad_x, 0):min(x2 + pad_x, width)] = 255
+    return cv2.goodFeaturesToTrack(gray, mask=mask, maxCorners=40, qualityLevel=0.005, minDistance=3, blockSize=5)
+
+  @classmethod
+  def _flow_track_bbox(cls, previous_gray, current_gray, bbox, points):
+    if points is None or len(points) < TRACK_MIN_FEATURE_COUNT:
+      points = cls._track_feature_points(previous_gray, bbox)
+    if points is None or len(points) < TRACK_MIN_FEATURE_COUNT:
+      return None, None
+
+    next_points, status, errors = cv2.calcOpticalFlowPyrLK(
+      previous_gray,
+      current_gray,
+      points,
+      None,
+      winSize=(25, 25),
+      maxLevel=3,
+      criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 20, 0.03),
+    )
+    if next_points is None or status is None:
+      return None, None
+    good = status.reshape(-1).astype(bool)
+    if errors is not None:
+      good &= errors.reshape(-1) < 35.0
+    old = points.reshape(-1, 2)[good]
+    new = next_points.reshape(-1, 2)[good]
+    if len(old) < TRACK_MIN_FEATURE_COUNT:
+      return None, None
+
+    transform, inliers = cv2.estimateAffinePartial2D(old, new, method=cv2.RANSAC, ransacReprojThreshold=3.0)
+    if transform is None or inliers is None or int(inliers.sum()) < TRACK_MIN_FEATURE_COUNT:
+      return None, None
+    scale = math.hypot(float(transform[0, 0]), float(transform[0, 1]))
+    if not 0.84 <= scale <= 1.24:
+      return None, None
+
+    x1, y1, x2, y2 = bbox
+    corners = np.float32(((x1, y1), (x2, y1), (x2, y2), (x1, y2))).reshape(-1, 1, 2)
+    moved = cv2.transform(corners, transform).reshape(-1, 2)
+    tracked = cls._clamp_track_bbox(
+      (moved[:, 0].min(), moved[:, 1].min(), moved[:, 0].max(), moved[:, 1].max()),
+      current_gray.shape[1],
+      current_gray.shape[0],
+    )
+    if tracked is None:
+      return None, None
+    inlier_points = new[inliers.reshape(-1).astype(bool)].reshape(-1, 1, 2)
+    return tracked, inlier_points
+
+  def _remember_detector_proposal(self, confidence, class_id, bbox, speed_limit_mph=0, preferred=False):
+    min_confidence = TRACK_MIN_PROPOSAL_CONFIDENCE if speed_limit_mph else TRACK_UNREADABLE_MIN_PROPOSAL_CONFIDENCE
+    if not TEMPORAL_TRACKING_ENABLED or class_id == 1 or confidence < min_confidence:
+      return
+    proposal = DetectorProposal(float(confidence), int(class_id), bbox, int(speed_limit_mph))
+    latest_proposal = getattr(self, "latest_detector_proposal", None)
+    if preferred or latest_proposal is None or proposal.confidence > latest_proposal.confidence:
+      self.latest_detector_proposal = proposal
+
+  def _start_latest_detector_track(self, frame_bgr, now):
+    proposal = self.latest_detector_proposal
+    self.latest_detector_proposal = None
+    if (
+      not TEMPORAL_TRACKING_ENABLED or
+      proposal is None or
+      (proposal.speed_limit_mph and not TRACK_CONFIRMED_PROPOSALS_ENABLED)
+    ):
+      return False
+    gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+    points = self._track_feature_points(gray, proposal.bbox)
+    if points is None or len(points) < TRACK_MIN_FEATURE_COUNT:
+      self.track_failure_count += 1
+      return False
+    self.proposal_track = ProposalTrack(
+      proposal=proposal,
+      bbox=proposal.bbox,
+      previous_gray=gray,
+      points=points,
+      started_at=now,
+      last_classified_at=now,
+    )
+    self.track_start_count += 1
+    self.max_track_proposal_confidence = max(self.max_track_proposal_confidence, proposal.confidence)
+    return True
+
+  def _clear_proposal_track(self, failed=False):
+    if failed and self.proposal_track is not None:
+      self.track_failure_count += 1
+    self.proposal_track = None
+
+  def _track_classification_interval(self, now):
+    interval = TRACK_CLASSIFICATION_INTERVAL
+    if now - self.last_live_pose_inputs_not_ok_at < LIVE_POSE_RECOVERY_THROTTLE_SECONDS:
+      return max(interval, LIVE_POSE_RECOVERY_INFERENCE_INTERVAL)
+    if self._device_cpu_busy():
+      return max(interval, TRACK_BUSY_CLASSIFICATION_INTERVAL)
+    return interval
+
+  def _track_classification_due(self, now):
+    track = self.proposal_track
+    if track is None:
+      return False
+    if now - track.started_at > TRACK_MAX_AGE_SECONDS:
+      self._clear_proposal_track()
+      return False
+    return now - track.last_classified_at >= self._track_classification_interval(now)
+
+  def _classify_proposal_track(self, frame_bgr, now):
+    track = self.proposal_track
+    if track is None:
+      return None
+    current_gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+    bbox, points = self._flow_track_bbox(track.previous_gray, current_gray, track.bbox, track.points)
+    if bbox is None or points is None:
+      self._clear_proposal_track(failed=True)
+      return None
+
+    frame_height, frame_width = frame_bgr.shape[:2]
+    x1, y1, x2, y2 = bbox
+    box_width = x2 - x1
+    box_height = y2 - y1
+    area_ratio = box_width * box_height / max(frame_width * frame_height, 1)
+    if (
+      box_width < MODEL_PROPOSAL_MIN_WIDTH or
+      box_height < MODEL_PROPOSAL_MIN_HEIGHT or
+      area_ratio > TRACK_MAX_AREA_RATIO or
+      (x1 + x2) / 2 < frame_width * MODEL_PROPOSAL_MIN_X_RATIO
+    ):
+      self._clear_proposal_track(failed=True)
+      return None
+
+    track.bbox = bbox
+    track.previous_gray = current_gray
+    track.points = points
+    track.last_classified_at = now
+    self.track_inference_count += 1
+
+    pad_x = int(box_width * TRACK_CROP_PADDING_RATIO)
+    pad_y = int(box_height * TRACK_CROP_PADDING_RATIO)
+    crop_x1 = max(x1 - pad_x, 0)
+    crop_y1 = max(y1 - pad_y, 0)
+    crop_x2 = min(x2 + pad_x, frame_width)
+    crop_y2 = min(y2 + pad_y, frame_height)
+    sign_crop = frame_bgr[crop_y1:crop_y2, crop_x1:crop_x2]
+    if sign_crop.size == 0:
+      self._clear_proposal_track(failed=True)
+      return None
+
+    read_result = self._classify_speed_limit_from_model(sign_crop)
+    if read_result is None:
+      track.consecutive_failed_reads += 1
+      track.last_speed_limit_mph = 0
+      track.consistent_reads = 0
+      if track.consecutive_failed_reads >= TRACK_MAX_CONSECUTIVE_FAILED_READS:
+        self._clear_proposal_track()
+      return None
+    speed_limit_mph, read_confidence = read_result
+    if track.proposal.speed_limit_mph and speed_limit_mph != track.proposal.speed_limit_mph:
+      self._clear_proposal_track()
+      return None
+    if track.proposal.class_id == 2 and speed_limit_mph not in SCHOOL_ZONE_SPEED_VALUES:
+      track.last_speed_limit_mph = 0
+      track.consistent_reads = 0
+      return None
+
+    track.consecutive_failed_reads = 0
+
+    if speed_limit_mph == track.last_speed_limit_mph:
+      track.consistent_reads += 1
+    else:
+      track.last_speed_limit_mph = speed_limit_mph
+      track.consistent_reads = 1
+
+    regulatory_bonus = 0.04 if self._is_regulatory_speed_sign(sign_crop) or track.proposal.class_id == 2 else 0.0
+    repeat_bonus = TRACK_REPEAT_CONFIDENCE_BONUS if track.consistent_reads >= 2 else 0.0
+    score = min(
+      read_confidence * 0.78 +
+      track.proposal.confidence * 0.12 +
+      regulatory_bonus +
+      repeat_bonus,
+      0.95,
+    )
+    return self._publishable_detection(Detection(speed_limit_mph, score))
+
   def _detect_sign(self, frame_bgr):
+    self.latest_detector_proposal = None
     if self.net is None:
       if FULL_FRAME_OCR_FALLBACK_ENABLED:
         return self._publishable_detection(self._detect_sign_from_ocr_candidates(frame_bgr))
@@ -1380,6 +1626,7 @@ class SpeedLimitVisionDaemon:
         proposal_area_ratio < DETECTOR_CLASSIFIER_TINY_LOW_CONF_AREA_RATIO and
         proposal_confidence < DETECTOR_CLASSIFIER_TINY_LOW_CONF_MIN_CONFIDENCE
       )
+      self._remember_detector_proposal(proposal_confidence, class_id, (x1, y1, x2, y2))
 
       if class_id == 2:
         school_scores: dict[int, float] = {}
@@ -1434,6 +1681,9 @@ class SpeedLimitVisionDaemon:
                 0.95,
               )
               if score >= SCHOOL_ZONE_SHORT_CIRCUIT_CONFIDENCE:
+                self._remember_detector_proposal(
+                  proposal_confidence, class_id, (x1, y1, x2, y2), speed_limit_mph, preferred=True,
+                )
                 return Detection(speed_limit_mph, score)
 
       speed_scores: dict[int, float] = {}
@@ -1625,6 +1875,9 @@ class SpeedLimitVisionDaemon:
       if selection_score > best_score:
         best_score = selection_score
         best_detection = Detection(speed_limit_mph, published_score, strong_rescue)
+        self._remember_detector_proposal(
+          proposal_confidence, class_id, (x1, y1, x2, y2), speed_limit_mph, preferred=True,
+        )
       if best_detection is not None and best_detection.confidence >= MODEL_DETECTION_SHORT_CIRCUIT_CONFIDENCE:
         return best_detection
 
@@ -1928,6 +2181,7 @@ class SpeedLimitVisionDaemon:
   def _clear_detection(self):
     self.history.clear()
     self.followup_until = 0.0
+    self._clear_proposal_track()
     self.pending_auto_bookmark = None
     self.pending_training_capture = None
     self.previous_published_speed_limit_mph = self.published_speed_limit_mph
@@ -2012,11 +2266,17 @@ class SpeedLimitVisionDaemon:
         "debugSession": self.debug_session_id,
         "loopCount": self.loop_count,
         "inferenceCount": self.inference_count,
+        "detectorInferenceCount": self.detector_inference_count,
         "intervalSkipCount": self.interval_skip_count,
         "busySkipCount": self.busy_skip_count,
         "cameraUnavailableCount": self.camera_unavailable_count,
         "emptyFrameCount": self.empty_frame_count,
         "detectionCount": self.detection_count,
+        "trackInferenceCount": self.track_inference_count,
+        "trackFailureCount": self.track_failure_count,
+        "trackStartCount": self.track_start_count,
+        "maxTrackProposalConfidence": round(self.max_track_proposal_confidence, 4),
+        "proposalTrackActive": self.proposal_track is not None,
         "lastInferenceAgeS": round(max(now - self.last_inference_at, 0.0), 3),
         "lastInferenceIntervalS": round(float(self.last_inference_interval), 3),
         "lastInferenceIntervalReason": self.last_inference_interval_reason,
@@ -2208,7 +2468,10 @@ class SpeedLimitVisionDaemon:
         continue
 
       inference_interval = self._inference_interval(now)
-      if now - self.last_inference_at < inference_interval:
+      track_due = self._track_classification_due(now)
+      detector_interval = max(inference_interval, TRACK_DETECTOR_INTERVAL) if self.proposal_track is not None else inference_interval
+      detector_due = now - self.last_inference_at >= detector_interval
+      if not track_due and not detector_due:
         self.interval_skip_count += 1
         if self.last_inference_interval_reason == "cpu_busy":
           self.busy_skip_count += 1
@@ -2223,7 +2486,6 @@ class SpeedLimitVisionDaemon:
 
       buffer = self.client.recv() if self.client is not None else None
       self.inference_count += 1
-      self.last_inference_at = now
       inference_started_at = time.monotonic()
       self.last_frame_process_duration_s = 0.0
       self.last_detector_forward_count = 0
@@ -2245,7 +2507,13 @@ class SpeedLimitVisionDaemon:
       frame_bgr = cv2.cvtColor(image[:self.client.height * 3 // 2, :self.client.width], cv2.COLOR_YUV2BGR_NV12)
       self.current_frame_bgr = frame_bgr
 
-      detection = self._detect_sign(frame_bgr)
+      if detector_due:
+        self.detector_inference_count += 1
+        self.last_inference_at = now
+        detection = self._detect_sign(frame_bgr)
+        self._start_latest_detector_track(frame_bgr, now)
+      else:
+        detection = self._classify_proposal_track(frame_bgr, now)
       self.last_frame_process_duration_s = time.monotonic() - inference_started_at
       if detection is not None:
         self.detection_count += 1

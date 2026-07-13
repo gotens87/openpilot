@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 import starpilot.system.speed_limit_vision as slv
-from starpilot.system.speed_limit_vision import HistoryEntry, SpeedLimitVisionDaemon
+from starpilot.system.speed_limit_vision import DetectorProposal, HistoryEntry, ProposalTrack, SpeedLimitVisionDaemon
 
 
 def daemon_with_history(current_speed, entries):
@@ -55,6 +55,54 @@ def test_low_speed_change_accepts_single_strong_consensus_read():
 def test_low_speed_change_rejects_low_confidence_sequence():
   daemon = daemon_with_history(40, [(25, 0.82), (25, 0.88), (25, 0.89)])
   assert daemon._confirm_detection() is None
+
+
+def textured_track_frame(offset_x=0, offset_y=0):
+  frame = np.zeros((120, 180, 3), dtype=np.uint8)
+  x1, y1, x2, y2 = 90 + offset_x, 30 + offset_y, 130 + offset_x, 90 + offset_y
+  frame[y1:y2, x1:x2] = 220
+  cv2 = pytest.importorskip("cv2")
+  cv2.rectangle(frame, (x1 + 3, y1 + 3), (x2 - 3, y2 - 3), (20, 20, 20), 2)
+  cv2.putText(frame, "55", (x1 + 5, y1 + 42), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (10, 10, 10), 2)
+  return frame, (x1, y1, x2, y2)
+
+
+def test_flow_track_bbox_follows_translation():
+  cv2 = pytest.importorskip("cv2")
+  first, bbox = textured_track_frame()
+  second, expected_bbox = textured_track_frame(4, 3)
+  first_gray = cv2.cvtColor(first, cv2.COLOR_BGR2GRAY)
+  second_gray = cv2.cvtColor(second, cv2.COLOR_BGR2GRAY)
+  points = SpeedLimitVisionDaemon._track_feature_points(first_gray, bbox)
+
+  tracked_bbox, tracked_points = SpeedLimitVisionDaemon._flow_track_bbox(first_gray, second_gray, bbox, points)
+
+  assert tracked_bbox == pytest.approx(expected_bbox, abs=1)
+  assert tracked_points is not None and len(tracked_points) >= 4
+
+
+def test_temporal_track_boosts_two_consistent_model_reads():
+  cv2 = pytest.importorskip("cv2")
+  frame, bbox = textured_track_frame()
+  gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+  points = SpeedLimitVisionDaemon._track_feature_points(gray, bbox)
+  daemon = SpeedLimitVisionDaemon.__new__(SpeedLimitVisionDaemon)
+  daemon.proposal_track = ProposalTrack(DetectorProposal(0.20, 0, bbox), bbox, gray, points, 0.0, 0.0)
+  daemon.track_inference_count = 0
+  daemon.track_failure_count = 0
+  daemon.last_classifier_forward_count = 0
+  daemon.last_classifier_forward_duration_s = 0.0
+  daemon._classify_speed_limit_from_model = lambda _crop: (55, 0.90)
+  daemon._is_regulatory_speed_sign = lambda _crop: True
+
+  first = daemon._classify_proposal_track(frame, 0.2)
+  second = daemon._classify_proposal_track(frame, 0.4)
+
+  assert first.speed_limit_mph == 55
+  assert second.speed_limit_mph == 55
+  assert first.confidence < slv.CHANGE_SINGLE_READ_MIN_CONFIDENCE
+  assert second.confidence >= slv.CHANGE_SINGLE_READ_MIN_CONFIDENCE
+  assert daemon.track_inference_count == 2
 
 
 def detector_classifier_daemon(*, regulatory: bool, model_read, bbox=(700, 100, 780, 220), proposal_confidence=0.80):

@@ -48,6 +48,13 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--dedupe-seconds", type=float, default=3.0, help="Collapse nearby reviewed rows with the same expected value.")
   parser.add_argument("--measured-base-inference-seconds", type=float, default=0.44, help="Measured no-proposal comma inference cost.")
   parser.add_argument("--measured-classifier-forward-seconds", type=float, default=0.066, help="Measured comma cost per classifier forward.")
+  parser.add_argument("--measured-tracking-base-seconds", type=float, default=0.012, help="Measured optical-flow and crop preparation cost.")
+  parser.add_argument("--disable-temporal-tracking", action="store_true", help="Disable proposal tracking for an A/B evaluation.")
+  parser.add_argument("--track-classification-interval", type=float, help="Override seconds between tracked crop classifications.")
+  parser.add_argument("--track-detector-interval", type=float, help="Override detector cadence while a proposal track is active.")
+  parser.add_argument("--track-min-proposal-confidence", type=float, help="Override detector confidence required to begin tracking.")
+  parser.add_argument("--track-unreadable-min-proposal-confidence", type=float, help="Override confidence required to track a proposal with no readable value.")
+  parser.add_argument("--track-max-age", type=float, help="Override the maximum proposal track lifetime.")
   parser.add_argument("--crop-ocr", action="store_true", help="Evaluate with crop OCR confirmation enabled.")
   parser.add_argument("--classifier-min-confidence", type=float, help="Override the value classifier confidence threshold.")
   parser.add_argument("--trusted-model-min-confidence", type=float, help="Override tiny-box trusted model confidence.")
@@ -87,6 +94,14 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--positive-only", action="store_true", help="Replay only reviewed speed signs, omitting ignored-crop windows.")
   parser.add_argument("--negative-only", action="store_true", help="Replay only ignored not-speed-limit windows.")
   parser.add_argument("--route-file", type=Path, help="Only replay routes listed one per line in this file.")
+  parser.add_argument("--record-key-file", type=Path, help="Only replay record keys listed one per line in this file.")
+  parser.add_argument("--focus-eval-csv", type=Path, help="Only replay records selected from an earlier runtime evaluation.")
+  parser.add_argument(
+    "--focus-outcome",
+    choices=("candidate_hit", "publish_hit"),
+    default="candidate_hit",
+    help="Outcome that must be false in --focus-eval-csv.",
+  )
   parser.add_argument("--strong-detection-confidence", type=float, help="Override one-frame publication confidence.")
   parser.add_argument("--consistent-detections", type=int, help="Override matching reads required for an initial publication.")
   parser.add_argument("--change-consistent-detections", type=int, help="Override matching reads required to change a publication.")
@@ -133,13 +148,14 @@ def load_cases(queue_path: Path, labels_path: Path, dedupe_seconds: float) -> li
   return cases
 
 
-def replay_video_cases(cases: list[ReviewedCase], args: argparse.Namespace) -> dict[str, tuple[list[dict[str, str]], int]]:
+def replay_video_cases(cases: list[ReviewedCase], args: argparse.Namespace) -> dict[str, tuple[list[dict[str, str]], int, int, int, int, float]]:
   daemons = {
     case.record_key: RouteReplayDaemon(
       runtime_context=None,
       measured_inference_seconds=0.0,
       measured_base_inference_seconds=args.measured_base_inference_seconds,
       measured_classifier_forward_seconds=args.measured_classifier_forward_seconds,
+      measured_tracking_base_seconds=args.measured_tracking_base_seconds,
     )
     for case in cases
   }
@@ -182,7 +198,14 @@ def replay_video_cases(cases: list[ReviewedCase], args: argparse.Namespace) -> d
   results = {}
   for case in cases:
     daemon = daemons[case.record_key]
-    results[case.record_key] = daemon.events, daemon.inference_frames
+    results[case.record_key] = (
+      daemon.events,
+      daemon.inference_frames,
+      daemon.detector_inference_count,
+      daemon.track_inference_count,
+      daemon.track_start_count,
+      daemon.max_track_proposal_confidence,
+    )
   return results
 
 
@@ -191,6 +214,18 @@ def main() -> int:
   queue_path = args.queue.expanduser().resolve()
   labels_path = args.labels.expanduser().resolve() if args.labels else queue_path.with_name("manual_review_labels.csv")
   configure_models(args.models_dir)
+  if args.disable_temporal_tracking:
+    slv.TEMPORAL_TRACKING_ENABLED = False
+  if args.track_classification_interval is not None:
+    slv.TRACK_CLASSIFICATION_INTERVAL = args.track_classification_interval
+  if args.track_detector_interval is not None:
+    slv.TRACK_DETECTOR_INTERVAL = args.track_detector_interval
+  if args.track_min_proposal_confidence is not None:
+    slv.TRACK_MIN_PROPOSAL_CONFIDENCE = args.track_min_proposal_confidence
+  if args.track_unreadable_min_proposal_confidence is not None:
+    slv.TRACK_UNREADABLE_MIN_PROPOSAL_CONFIDENCE = args.track_unreadable_min_proposal_confidence
+  if args.track_max_age is not None:
+    slv.TRACK_MAX_AGE_SECONDS = args.track_max_age
   slv.DETECTOR_CLASSIFIER_CROP_OCR_ENABLED = args.crop_ocr
   if args.classifier_min_confidence is not None:
     slv.US_CLASSIFIER_MIN_CONFIDENCE = args.classifier_min_confidence
@@ -238,6 +273,19 @@ def main() -> int:
   if args.change_single_read_min_confidence is not None:
     slv.CHANGE_SINGLE_READ_MIN_CONFIDENCE = args.change_single_read_min_confidence
   cases = load_cases(queue_path, labels_path, args.dedupe_seconds)
+  if args.focus_eval_csv:
+    with args.focus_eval_csv.expanduser().resolve().open(encoding="utf-8", newline="") as input_file:
+      selected_record_keys = {
+        row.get("record_key", "")
+        for row in csv.DictReader(input_file)
+        if row.get("record_key") and row.get(args.focus_outcome, "").strip().lower() not in ("1", "true", "yes")
+      }
+    cases = [case for case in cases if case.record_key in selected_record_keys]
+  if args.record_key_file:
+    selected_record_keys = {
+      line.strip() for line in args.record_key_file.expanduser().resolve().read_text(encoding="utf-8").splitlines() if line.strip()
+    }
+    cases = [case for case in cases if case.record_key in selected_record_keys]
   if args.route_file:
     selected_routes = {
       line.strip() for line in args.route_file.expanduser().resolve().read_text(encoding="utf-8").splitlines() if line.strip()
@@ -255,7 +303,7 @@ def main() -> int:
   output_rows: list[dict[str, object]] = []
   positive_by_speed: dict[int, Counter[str]] = defaultdict(Counter)
   negative_counts: Counter[str] = Counter()
-  results: dict[str, tuple[list[dict[str, str]], int]] = {}
+  results: dict[str, tuple[list[dict[str, str]], int, int, int, int, float]] = {}
   cases_by_video: dict[Path, list[ReviewedCase]] = defaultdict(list)
   for case in cases:
     cases_by_video[case.source_video_path].append(case)
@@ -265,7 +313,9 @@ def main() -> int:
       print(f"Replayed {index}/{len(cases_by_video)} video segments", flush=True)
 
   for case in cases:
-    events, inference_frames = results.get(case.record_key, ([], 0))
+    events, inference_frames, detector_inference_frames, track_inference_frames, track_starts, max_track_confidence = results.get(
+      case.record_key, ([], 0, 0, 0, 0, 0.0),
+    )
     candidate_events = [event for event in events if event["event"] == "candidate"]
     publish_events = [event for event in events if event["event"] == "publish"]
     candidates = [int(event["candidateSpeedLimitMph"]) for event in candidate_events]
@@ -307,6 +357,10 @@ def main() -> int:
       "false_candidate": false_candidate,
       "false_publish": false_publish,
       "inference_frames": inference_frames,
+      "detector_inference_frames": detector_inference_frames,
+      "track_inference_frames": track_inference_frames,
+      "track_starts": track_starts,
+      "max_track_proposal_confidence": f"{max_track_confidence:.4f}",
       "source_video_path": str(case.source_video_path),
     })
   output_path = args.output_csv.expanduser().resolve()
@@ -331,6 +385,14 @@ def main() -> int:
     "classifier_min_confidence": slv.US_CLASSIFIER_MIN_CONFIDENCE,
     "measured_base_inference_seconds": args.measured_base_inference_seconds,
     "measured_classifier_forward_seconds": args.measured_classifier_forward_seconds,
+    "measured_tracking_base_seconds": args.measured_tracking_base_seconds,
+    "temporal_tracking_enabled": slv.TEMPORAL_TRACKING_ENABLED,
+    "track_confirmed_proposals_enabled": slv.TRACK_CONFIRMED_PROPOSALS_ENABLED,
+    "track_classification_interval": slv.TRACK_CLASSIFICATION_INTERVAL,
+    "track_detector_interval": slv.TRACK_DETECTOR_INTERVAL,
+    "track_min_proposal_confidence": slv.TRACK_MIN_PROPOSAL_CONFIDENCE,
+    "track_unreadable_min_proposal_confidence": slv.TRACK_UNREADABLE_MIN_PROPOSAL_CONFIDENCE,
+    "track_max_age_seconds": slv.TRACK_MAX_AGE_SECONDS,
     "initial_speed_limit_mph": args.initial_speed_limit,
     "low_speed_change_consistent_detections": slv.LOW_SPEED_CHANGE_CONSISTENT_DETECTIONS,
     "low_speed_change_min_confidence": slv.LOW_SPEED_CHANGE_MIN_CONFIDENCE,

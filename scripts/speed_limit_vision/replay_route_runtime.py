@@ -67,6 +67,7 @@ class RouteReplayDaemon(slv.SpeedLimitVisionDaemon):
     measured_inference_seconds: float,
     measured_base_inference_seconds: float | None = None,
     measured_classifier_forward_seconds: float = 0.0,
+    measured_tracking_base_seconds: float = 0.012,
   ):
     super().__init__(use_runtime=False)
     self.runtime_context = runtime_context
@@ -75,6 +76,7 @@ class RouteReplayDaemon(slv.SpeedLimitVisionDaemon):
       max(float(measured_base_inference_seconds), 0.0) if measured_base_inference_seconds is not None else None
     )
     self.measured_classifier_forward_seconds = max(float(measured_classifier_forward_seconds), 0.0)
+    self.measured_tracking_base_seconds = max(float(measured_tracking_base_seconds), 0.0)
     self.next_available_at = -float("inf")
     self.now = 0.0
     self.sampled_frames = 0
@@ -132,33 +134,51 @@ class RouteReplayDaemon(slv.SpeedLimitVisionDaemon):
       return
     self.current_frame_bgr = frame_bgr
 
+    track_due = self._track_classification_due(now)
     inference_interval = self._inference_interval(now)
-    next_due = max(self.next_available_at, self.last_inference_at + inference_interval)
-    if now < next_due:
+    detector_interval = max(inference_interval, slv.TRACK_DETECTOR_INTERVAL) if self.proposal_track is not None else inference_interval
+    detector_due = now >= self.last_inference_at + detector_interval
+    if not track_due and not detector_due:
       if self.published_speed_limit_mph > 0 and self._published_detection_stale(now):
         self._write_debug_event("stale_clear", reason="inference_interval")
         self._clear_detection()
       return
 
-    self.last_inference_at = now
     self.inference_frames += 1
     self.last_detector_forward_count = 0
     self.last_detector_forward_duration_s = 0.0
     self.last_classifier_forward_count = 0
     self.last_classifier_forward_duration_s = 0.0
-    detection = self._detect_sign(frame_bgr)
-    inference_seconds = self.measured_inference_seconds
-    if self.measured_base_inference_seconds is not None:
-      inference_seconds = (
-        self.measured_base_inference_seconds +
-        self.last_classifier_forward_count * self.measured_classifier_forward_seconds
-      )
+    if detector_due:
+      self.detector_inference_count += 1
+      self.last_inference_at = now
+      detection = self._detect_sign(frame_bgr)
+      self._start_latest_detector_track(frame_bgr, now)
+      inference_seconds = self.measured_inference_seconds
+      if self.measured_base_inference_seconds is not None:
+        inference_seconds = (
+          self.measured_base_inference_seconds +
+          self.last_classifier_forward_count * self.measured_classifier_forward_seconds
+        )
+    else:
+      detection = self._classify_proposal_track(frame_bgr, now)
+      inference_seconds = self.measured_tracking_base_seconds + self.last_classifier_forward_count * self.measured_classifier_forward_seconds
     self.next_available_at = now + inference_seconds
     if detection is not None:
       self._update_detection(detection)
     elif self.published_speed_limit_mph > 0 and self._published_detection_stale(now):
       self._write_debug_event("stale_clear", reason="no_detection")
       self._clear_detection()
+
+  def next_processing_due(self, now: float) -> float:
+    if self.proposal_track is not None:
+      if now - self.proposal_track.started_at > slv.TRACK_MAX_AGE_SECONDS:
+        self._clear_proposal_track()
+      else:
+        track_due = self.proposal_track.last_classified_at + self._track_classification_interval(now)
+        detector_due = self.last_inference_at + max(self._inference_interval(now), slv.TRACK_DETECTOR_INTERVAL)
+        return max(self.next_available_at, min(track_due, detector_due))
+    return max(self.next_available_at, self.last_inference_at + self._inference_interval(now))
 
 
 def parse_args() -> argparse.Namespace:
@@ -184,6 +204,15 @@ def parse_args() -> argparse.Namespace:
     default=0.0,
     help="Additional measured comma cost per classifier forward when the dynamic cost model is enabled.",
   )
+  parser.add_argument(
+    "--measured-tracking-base-seconds",
+    type=float,
+    default=0.012,
+    help="Measured optical-flow and crop-preparation cost for one tracked frame.",
+  )
+  parser.add_argument("--disable-temporal-tracking", action="store_true", help="Disable proposal tracking for an A/B replay.")
+  parser.add_argument("--track-unreadable-min-proposal-confidence", type=float, help="Override confidence required to track an unreadable proposal.")
+  parser.add_argument("--track-detector-interval", type=float, help="Override detector cadence while tracking a proposal.")
   parser.add_argument(
     "--detector-region-mode",
     choices=("full", "right_roi", "full_and_right_roi"),
@@ -322,6 +351,12 @@ def configure_runtime_options(args: argparse.Namespace) -> None:
     slv.LOW_SPEED_CHANGE_ALLOW_STRONG_CONSENSUS = True
   if args.enable_strong_model_consensus:
     slv.DETECTOR_CLASSIFIER_STRONG_MODEL_CONSENSUS_ENABLED = True
+  if args.disable_temporal_tracking:
+    slv.TEMPORAL_TRACKING_ENABLED = False
+  if args.track_unreadable_min_proposal_confidence is not None:
+    slv.TRACK_UNREADABLE_MIN_PROPOSAL_CONFIDENCE = args.track_unreadable_min_proposal_confidence
+  if args.track_detector_interval is not None:
+    slv.TRACK_DETECTOR_INTERVAL = args.track_detector_interval
 
   if args.right_roi_bounds:
     parts = [float(part.strip()) for part in args.right_roi_bounds.split(",")]
@@ -370,6 +405,7 @@ def replay_route(
   measured_inference_seconds: float,
   measured_base_inference_seconds: float | None = None,
   measured_classifier_forward_seconds: float = 0.0,
+  measured_tracking_base_seconds: float = 0.012,
   initial_speed_limit_mph: int = 0,
 ) -> tuple[RouteSummary, list[dict[str, str]]]:
   daemon = RouteReplayDaemon(
@@ -377,6 +413,7 @@ def replay_route(
     measured_inference_seconds,
     measured_base_inference_seconds,
     measured_classifier_forward_seconds,
+    measured_tracking_base_seconds,
   )
   daemon.published_speed_limit_mph = initial_speed_limit_mph
   for segment_path in segments:
@@ -403,8 +440,7 @@ def replay_route(
         frame_index = skip_to_frame(capture, frame_index, frame_index + 1, fast_seek)
         continue
 
-      inference_interval = daemon._inference_interval(now)
-      next_due = max(daemon.next_available_at, daemon.last_inference_at + inference_interval)
+      next_due = daemon.next_processing_due(now)
       if now < next_due:
         target_index = max(frame_index + 1, int(round((next_due - segment_start_s) * fps)))
         if total_frames > 0:
@@ -512,6 +548,7 @@ def main() -> int:
       args.measured_inference_seconds,
       args.measured_base_inference_seconds,
       args.measured_classifier_forward_seconds,
+      args.measured_tracking_base_seconds,
       args.initial_speed_limit,
     )
     all_events.extend((log_id, event) for event in events)
