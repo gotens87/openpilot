@@ -22,6 +22,11 @@ def test_speed_change_requires_two_matching_reads_below_single_read_threshold():
   assert daemon._confirm_detection() == pytest.approx((55, 0.82))
 
 
+def test_speed_change_rejects_weak_confirming_read():
+  daemon = daemon_with_history(40, [(35, 0.78), (35, 0.48)])
+  assert daemon._confirm_detection() is None
+
+
 def test_speed_change_accepts_single_high_confidence_read():
   daemon = daemon_with_history(40, [(55, 0.84)])
   assert daemon._confirm_detection() == pytest.approx((55, 0.84))

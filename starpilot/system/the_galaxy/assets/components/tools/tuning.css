@@ -1,11 +1,11 @@
-.ftmTwoColumn {
+.flmTwoColumn {
   display: grid;
   gap: var(--gap-base);
   grid-template-columns: repeat(2, minmax(0, 1fr));
   margin-top: var(--margin-base);
 }
 
-.ftmCard {
+.flmCard {
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: var(--border-radius-md);
@@ -13,45 +13,51 @@
   padding: var(--padding-base);
 }
 
-.ftmCardHeader {
+.flmCardHeader {
   align-items: flex-start;
   display: flex;
   gap: var(--gap-sm);
   justify-content: space-between;
 }
 
-.ftmCardHeader h3,
-.ftmCardHeader h4,
-.ftmCardHeader h5 {
+.flmCardHeader h3,
+.flmCardHeader h4,
+.flmCardHeader h5 {
   margin: 0;
 }
 
-.ftmCardSubsection {
+.flmCardSubsection {
   margin-top: var(--margin-base);
 }
 
-.ftmRouteList,
-.ftmWorkspaceList,
-.ftmFindings {
+.flmRouteList,
+.flmWorkspaceList,
+.flmFindings {
   display: flex;
   flex-direction: column;
   gap: var(--gap-sm);
   margin-top: var(--margin-base);
 }
 
-.ftmWorkspaceRow {
+.flmWorkspaceRow {
   display: flex;
   gap: var(--gap-sm);
 }
 
-.ftmRouteList {
+.flmRouteList {
   max-height: 28rem;
   overflow: auto;
   padding-right: var(--padding-xs);
 }
 
-.ftmRouteItem,
-.ftmWorkspaceItem {
+.flmRouteRow {
+  align-items: stretch;
+  display: flex;
+  gap: var(--gap-sm);
+}
+
+.flmRouteItem,
+.flmWorkspaceItem {
   align-items: flex-start;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.06);
@@ -64,61 +70,83 @@
   text-align: left;
 }
 
-.ftmRouteItem input {
+.flmRouteItem input {
   margin-top: 0.2rem;
 }
 
-.ftmRouteItem span,
-.ftmWorkspaceItem {
+.flmRouteItem {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.flmConnectLink {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--border-radius-sm);
+  color: var(--main-fg);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+  padding: 0 var(--padding-sm);
+  text-decoration: none;
+}
+
+.flmConnectLink:hover {
+  border-color: var(--main-fg);
+}
+
+.flmRouteItem span,
+.flmWorkspaceItem {
   display: flex;
   flex-direction: column;
 }
 
-.ftmWorkspaceItem {
+.flmWorkspaceItem {
   flex: 1 1 auto;
 }
 
-.ftmWorkspaceDelete {
+.flmWorkspaceDelete {
   align-self: stretch;
   flex: 0 0 auto;
 }
 
-.ftmRouteItem small,
-.ftmWorkspaceItem small,
-.ftmWorkspaceItem span {
+.flmRouteItem small,
+.flmWorkspaceItem small,
+.flmWorkspaceItem span {
   color: var(--text-muted);
 }
 
-.ftmWorkspaceItem:hover,
-.ftmRouteItem:hover,
-.ftmCard button.selected {
+.flmWorkspaceItem:hover,
+.flmRouteItem:hover,
+.flmCard button.selected {
   border-color: var(--main-fg);
 }
 
-.ftmProfileGrid {
+.flmProfileGrid {
   display: grid;
   gap: var(--gap-base);
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.ftmFeedbackButtons {
+.flmFeedbackButtons {
   display: flex;
   flex-wrap: wrap;
   gap: var(--gap-xs);
 }
 
-.ftmFeedbackButtons .longManeuverButton.selected {
+.flmFeedbackButtons .longManeuverButton.selected {
   box-shadow: 0 0 0 3px var(--text-color);
   filter: brightness(1.2);
 }
 
-.ftmTuneComparison {
+.flmTuneComparison {
   background: rgba(255, 255, 255, 0.025);
   border-radius: var(--border-radius-sm);
   padding: var(--padding-base);
 }
 
-.ftmTuneComparisonTable {
+.flmTuneComparisonTable {
   align-items: center;
   display: grid;
   gap: var(--gap-xs) var(--gap-sm);
@@ -126,40 +154,40 @@
   margin-top: var(--margin-sm);
 }
 
-.ftmTuneComparisonTable > div {
+.flmTuneComparisonTable > div {
   min-width: 0;
   overflow-wrap: anywhere;
   padding: var(--padding-xs) 0;
 }
 
-.ftmTuneComparisonHeader {
+.flmTuneComparisonHeader {
   color: var(--text-muted);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-demi-bold);
 }
 
-.ftmTuneComparisonLabel {
+.flmTuneComparisonLabel {
   font-weight: var(--font-weight-demi-bold);
 }
 
-.ftmTuneComparisonArrow {
+.flmTuneComparisonArrow {
   color: var(--text-muted);
   text-align: center;
 }
 
-.ftmTuneComparisonChanged {
+.flmTuneComparisonChanged {
   color: var(--main-fg);
   font-weight: var(--font-weight-demi-bold);
 }
 
-.ftmDeltaBox {
+.flmDeltaBox {
   background: rgba(255, 255, 255, 0.03);
   border-radius: var(--border-radius-sm);
   margin-top: var(--margin-sm);
   padding: var(--padding-sm);
 }
 
-.ftmNotes {
+.flmNotes {
   background: var(--secondary-bg);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: var(--border-radius-sm);
@@ -171,19 +199,19 @@
   width: 100%;
 }
 
-.ftmTrackingOverview {
+.flmTrackingOverview {
   background: rgba(255, 255, 255, 0.025);
   border-radius: var(--border-radius-sm);
   padding: var(--padding-base);
 }
 
-.ftmTrackingLegend {
+.flmTrackingLegend {
   display: flex;
   flex-wrap: wrap;
   gap: var(--gap-sm);
 }
 
-.ftmTrackingLegend span {
+.flmTrackingLegend span {
   align-items: center;
   color: var(--text-muted);
   display: inline-flex;
@@ -191,22 +219,22 @@
   gap: var(--gap-xs);
 }
 
-.ftmTrackingLegend i {
+.flmTrackingLegend i {
   border-radius: 999px;
   display: inline-block;
   height: 0.2rem;
   width: 1.4rem;
 }
 
-.ftmTrackingLegend i.desired {
+.flmTrackingLegend i.desired {
   background: #ef4444;
 }
 
-.ftmTrackingLegend i.actual {
+.flmTrackingLegend i.actual {
   background: #38bdf8;
 }
 
-.ftmTrackingNotice {
+.flmTrackingNotice {
   border-left: 2px solid var(--main-fg);
   color: var(--text-muted);
   font-size: var(--font-size-sm);
@@ -214,14 +242,14 @@
   padding: var(--padding-xs) var(--padding-sm);
 }
 
-.ftmTrackingGrid {
+.flmTrackingGrid {
   display: grid;
   gap: var(--gap-sm);
   grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
   margin-top: var(--margin-base);
 }
 
-.ftmTrackingCard {
+.flmTrackingCard {
   background: rgba(255, 255, 255, 0.025);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: var(--border-radius-sm);
@@ -229,25 +257,25 @@
   padding: var(--padding-sm);
 }
 
-.ftmTrackingCardHeader {
+.flmTrackingCardHeader {
   align-items: flex-start;
   display: flex;
   gap: var(--gap-sm);
   justify-content: space-between;
 }
 
-.ftmTrackingCardHeader > div {
+.flmTrackingCardHeader > div {
   display: flex;
   flex-direction: column;
 }
 
-.ftmTrackingCardHeader span,
-.ftmTrackingCard small {
+.flmTrackingCardHeader span,
+.flmTrackingCard small {
   color: var(--text-muted);
   font-size: var(--font-size-xs);
 }
 
-.ftmTrackingCard small {
+.flmTrackingCard small {
   display: block;
   margin-top: var(--margin-xs);
   overflow: hidden;
@@ -255,35 +283,35 @@
   white-space: nowrap;
 }
 
-.ftmTrackingPlot {
+.flmTrackingPlot {
   display: block;
   height: auto;
   margin-top: var(--margin-xs);
   width: 100%;
 }
 
-.ftmTrackingPlotBackground {
+.flmTrackingPlotBackground {
   fill: var(--input-bg);
 }
 
-.ftmTrackingEventRegion {
+.flmTrackingEventRegion {
   fill: rgba(139, 108, 197, 0.14);
 }
 
-.ftmTrackingAxis,
-.ftmTrackingZero {
+.flmTrackingAxis,
+.flmTrackingZero {
   fill: none;
   stroke: rgba(255, 255, 255, 0.18);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
 }
 
-.ftmTrackingZero {
+.flmTrackingZero {
   stroke-dasharray: 3 4;
 }
 
-.ftmTrackingDesired,
-.ftmTrackingActual {
+.flmTrackingDesired,
+.flmTrackingActual {
   fill: none;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -291,27 +319,27 @@
   vector-effect: non-scaling-stroke;
 }
 
-.ftmTrackingDesired {
+.flmTrackingDesired {
   stroke: #ef4444;
 }
 
-.ftmTrackingActual {
+.flmTrackingActual {
   stroke: #38bdf8;
 }
 
-.ftmTrackingAxisLabel {
+.flmTrackingAxisLabel {
   fill: var(--text-muted);
   font-size: 9px;
 }
 
-.ftmTrackingMeta {
+.flmTrackingMeta {
   display: flex;
   flex-wrap: wrap;
   gap: var(--gap-xs);
   margin-top: var(--margin-xs);
 }
 
-.ftmTrackingMeta span {
+.flmTrackingMeta span {
   background: var(--input-bg);
   border-radius: 999px;
   color: var(--text-muted);
@@ -320,12 +348,12 @@
 }
 
 @media only screen and (max-width: 900px) {
-  .ftmTwoColumn,
-  .ftmProfileGrid {
+  .flmTwoColumn,
+  .flmProfileGrid {
     grid-template-columns: 1fr;
   }
 
-  .ftmTuneComparisonTable {
+  .flmTuneComparisonTable {
     font-size: var(--font-size-sm);
     grid-template-columns: minmax(8rem, 1.3fr) minmax(5rem, 1fr) auto minmax(5rem, 1fr);
   }

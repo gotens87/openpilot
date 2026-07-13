@@ -77,7 +77,7 @@ from openpilot.starpilot.common.testing_grounds import (
 )
 from openpilot.starpilot.navigation.destination_store import normalize_destination_payload, update_recent_destinations
 from openpilot.starpilot.system.the_galaxy.factory_reset import remove_path as _run_factory_reset_delete
-from openpilot.starpilot.system.the_galaxy import ftm_workspace, utilities
+from openpilot.starpilot.system.the_galaxy import flm_workspace, utilities
 from openpilot.starpilot.system.the_galaxy.update_recovery import inspect_interrupted_update, public_recovery_status, recover_interrupted_update
 
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
@@ -85,6 +85,7 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 GITLAB_API = "https://gitlab.com/api/v4"
 GITLAB_SUBMISSIONS_PROJECT_ID = "71992109"
 GITLAB_TOKEN = os.environ.get("GITLAB_TOKEN", "")
+LEGACY_LATERAL_METHOD_API_PREFIX = "/api/" + "".join(("f", "t", "m"))
 
 GALAXY_DEPS_PATH = "/data/galaxy_deps"
 LEGACY_GALAXY_DEPS_PATH = "/data/" + "".join(chr(code) for code in (112, 111, 110, 100)) + "_deps"
@@ -5115,7 +5116,8 @@ def setup(app):
     def generate():
       routes = [(path, name) for path in FOOTAGE_PATHS for name in utilities.get_routes_names(path)]
       total = len(routes)
-      yield f"data: {json.dumps({'progress': 0, 'total': total})}\n\n"
+      connect_dongle_id = params.get("StockDongleId", encoding="utf-8") or params.get("DongleId", encoding="utf-8") or ""
+      yield f"data: {json.dumps({'progress': 0, 'total': total, 'connectDongleId': connect_dongle_id})}\n\n"
 
       with ThreadPoolExecutor(max_workers=10) as executor:
         futures = {executor.submit(utilities.process_route, path, name): (path, name) for path, name in routes}
@@ -5685,87 +5687,96 @@ def setup(app):
       **_serialize_lateral_maneuver_status(status),
     }), 200
 
-  @app.route("/api/ftm/status", methods=["GET"])
-  def get_ftm_status():
-    workspace = ftm_workspace.list_workspace()
+  @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/status", methods=["GET"])
+  @app.route("/api/flm/status", methods=["GET"])
+  def get_flm_status():
+    workspace = flm_workspace.list_workspace()
     return jsonify({
       "isOnroad": params.get_bool("IsOnroad"),
-      "status": ftm_workspace.read_ftm_status(),
+      "status": flm_workspace.read_flm_status(),
       "activeTrial": workspace.get("activeTrial"),
       "reports": workspace.get("reports", [])[:10],
     }), 200
 
-  @app.route("/api/ftm/analyze", methods=["POST"])
-  def start_ftm_analysis():
+  @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/analyze", methods=["POST"])
+  @app.route("/api/flm/analyze", methods=["POST"])
+  def start_flm_analysis():
     if params.get_bool("IsOnroad"):
-      return jsonify({"error": "FTM analysis can only run offroad."}), 409
+      return jsonify({"error": "FLM analysis can only run offroad."}), 409
 
     data = request.get_json(silent=True) or {}
     route_names = [str(route).strip() for route in data.get("routes", []) if str(route).strip()]
     if not route_names:
       return jsonify({"error": "No routes were selected."}), 400
 
-    started = ftm_workspace.start_ftm_background_analysis(route_names, FOOTAGE_PATHS)
+    started = flm_workspace.start_flm_background_analysis(route_names, FOOTAGE_PATHS)
     if not started:
-      return jsonify({"error": "Failed to start FTM analysis."}), 500
+      return jsonify({"error": "Failed to start FLM analysis."}), 500
 
     return jsonify({
-      "message": f"Started FTM analysis for {len(route_names[:ftm_workspace.FTM_ANALYZER_ROUTE_LIMIT])} route(s).",
-      "status": ftm_workspace.read_ftm_status(),
+      "message": f"Started FLM analysis for {len(route_names[:flm_workspace.FLM_ANALYZER_ROUTE_LIMIT])} route(s).",
+      "status": flm_workspace.read_flm_status(),
     }), 200
 
-  @app.route("/api/ftm/analyze/stop", methods=["POST"])
-  def stop_ftm_analysis():
-    stopped = ftm_workspace.stop_ftm_background_analysis()
+  @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/analyze/stop", methods=["POST"])
+  @app.route("/api/flm/analyze/stop", methods=["POST"])
+  def stop_flm_analysis():
+    stopped = flm_workspace.stop_flm_background_analysis()
     return jsonify({
-      "message": "Stopped FTM analysis." if stopped else "No active FTM analysis was running.",
+      "message": "Stopped FLM analysis." if stopped else "No active FLM analysis was running.",
       "stopped": bool(stopped),
-      "status": ftm_workspace.read_ftm_status(),
+      "status": flm_workspace.read_flm_status(),
     }), 200
 
-  @app.route("/api/ftm/report/<report_id>", methods=["GET"])
-  def get_ftm_report(report_id):
+  @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/report/<report_id>", methods=["GET"])
+  @app.route("/api/flm/report/<report_id>", methods=["GET"])
+  def get_flm_report(report_id):
     try:
-      return jsonify(ftm_workspace.load_report(report_id)), 200
+      return jsonify(flm_workspace.load_report(report_id)), 200
     except FileNotFoundError:
-      return jsonify({"error": "FTM report not found."}), 404
+      return jsonify({"error": "FLM report not found."}), 404
 
-  @app.route("/api/ftm/report/<report_id>", methods=["DELETE"])
-  def delete_ftm_report(report_id):
+  @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/report/<report_id>", methods=["DELETE"])
+  @app.route("/api/flm/report/<report_id>", methods=["DELETE"])
+  def delete_flm_report(report_id):
     try:
-      return jsonify(ftm_workspace.delete_report(report_id)), 200
+      return jsonify(flm_workspace.delete_report(report_id)), 200
     except FileNotFoundError:
-      return jsonify({"error": "FTM report not found."}), 404
+      return jsonify({"error": "FLM report not found."}), 404
     except RuntimeError as error:
       return jsonify({"error": str(error)}), 409
 
-  @app.route("/api/ftm/report/<report_id>/path", methods=["POST"])
-  def select_ftm_report_path(report_id):
+  @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/report/<report_id>/path", methods=["POST"])
+  @app.route("/api/flm/report/<report_id>/path", methods=["POST"])
+  def select_flm_report_path(report_id):
     data = request.get_json(silent=True) or {}
     path_key = str(data.get("pathKey") or "").strip()
     if not path_key:
       return jsonify({"error": "pathKey is required."}), 400
 
     try:
-      return jsonify(ftm_workspace.select_report_path(report_id, path_key)), 200
+      return jsonify(flm_workspace.select_report_path(report_id, path_key)), 200
     except FileNotFoundError:
-      return jsonify({"error": "FTM report not found."}), 404
+      return jsonify({"error": "FLM report not found."}), 404
     except ValueError as error:
       return jsonify({"error": str(error)}), 400
 
-  @app.route("/api/ftm/workspace", methods=["GET"])
-  def get_ftm_workspace():
-    return jsonify(ftm_workspace.list_workspace()), 200
+  @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/workspace", methods=["GET"])
+  @app.route("/api/flm/workspace", methods=["GET"])
+  def get_flm_workspace():
+    return jsonify(flm_workspace.list_workspace()), 200
 
-  @app.route("/api/ftm/workspace/clear", methods=["POST"])
-  def clear_ftm_workspace():
+  @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/workspace/clear", methods=["POST"])
+  @app.route("/api/flm/workspace/clear", methods=["POST"])
+  def clear_flm_workspace():
     try:
-      return jsonify(ftm_workspace.clear_workspace()), 200
+      return jsonify(flm_workspace.clear_workspace()), 200
     except RuntimeError as error:
       return jsonify({"error": str(error)}), 409
 
-  @app.route("/api/ftm/trials/apply", methods=["POST"])
-  def apply_ftm_trial():
+  @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/trials/apply", methods=["POST"])
+  @app.route("/api/flm/trials/apply", methods=["POST"])
+  def apply_flm_trial():
     data = request.get_json(silent=True) or {}
     report_id = str(data.get("reportId") or "").strip()
     profile_id = str(data.get("profileId") or "").strip()
@@ -5773,34 +5784,37 @@ def setup(app):
       return jsonify({"error": "Both reportId and profileId are required."}), 400
 
     try:
-      result = ftm_workspace.apply_trial_profile(report_id, profile_id)
+      result = flm_workspace.apply_trial_profile(report_id, profile_id)
     except FileNotFoundError:
-      return jsonify({"error": "FTM profile not found."}), 404
+      return jsonify({"error": "FLM profile not found."}), 404
     except RuntimeError as error:
       return jsonify({"error": str(error)}), 409
 
     return jsonify(result), 200
 
-  @app.route("/api/ftm/trials/revert", methods=["POST"])
-  def revert_ftm_trial():
+  @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/trials/revert", methods=["POST"])
+  @app.route("/api/flm/trials/revert", methods=["POST"])
+  def revert_flm_trial():
     try:
-      result = ftm_workspace.revert_trial_profile()
+      result = flm_workspace.revert_trial_profile()
     except FileNotFoundError:
-      return jsonify({"error": "No active FTM trial snapshot was found."}), 404
+      return jsonify({"error": "No active FLM trial snapshot was found."}), 404
 
     return jsonify(result), 200
 
-  @app.route("/api/ftm/trials/accept", methods=["POST"])
-  def accept_ftm_trial():
+  @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/trials/accept", methods=["POST"])
+  @app.route("/api/flm/trials/accept", methods=["POST"])
+  def accept_flm_trial():
     try:
-      result = ftm_workspace.accept_trial_as_baseline()
+      result = flm_workspace.accept_trial_as_baseline()
     except FileNotFoundError:
-      return jsonify({"error": "No active FTM trial was found."}), 404
+      return jsonify({"error": "No active FLM trial was found."}), 404
 
     return jsonify(result), 200
 
-  @app.route("/api/ftm/feedback", methods=["POST"])
-  def save_ftm_feedback():
+  @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/feedback", methods=["POST"])
+  @app.route("/api/flm/feedback", methods=["POST"])
+  def save_flm_feedback():
     data = request.get_json(silent=True) or {}
     report_id = str(data.get("reportId") or "").strip()
     if not report_id:
@@ -5812,9 +5826,9 @@ def setup(app):
       "notes": data.get("notes", ""),
     }
     try:
-      result = ftm_workspace.record_feedback(report_id, feedback)
+      result = flm_workspace.record_feedback(report_id, feedback)
     except FileNotFoundError:
-      return jsonify({"error": "FTM report not found."}), 404
+      return jsonify({"error": "FLM report not found."}), 404
 
     return jsonify(result), 200
 

@@ -14,6 +14,7 @@ const state = reactive({
   truncatedRoutes: false,
   routeProgress: 0,
   routeTotal: 0,
+  connectDongleId: "",
   workspace: { reports: [], activeTrial: null, status: {} },
   status: {},
   report: null,
@@ -44,6 +45,13 @@ function formatTimestamp(value) {
 function safeCount(value) {
   const n = Number(value)
   return Number.isFinite(n) ? n : 0
+}
+
+function connectRouteUrl(routeName) {
+  const dongleId = String(state.connectDongleId || "").trim()
+  const routeId = String(routeName || "").trim()
+  if (!dongleId || !routeId) return ""
+  return `https://connect.comma.ai/${encodeURIComponent(dongleId)}/${encodeURIComponent(routeId)}`
 }
 
 function formatStatusAge(updatedAt) {
@@ -151,11 +159,14 @@ async function fetchRoutes() {
             state.routeProgress = safeCount(data.progress)
             state.routeTotal = safeCount(data.total)
           }
+          if (typeof data.connectDongleId === "string") {
+            state.connectDongleId = data.connectDongleId
+          }
           if (Array.isArray(data.routes)) {
             enqueueRoutes(data.routes)
           }
         } catch (error) {
-          console.error("[ftm] failed to parse route payload", error)
+          console.error("[flm] failed to parse route payload", error)
         }
       }
     }
@@ -179,7 +190,7 @@ async function fetchRoutes() {
 async function fetchWorkspace() {
   try {
     state.loadingWorkspace = true
-    const response = await fetch("/api/ftm/workspace")
+    const response = await fetch("/api/flm/workspace")
     const payload = await response.json()
     if (!response.ok) throw new Error(payload.error || "Failed to load tuning workspace.")
     state.workspace = payload
@@ -201,7 +212,7 @@ function syncFeedbackState(report) {
 async function loadReport(reportId) {
   if (!reportId) return
   try {
-    const response = await fetch(`/api/ftm/report/${encodeURIComponent(reportId)}`)
+    const response = await fetch(`/api/flm/report/${encodeURIComponent(reportId)}`)
     const payload = await response.json()
     if (!response.ok) throw new Error(payload.error || "Failed to load tuning report.")
     state.report = payload
@@ -218,7 +229,7 @@ async function deleteReport(reportId) {
 
   state.runningAction = true
   try {
-    const response = await fetch(`/api/ftm/report/${encodeURIComponent(reportId)}`, { method: "DELETE" })
+    const response = await fetch(`/api/flm/report/${encodeURIComponent(reportId)}`, { method: "DELETE" })
     const payload = await response.json()
     if (!response.ok) throw new Error(payload.error || "Failed to delete tuning report.")
 
@@ -243,7 +254,7 @@ async function clearWorkspace() {
 
   state.runningAction = true
   try {
-    const response = await fetch("/api/ftm/workspace/clear", { method: "POST" })
+    const response = await fetch("/api/flm/workspace/clear", { method: "POST" })
     const payload = await response.json()
     if (!response.ok) throw new Error(payload.error || "Failed to clear tuning workspace.")
 
@@ -262,7 +273,7 @@ async function clearWorkspace() {
 
 async function fetchStatus() {
   try {
-    const response = await fetch("/api/ftm/status")
+    const response = await fetch("/api/flm/status")
     const payload = await response.json()
     if (!response.ok) throw new Error(payload.error || "Failed to load tuning status.")
     state.status = {
@@ -323,7 +334,7 @@ async function runAnalyze() {
   if (!state.selectedRoutes.length || state.runningAction) return
   state.runningAction = true
   try {
-    const response = await fetch("/api/ftm/analyze", {
+    const response = await fetch("/api/flm/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ routes: state.selectedRoutes }),
@@ -331,7 +342,7 @@ async function runAnalyze() {
     const payload = await response.json()
     if (!response.ok) throw new Error(payload.error || "Failed to start tuning analysis.")
     state.status = payload.status || {}
-    showSnackbar(payload.message || "FTM analysis started.")
+    showSnackbar(payload.message || "FLM analysis started.")
   } catch (error) {
     state.error = error?.message || "Failed to start tuning analysis."
     showSnackbar(state.error, "error")
@@ -344,11 +355,11 @@ async function stopAnalyze() {
   if (state.runningAction) return
   state.runningAction = true
   try {
-    const response = await fetch("/api/ftm/analyze/stop", { method: "POST" })
+    const response = await fetch("/api/flm/analyze/stop", { method: "POST" })
     const payload = await response.json()
     if (!response.ok) throw new Error(payload.error || "Failed to stop tuning analysis.")
     state.status = payload.status || {}
-    showSnackbar(payload.message || "FTM analysis stopped.")
+    showSnackbar(payload.message || "FLM analysis stopped.")
   } catch (error) {
     state.error = error?.message || "Failed to stop tuning analysis."
     showSnackbar(state.error, "error")
@@ -361,7 +372,7 @@ async function applyProfile(profileId) {
   if (!state.report?.reportId || !profileId || state.runningAction) return
   state.runningAction = true
   try {
-    const response = await fetch("/api/ftm/trials/apply", {
+    const response = await fetch("/api/flm/trials/apply", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ reportId: state.report.reportId, profileId }),
@@ -385,7 +396,7 @@ async function selectPath(pathKey) {
 
   state.runningAction = true
   try {
-    const response = await fetch(`/api/ftm/report/${encodeURIComponent(state.report.reportId)}/path`, {
+    const response = await fetch(`/api/flm/report/${encodeURIComponent(state.report.reportId)}/path`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ pathKey }),
@@ -407,7 +418,7 @@ async function revertProfile() {
   if (state.runningAction) return
   state.runningAction = true
   try {
-    const response = await fetch("/api/ftm/trials/revert", { method: "POST" })
+    const response = await fetch("/api/flm/trials/revert", { method: "POST" })
     const payload = await response.json()
     if (!response.ok) throw new Error(payload.error || "Failed to revert trial profile.")
     state.error = ""
@@ -427,7 +438,7 @@ async function acceptCurrentAsBaseline() {
 
   state.runningAction = true
   try {
-    const response = await fetch("/api/ftm/trials/accept", { method: "POST" })
+    const response = await fetch("/api/flm/trials/accept", { method: "POST" })
     const payload = await response.json()
     if (!response.ok) throw new Error(payload.error || "Failed to keep the current tune.")
     state.error = ""
@@ -463,7 +474,7 @@ async function saveFeedback() {
   if (!state.report?.reportId || state.runningAction) return
   state.runningAction = true
   try {
-    const response = await fetch("/api/ftm/feedback", {
+    const response = await fetch("/api/flm/feedback", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -548,9 +559,9 @@ function activeTrialProfile() {
   return allReportProfiles().find((profile) => profile.id === activeTrial.profileId) || null
 }
 
-function mergedFtmOverrides() {
-  const current = state.report?.currentParams?.FTMActiveOverrides || {}
-  const trial = activeTrialProfile()?.ftmOverrides || {}
+function mergedFlmOverrides() {
+  const current = state.report?.currentParams?.FLMActiveOverrides || {}
+  const trial = activeTrialProfile()?.flmOverrides || {}
   return {
     baseFrictionThresholds: {
       ...(current.baseFrictionThresholds || {}),
@@ -590,8 +601,8 @@ function tuneComparisonRows() {
     current: Object.hasOwn(trialGeneric, key) ? trialGeneric[key] : current[key],
   }))
 
-  const overrides = mergedFtmOverrides()
-  for (const [family, payload] of Object.entries(stock.FTMBaseFrictionThresholds || {})) {
+  const overrides = mergedFlmOverrides()
+  for (const [family, payload] of Object.entries(stock.FLMBaseFrictionThresholds || {})) {
     rows.push({
       key: `friction-threshold-${family}`,
       label: `${family} friction threshold`,
@@ -601,11 +612,11 @@ function tuneComparisonRows() {
   }
 
   for (const [symbol, currentValue] of Object.entries(overrides.vehicleKnobs || {})) {
-    if (!Object.hasOwn(stock.FTMVehicleKnobs || {}, symbol)) continue
+    if (!Object.hasOwn(stock.FLMVehicleKnobs || {}, symbol)) continue
     rows.push({
       key: symbol,
       label: symbol.split(".").slice(1).join("."),
-      stock: stock.FTMVehicleKnobs[symbol],
+      stock: stock.FLMVehicleKnobs[symbol],
       current: currentValue,
       codeLabel: symbol,
     })
@@ -625,25 +636,25 @@ function renderTuneComparison() {
   if (!rows.length) return ""
   const profile = activeTrialProfile()
   return html`
-    <div class="ftmCardSubsection ftmTuneComparison">
-      <div class="ftmCardHeader">
+    <div class="flmCardSubsection flmTuneComparison">
+      <div class="flmCardHeader">
         <div>
-          <h4>Stock vs Current FTM</h4>
+          <h4>Stock vs Current FLM</h4>
           <p class="longManeuverMuted">
-            ${profile ? `Includes active trial: ${profile.pathLabel || "FTM"} / ${profile.label}` : "Current values captured when this route was analyzed."}
+            ${profile ? `Includes active trial: ${profile.pathLabel || "FLM"} / ${profile.label}` : "Current values captured when this route was analyzed."}
           </p>
         </div>
       </div>
-      <div class="ftmTuneComparisonTable">
-        <div class="ftmTuneComparisonHeader">Parameter</div>
-        <div class="ftmTuneComparisonHeader">Stock</div>
-        <div class="ftmTuneComparisonArrow"></div>
-        <div class="ftmTuneComparisonHeader">FTM</div>
+      <div class="flmTuneComparisonTable">
+        <div class="flmTuneComparisonHeader">Parameter</div>
+        <div class="flmTuneComparisonHeader">Stock</div>
+        <div class="flmTuneComparisonArrow"></div>
+        <div class="flmTuneComparisonHeader">FLM</div>
         ${rows.map((row) => html`
-          <div class="ftmTuneComparisonLabel" title="${row.codeLabel || row.key}">${row.label}</div>
+          <div class="flmTuneComparisonLabel" title="${row.codeLabel || row.key}">${row.label}</div>
           <div>${formatTuneComparisonValue(row.stock)}</div>
-          <div class="ftmTuneComparisonArrow">&gt;</div>
-          <div class="${comparisonValueChanged(row) ? "ftmTuneComparisonChanged" : ""}">${formatTuneComparisonValue(row.current)}</div>
+          <div class="flmTuneComparisonArrow">&gt;</div>
+          <div class="${comparisonValueChanged(row) ? "flmTuneComparisonChanged" : ""}">${formatTuneComparisonValue(row.current)}</div>
         `)}
       </div>
     </div>
@@ -731,18 +742,18 @@ function renderTrackingPlot(plot) {
   const zeroY = 136 - ((0 - yMin) / Math.max(yMax - yMin, 0.001)) * 124
 
   return html`
-    <svg class="ftmTrackingPlot" viewBox="0 0 420 158" role="img" aria-label="Desired versus actual lateral acceleration">
-      <rect class="ftmTrackingPlotBackground" x="0" y="0" width="420" height="158" rx="10"></rect>
-      <rect class="ftmTrackingEventRegion" x="${eventX}" y="12" width="${eventWidth}" height="124"></rect>
-      <line class="ftmTrackingZero" x1="34" y1="${zeroY}" x2="410" y2="${zeroY}"></line>
-      <line class="ftmTrackingAxis" x1="34" y1="12" x2="34" y2="136"></line>
-      <line class="ftmTrackingAxis" x1="34" y1="136" x2="410" y2="136"></line>
-      <polyline class="ftmTrackingDesired" points="${desiredPoints}"></polyline>
-      <polyline class="ftmTrackingActual" points="${actualPoints}"></polyline>
-      <text class="ftmTrackingAxisLabel" x="2" y="18">${yMax.toFixed(1)}</text>
-      <text class="ftmTrackingAxisLabel" x="2" y="138">${yMin.toFixed(1)}</text>
-      <text class="ftmTrackingAxisLabel" x="34" y="152">0s</text>
-      <text class="ftmTrackingAxisLabel" x="384" y="152">${duration.toFixed(1)}s</text>
+    <svg class="flmTrackingPlot" viewBox="0 0 420 158" role="img" aria-label="Desired versus actual lateral acceleration">
+      <rect class="flmTrackingPlotBackground" x="0" y="0" width="420" height="158" rx="10"></rect>
+      <rect class="flmTrackingEventRegion" x="${eventX}" y="12" width="${eventWidth}" height="124"></rect>
+      <line class="flmTrackingZero" x1="34" y1="${zeroY}" x2="410" y2="${zeroY}"></line>
+      <line class="flmTrackingAxis" x1="34" y1="12" x2="34" y2="136"></line>
+      <line class="flmTrackingAxis" x1="34" y1="136" x2="410" y2="136"></line>
+      <polyline class="flmTrackingDesired" points="${desiredPoints}"></polyline>
+      <polyline class="flmTrackingActual" points="${actualPoints}"></polyline>
+      <text class="flmTrackingAxisLabel" x="2" y="18">${yMax.toFixed(1)}</text>
+      <text class="flmTrackingAxisLabel" x="2" y="138">${yMin.toFixed(1)}</text>
+      <text class="flmTrackingAxisLabel" x="34" y="152">0s</text>
+      <text class="flmTrackingAxisLabel" x="384" y="152">${duration.toFixed(1)}s</text>
     </svg>
   `
 }
@@ -752,28 +763,28 @@ function renderTrackingOverview() {
   if (!items.length) return ""
 
   return html`
-    <div class="ftmCardSubsection ftmTrackingOverview">
-      <div class="ftmCardHeader">
+    <div class="flmCardSubsection flmTrackingOverview">
+      <div class="flmCardHeader">
         <div>
           <h4>Tracking Overview</h4>
           <p class="longManeuverMuted">
             Desired vs actual lateral acceleration (m/s^2) in representative intervention-free windows. The shaded area is the classified event.
           </p>
         </div>
-        <div class="ftmTrackingLegend" aria-label="Plot legend">
+        <div class="flmTrackingLegend" aria-label="Plot legend">
           <span><i class="desired"></i>Desired</span>
           <span><i class="actual"></i>Actual</span>
         </div>
       </div>
 
-      <div class="ftmTrackingNotice">
+      <div class="flmTrackingNotice">
         No fit score by design. Small phase separation is normal, and closer traces do not automatically mean the steering feels better.
       </div>
 
-      <div class="ftmTrackingGrid">
+      <div class="flmTrackingGrid">
         ${items.map((item) => html`
-          <article class="ftmTrackingCard">
-            <div class="ftmTrackingCardHeader">
+          <article class="flmTrackingCard">
+            <div class="flmTrackingCardHeader">
               <div>
                 <strong>${item.overviewTitle}</strong>
                 <span>${String(item.bucket || "event").replace(/_/g, " ")}</span>
@@ -781,7 +792,7 @@ function renderTrackingOverview() {
               <span>${Number(item.plotData.meanSpeedMph || 0).toFixed(1)} mph</span>
             </div>
             ${renderTrackingPlot(item.plotData)}
-            <div class="ftmTrackingMeta">
+            <div class="flmTrackingMeta">
               <span>${item.evidence?.directionBias || item.plotData.direction || "center"}</span>
               <span>${item.evidence?.speedBand || item.plotData.speedBand || "mixed"}</span>
               <span>${Number(item.plotData.eventDurationSec || 0).toFixed(1)}s event</span>
@@ -796,11 +807,11 @@ function renderTrackingOverview() {
 
 function renderProfile(profile) {
   const genericEntries = Object.entries(profile.genericParams || {}).filter(([key]) => key !== "AdvancedLateralTune")
-  const frictionEntries = Object.entries(profile.ftmOverrides?.baseFrictionThresholds || {})
-  const vehicleKnobEntries = Object.entries(profile.ftmOverrides?.vehicleKnobs || {})
+  const frictionEntries = Object.entries(profile.flmOverrides?.baseFrictionThresholds || {})
+  const vehicleKnobEntries = Object.entries(profile.flmOverrides?.vehicleKnobs || {})
   return html`
-    <div class="ftmCard">
-      <div class="ftmCardHeader">
+    <div class="flmCard">
+      <div class="flmCardHeader">
         <div>
           <h4>${profile.label}</h4>
           <p class="longManeuverMuted">${profile.description}</p>
@@ -813,7 +824,7 @@ function renderProfile(profile) {
         </button>
       </div>
 
-      <div class="ftmProfileGrid">
+      <div class="flmProfileGrid">
         <div>
           <h5>Generic Params</h5>
           <ul>
@@ -823,7 +834,7 @@ function renderProfile(profile) {
           </ul>
         </div>
         <div>
-          <h5>FTM Overrides</h5>
+          <h5>FLM Overrides</h5>
           <ul>
             ${frictionEntries.map(([family, payload]) => html`<li><code>${family}</code>: ${renderCurve(payload?.values || [])}</li>`)}
             ${vehicleKnobEntries.map(([key, value]) => html`<li><code>${key}</code>: ${Number(value).toFixed(3)}</li>`)}
@@ -838,8 +849,8 @@ function renderProfile(profile) {
 function renderSuggestion(suggestion) {
   const currentVsSuggested = suggestion.currentVsSuggested
   return html`
-    <div class="ftmCard">
-      <div class="ftmCardHeader">
+    <div class="flmCard">
+      <div class="flmCardHeader">
         <div>
           <h4>${suggestion.bucket.replace(/_/g, " ")}</h4>
           <p class="longManeuverMuted">
@@ -848,7 +859,7 @@ function renderSuggestion(suggestion) {
             ${safeCount(suggestion.evidence?.eventCount)} event(s)
           </p>
         </div>
-        <div class="ftmFeedbackButtons">
+        <div class="flmFeedbackButtons">
           <button
             class="${() => `longManeuverButton ${feedbackStateFor(suggestion.dimensionId) === "accepted" ? "selected" : ""}`}"
             aria-pressed="${() => feedbackStateFor(suggestion.dimensionId) === "accepted" ? "true" : "false"}"
@@ -875,7 +886,7 @@ function renderSuggestion(suggestion) {
 
       ${currentVsSuggested
         ? html`
-          <div class="ftmDeltaBox">
+          <div class="flmDeltaBox">
             <strong>Current vs suggested:</strong>
             ${currentVsSuggested.type === "friction_curve"
               ? html`
@@ -899,8 +910,8 @@ function renderSuggestion(suggestion) {
 function renderPathSummary(path) {
   const selected = path.key === (state.report?.selectedPathKey || state.report?.primaryPathKey)
   return html`
-    <div class="ftmCard">
-      <div class="ftmCardHeader">
+    <div class="flmCard">
+      <div class="flmCardHeader">
         <div>
           <h4>${path.title}</h4>
           <p class="longManeuverMuted">
@@ -990,7 +1001,7 @@ export function Tuning() {
         </div>
 
         ${() => state.status?.isOnroad ? html`
-          <p class="longManeuverError">FTM analysis is offroad-only. Stop the car and go offroad before starting a run.</p>
+          <p class="longManeuverError">FLM analysis is offroad-only. Stop the car and go offroad before starting a run.</p>
         ` : ""}
 
         ${() => state.workspace?.activeTrial?.rollbackAvailable === false ? html`
@@ -1005,9 +1016,9 @@ export function Tuning() {
           </div>
         ` : ""}
 
-        <div class="ftmTwoColumn">
-          <section class="ftmCard">
-            <div class="ftmCardHeader">
+        <div class="flmTwoColumn">
+          <section class="flmCard">
+            <div class="flmCardHeader">
               <div>
                 <h3>Local Routes</h3>
                 <p class="longManeuverMuted">
@@ -1021,24 +1032,33 @@ export function Tuning() {
             ${() => state.routeTotal ? html`<p class="longManeuverMuted">Route index: ${state.routeProgress}/${state.routeTotal}</p>` : ""}
             ${() => state.truncatedRoutes ? html`<p class="longManeuverMuted">Showing the first ${MAX_RENDERED_ROUTES} routes only.</p>` : ""}
 
-            <div class="ftmRouteList">
+            <div class="flmRouteList">
               ${() => sortedRoutes().map((route) => html`
-                <label class="ftmRouteItem">
-                  <input
-                    type="checkbox"
-                    checked="${() => state.selectedRoutes.includes(route.name)}"
-                    @change="${() => toggleRouteSelection(route.name)}" />
-                  <span>
-                    <strong>${route.timestampLabel}</strong>
-                    <small>${route.name}</small>
-                  </span>
-                </label>
+                <div class="flmRouteRow">
+                  <label class="flmRouteItem">
+                    <input
+                      type="checkbox"
+                      checked="${() => state.selectedRoutes.includes(route.name)}"
+                      @change="${() => toggleRouteSelection(route.name)}" />
+                    <span>
+                      <strong>${route.timestampLabel}</strong>
+                      <small>${route.name}</small>
+                    </span>
+                  </label>
+                  ${() => connectRouteUrl(route.name) ? html`
+                    <a
+                      class="flmConnectLink"
+                      href="${connectRouteUrl(route.name)}"
+                      target="_blank"
+                      rel="noopener noreferrer">Connect</a>
+                  ` : ""}
+                </div>
               `)}
             </div>
           </section>
 
-          <section class="ftmCard">
-            <div class="ftmCardHeader">
+          <section class="flmCard">
+            <div class="flmCardHeader">
               <div>
                 <h3>Workspace</h3>
               </div>
@@ -1051,19 +1071,19 @@ export function Tuning() {
             </div>
             ${() => state.loadingWorkspace ? html`<p class="longManeuverMuted">Loading workspace...</p>` : ""}
             <p class="longManeuverMuted">
-              Recent reports stay on-device under <code>/data/galaxy/ftm</code>. Loading a report refreshes the suggestion and trial view below.
+              Recent reports stay on-device under <code>/data/galaxy/flm</code>. Loading a report refreshes the suggestion and trial view below.
             </p>
-            <div class="ftmWorkspaceList">
+            <div class="flmWorkspaceList">
               ${() => (state.workspace?.reports || []).length
                 ? state.workspace.reports.map((report) => html`
-                  <div class="ftmWorkspaceRow">
-                    <button class="ftmWorkspaceItem" @click="${() => loadReport(report.reportId)}">
+                  <div class="flmWorkspaceRow">
+                    <button class="flmWorkspaceItem" @click="${() => loadReport(report.reportId)}">
                       <strong>${report.carFingerprint || "Unknown car"}</strong>
                       <span>${(report.routeNames || []).join(", ")}</span>
                       <small>${formatTimestamp(report.createdAt ? new Date(report.createdAt * 1000).toISOString() : "")}</small>
                     </button>
                     <button
-                      class="longManeuverButton danger ftmWorkspaceDelete"
+                      class="longManeuverButton danger flmWorkspaceDelete"
                       disabled="${() => state.runningAction}"
                       @click="${() => deleteReport(report.reportId)}">
                       Delete
@@ -1076,8 +1096,8 @@ export function Tuning() {
         </div>
 
         ${() => state.report ? html`
-          <section class="ftmCard">
-            <div class="ftmCardHeader">
+          <section class="flmCard">
+            <div class="flmCardHeader">
               <div>
                 <h3>Report Summary</h3>
               </div>
@@ -1107,12 +1127,12 @@ export function Tuning() {
 
             ${() => renderTuneComparison()}
 
-            <div class="ftmFindings">
+            <div class="flmFindings">
               ${reportPaths().map((path) => renderPathSummary(path))}
             </div>
 
             ${() => (state.report.warnings || []).length ? html`
-              <div class="ftmCardSubsection">
+              <div class="flmCardSubsection">
                 <h4>Warnings</h4>
                 <ul>
                   ${(state.report.warnings || []).map((warning) => html`<li>${warning}</li>`)}
@@ -1121,7 +1141,7 @@ export function Tuning() {
             ` : ""}
 
             ${() => (state.report.addTheseParametersAndStartHere || []).length ? html`
-              <div class="ftmCardSubsection">
+              <div class="flmCardSubsection">
                 <h4>Add These Parameters And Start Here</h4>
                 <ul>
                   ${(state.report.addTheseParametersAndStartHere || []).map((line) => html`<li>${line}</li>`)}
@@ -1130,8 +1150,8 @@ export function Tuning() {
             ` : ""}
           </section>
 
-          <section class="ftmCard">
-            <div class="ftmCardHeader">
+          <section class="flmCard">
+            <div class="flmCardHeader">
               <div>
                 <h3>Active Findings: ${primaryPath()?.title || "Recommendations"}</h3>
                 <p class="longManeuverMuted">
@@ -1148,21 +1168,21 @@ export function Tuning() {
             </div>
 
             <textarea
-              class="ftmNotes"
+              class="flmNotes"
               placeholder="Optional tuning notes"
               @input="${(event) => { state.feedbackNotes = event.target.value }}">${() => state.feedbackNotes}</textarea>
 
-            <div class="ftmFindings">
+            <div class="flmFindings">
               ${((primaryPath()?.suggestions) || []).map((suggestion) => renderSuggestion(suggestion))}
             </div>
           </section>
 
-          <section class="ftmCard">
+          <section class="flmCard">
             <h3>Trial Profiles</h3>
             <p class="longManeuverMuted">
-              Apply one bounded profile at a time. Revert restores the exact advanced-lateral and FTM state that existed before the trial.
+              Apply one bounded profile at a time. Revert restores the exact advanced-lateral and FLM state that existed before the trial.
             </p>
-            <div class="ftmFindings">
+            <div class="flmFindings">
               ${reportPaths().length
                 ? reportPaths().map((path) => html`
                   <div>
@@ -1177,7 +1197,7 @@ export function Tuning() {
             </div>
           </section>
         ` : html`
-          <section class="ftmCard">
+          <section class="flmCard">
             <h3>No Active Report</h3>
             <p class="longManeuverMuted">
               Select local routes, run analysis, or open one of the saved reports from the workspace panel.

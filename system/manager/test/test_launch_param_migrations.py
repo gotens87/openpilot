@@ -5,6 +5,7 @@ from openpilot.system.manager.launch_param_migrations import (
   BRANCH_DEFAULTS_MIGRATION_MARKER,
   DEFAULT_STEER_KP,
   LAUNCH_PARAM_MIGRATION_MARKER,
+  LATERAL_METHOD_REBRAND_MIGRATION_MARKER,
   MARKER_DIRNAME,
   STANDARD_ACCELERATION_PROFILE,
   USE_OLD_UI_MIGRATION_MARKER,
@@ -48,6 +49,9 @@ class FileBackedFakeParams:
 
   def put_float(self, key, value):
     Path(self.get_param_path(key)).write_text(str(float(value)), encoding="utf-8")
+
+  def put(self, key, value):
+    Path(self.get_param_path(key)).write_text(str(value), encoding="utf-8")
 
 
 def marker_path(tmp_path: Path, marker_name: str) -> Path:
@@ -235,3 +239,23 @@ def test_apply_launch_param_migrations_does_not_overwrite_use_old_ui(tmp_path):
   apply_launch_param_migrations(params)
 
   assert not params.get_bool("UseOldUI")
+
+
+def test_apply_launch_param_migrations_preserves_active_lateral_method_trial(tmp_path):
+  params = FileBackedFakeParams(tmp_path / "params")
+  legacy_prefix = "".join(("F", "T", "M"))
+  legacy_values = {
+    "ActiveOverrides": '{"vehicleKnobs":{"generic.ff_gain_left":0.12}}',
+    "ActiveProfileId": "report:cleanup:recommended",
+    "TrialBaseline": '{"params":{"SteerLatAccel":1.8}}',
+    "TrialApplied": "1",
+  }
+  for suffix, value in legacy_values.items():
+    params.put(f"{legacy_prefix}{suffix}", value)
+
+  apply_launch_param_migrations(params)
+
+  for suffix, value in legacy_values.items():
+    assert params.get(f"FLM{suffix}") == value
+    assert not Path(params.get_param_path(f"{legacy_prefix}{suffix}")).exists()
+  assert marker_path(tmp_path, LATERAL_METHOD_REBRAND_MIGRATION_MARKER).is_file()

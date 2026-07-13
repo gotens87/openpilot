@@ -179,7 +179,7 @@
   gap: 0.45rem;
 }
 
-.ds-ftm-badge {
+.ds-flm-badge {
   background: var(--sidebar-bg);
   border: 1px solid var(--main-fg);
   border-radius: 999px;
@@ -191,8 +191,8 @@
   text-transform: uppercase;
 }
 
-.ds-ftm-detail,
-.ds-ftm-summary {
+.ds-flm-detail,
+.ds-flm-summary {
   border-left: 2px solid var(--main-fg);
   color: var(--text-muted);
   font-size: var(--font-size-xs);
@@ -201,11 +201,11 @@
   padding-left: 0.65rem;
 }
 
-.ds-ftm-summary > div + div {
+.ds-flm-summary > div + div {
   margin-top: 0.2rem;
 }
 
-.ds-ftm-link {
+.ds-flm-link {
   color: var(--main-fg);
   display: inline-block;
   font-weight: var(--font-weight-bold);
@@ -213,7 +213,7 @@
   text-decoration: none;
 }
 
-.ds-ftm-link:hover {
+.ds-flm-link:hover {
   text-decoration: underline;
 }
 

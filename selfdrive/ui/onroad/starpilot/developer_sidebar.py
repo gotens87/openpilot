@@ -14,7 +14,7 @@ METRIC_MARGIN = 12
 FONT_SIZE = 35
 METER_TO_FOOT = 3.28084
 _WHITE_DIM = rl.Color(255, 255, 255, 85)
-_FTM_OVERRIDE_COLOR = rl.Color(239, 68, 68, 255)
+_FLM_OVERRIDE_COLOR = rl.Color(239, 68, 68, 255)
 
 def parse_hex_color(hex_str: str, default_color=rl.WHITE) -> rl.Color:
   if not hex_str:
@@ -56,7 +56,7 @@ class DeveloperSidebar:
     self._cached_metrics = [0] * 7
     self._cached_force_auto_tune_off = False
     self._cached_force_auto_tune = False
-    self._cached_ftm_trial_applied = False
+    self._cached_flm_trial_applied = False
     self._cached_friction_stock = 0.0
     self._cached_friction = 0.0
     self._cached_lat_stock = 0.0
@@ -73,7 +73,7 @@ class DeveloperSidebar:
     self._visible = False
     self._metric_color = rl.WHITE
     self._active_ids: list[int] = []
-    self._ftm_override_metric_ids: set[int] = set()
+    self._flm_override_metric_ids: set[int] = set()
     self._metrics: dict[int, tuple[str, str]] = {}
 
   @property
@@ -97,7 +97,7 @@ class DeveloperSidebar:
     self._cached_metrics = [self._params.get_int(f"DeveloperSidebarMetric{i}") for i in range(1, 8)]
     self._cached_force_auto_tune_off = self._params.get_bool("ForceAutoTuneOff")
     self._cached_force_auto_tune = self._params.get_bool("ForceAutoTune")
-    self._cached_ftm_trial_applied = self._params.get_bool("FTMTrialApplied")
+    self._cached_flm_trial_applied = self._params.get_bool("FLMTrialApplied")
     self._cached_friction_stock = self._params.get_float("SteerFrictionStock")
     self._cached_friction = self._params.get_float("SteerFriction")
     self._cached_lat_stock = self._params.get_float("SteerLatAccelStock")
@@ -222,15 +222,15 @@ class DeveloperSidebar:
     use_custom_friction = bool(ui_state.starpilot_toggles.get("use_custom_friction", force_auto_tune_off))
     use_custom_lat_factor = bool(ui_state.starpilot_toggles.get("use_custom_latAccelFactor", force_auto_tune_off))
 
-    self._ftm_override_metric_ids = set()
-    if self._cached_ftm_trial_applied:
-      ftm_metric_flags = {
+    self._flm_override_metric_ids = set()
+    if self._cached_flm_trial_applied:
+      flm_metric_flags = {
         3: bool(ui_state.starpilot_toggles.get("use_custom_steerActuatorDelay", False)),
         4: use_custom_friction,
         5: use_custom_lat_factor,
         6: bool(ui_state.starpilot_toggles.get("use_custom_steerRatio", False)),
       }
-      self._ftm_override_metric_ids = {metric_id for metric_id, enabled in ftm_metric_flags.items() if enabled}
+      self._flm_override_metric_ids = {metric_id for metric_id, enabled in flm_metric_flags.items() if enabled}
 
     friction_coeff = resolve_effective_torque_value(
       use_custom_friction,
@@ -305,6 +305,6 @@ class DeveloperSidebar:
       if metric_id <= 0 or metric_id not in self._metrics:
         continue
       label_first, label_second = self._metrics[metric_id]
-      ftm_overridden = metric_id in self._ftm_override_metric_ids
-      self._draw_metric(sidebar_rect, label_first, label_second, _FTM_OVERRIDE_COLOR if ftm_overridden else self._metric_color, y)
+      flm_overridden = metric_id in self._flm_override_metric_ids
+      self._draw_metric(sidebar_rect, label_first, label_second, _FLM_OVERRIDE_COLOR if flm_overridden else self._metric_color, y)
       y += METRIC_HEIGHT + spacing

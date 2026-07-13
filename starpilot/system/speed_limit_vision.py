@@ -21,7 +21,7 @@ RUNTIME_LOOP_HZ = 20
 INFERENCE_INTERVAL = 0.15
 FOLLOWUP_INFERENCE_INTERVAL = 0.10
 FOLLOWUP_WINDOW_SECONDS = 2.0
-TEMPORAL_TRACKING_ENABLED = True
+TEMPORAL_TRACKING_ENABLED = False
 TRACK_CONFIRMED_PROPOSALS_ENABLED = False
 TRACK_CLASSIFICATION_INTERVAL = 0.12
 TRACK_BUSY_CLASSIFICATION_INTERVAL = 0.35
@@ -58,6 +58,7 @@ CONSISTENT_DETECTIONS = 2
 # These counts must remain achievable at the measured 1.5 Hz onroad cadence.
 CHANGE_CONSISTENT_DETECTIONS = 2
 CHANGE_SINGLE_READ_MIN_CONFIDENCE = 0.83
+CHANGE_REPEAT_MIN_CONFIDENCE = 0.70
 LOW_SPEED_CHANGE_CONSISTENT_DETECTIONS = 2
 LOW_SPEED_CHANGE_MIN_CONFIDENCE = 0.90
 LOW_SPEED_CHANGE_ALLOW_STRONG_CONSENSUS = True
@@ -2150,6 +2151,7 @@ class SpeedLimitVisionDaemon:
     counts = Counter(entry.speed_limit_mph for entry in self.history)
     candidate_speed_limit, candidate_count = counts.most_common(1)[0]
     matching_entries = [entry for entry in self.history if entry.speed_limit_mph == candidate_speed_limit]
+    matching_confidences = sorted((entry.confidence for entry in matching_entries), reverse=True)
     best_confidence = max(entry.confidence for entry in matching_entries)
     has_strong_consensus = any(entry.strong_consensus for entry in matching_entries)
     current_speed_limit = self.published_speed_limit_mph
@@ -2169,6 +2171,11 @@ class SpeedLimitVisionDaemon:
         if best_confidence < LOW_SPEED_CHANGE_MIN_CONFIDENCE:
           return None
       if candidate_count < required_count and not allow_single_frame_confirmation:
+        return None
+      if (
+        not allow_single_frame_confirmation and
+        matching_confidences[required_count - 1] < CHANGE_REPEAT_MIN_CONFIDENCE
+      ):
         return None
       if candidate_count <= current_count:
         return None

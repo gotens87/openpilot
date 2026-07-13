@@ -106,6 +106,7 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--consistent-detections", type=int, help="Override matching reads required for an initial publication.")
   parser.add_argument("--change-consistent-detections", type=int, help="Override matching reads required to change a publication.")
   parser.add_argument("--change-single-read-min-confidence", type=float, help="Override confidence for a one-read speed change.")
+  parser.add_argument("--change-repeat-min-confidence", type=float, help="Override confidence required from the confirming speed-change read.")
   parser.add_argument("--max-cases", type=int, default=0, help="Optional evaluation cap after deduplication.")
   return parser.parse_args()
 
@@ -272,6 +273,8 @@ def main() -> int:
     slv.CHANGE_CONSISTENT_DETECTIONS = args.change_consistent_detections
   if args.change_single_read_min_confidence is not None:
     slv.CHANGE_SINGLE_READ_MIN_CONFIDENCE = args.change_single_read_min_confidence
+  if args.change_repeat_min_confidence is not None:
+    slv.CHANGE_REPEAT_MIN_CONFIDENCE = args.change_repeat_min_confidence
   cases = load_cases(queue_path, labels_path, args.dedupe_seconds)
   if args.focus_eval_csv:
     with args.focus_eval_csv.expanduser().resolve().open(encoding="utf-8", newline="") as input_file:
@@ -397,6 +400,7 @@ def main() -> int:
     "low_speed_change_consistent_detections": slv.LOW_SPEED_CHANGE_CONSISTENT_DETECTIONS,
     "low_speed_change_min_confidence": slv.LOW_SPEED_CHANGE_MIN_CONFIDENCE,
     "change_single_read_min_confidence": slv.CHANGE_SINGLE_READ_MIN_CONFIDENCE,
+    "change_repeat_min_confidence": slv.CHANGE_REPEAT_MIN_CONFIDENCE,
     "low_speed_change_allow_strong_consensus": slv.LOW_SPEED_CHANGE_ALLOW_STRONG_CONSENSUS,
     "strong_model_consensus_enabled": slv.DETECTOR_CLASSIFIER_STRONG_MODEL_CONSENSUS_ENABLED,
     "strong_model_min_proposal_confidence": slv.DETECTOR_CLASSIFIER_STRONG_MODEL_MIN_PROPOSAL_CONFIDENCE,

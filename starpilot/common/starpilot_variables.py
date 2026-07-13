@@ -232,10 +232,10 @@ EXCLUDED_KEYS = {
   "CommunityFavorites",
   "CurvatureData",
   "ExperimentalLongitudinalEnabled",
-  "FTMActiveOverrides",
-  "FTMActiveProfileId",
-  "FTMTrialBaseline",
-  "FTMTrialApplied",
+  "FLMActiveOverrides",
+  "FLMActiveProfileId",
+  "FLMTrialBaseline",
+  "FLMTrialApplied",
   "InstallDate",
   "StarPilotCarParamsPersistent",
   "KonikMinutes",
@@ -708,13 +708,13 @@ class StarPilotVariables:
     advanced_lateral_tuning = self.get_value("AdvancedLateralTune")
     toggle.force_auto_tune = self.get_value("ForceAutoTune", condition=advanced_lateral_tuning and not has_auto_tune and is_torque_car and not is_angle_car)
     toggle.force_auto_tune_off = self.get_value("ForceAutoTuneOff", condition=advanced_lateral_tuning and has_auto_tune and is_torque_car and not is_angle_car)
-    toggle.ftm_active_profile_id = self.params.get("FTMActiveProfileId", encoding="utf-8") or ""
-    toggle.ftm_trial_applied = self.params.get_bool("FTMTrialApplied")
-    ftm_overrides_raw = self.params.get("FTMActiveOverrides", encoding="utf-8") or ""
+    toggle.flm_active_profile_id = self.params.get("FLMActiveProfileId", encoding="utf-8") or ""
+    toggle.flm_trial_applied = self.params.get_bool("FLMTrialApplied")
+    flm_overrides_raw = self.params.get("FLMActiveOverrides", encoding="utf-8") or ""
     try:
-      toggle.ftm_active_overrides = json.loads(ftm_overrides_raw) if ftm_overrides_raw else {}
+      toggle.flm_active_overrides = json.loads(flm_overrides_raw) if flm_overrides_raw else {}
     except Exception:
-      toggle.ftm_active_overrides = {}
+      toggle.flm_active_overrides = {}
     toggle.use_auto_steer_delay = self.get_value("UseAutoSteerDelay", condition=advanced_lateral_tuning, default=True)
     toggle.steerActuatorDelay = self.get_value("SteerDelay", cast=float, condition=advanced_lateral_tuning, default=fullSteerActuatorDelay, min=0.01, max=1.0)
     toggle.use_custom_steerActuatorDelay = advanced_lateral_tuning and not toggle.use_auto_steer_delay

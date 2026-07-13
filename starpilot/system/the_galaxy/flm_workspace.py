@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -21,14 +22,14 @@ from opendbc.car.hyundai.values import HyundaiFlags
 from openpilot.common.params import Params
 from openpilot.selfdrive.controls.lib.latcontrol_torque import KP
 from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
-  FTM_FRICTION_SPEED_KNOTS,
-  get_ftm_capabilities,
-  get_ftm_rich_profile_key,
-  get_ftm_supported_vehicle_knobs,
+  FLM_FRICTION_SPEED_KNOTS,
+  get_flm_capabilities,
+  get_flm_rich_profile_key,
+  get_flm_supported_vehicle_knobs,
   get_gm_base_friction_threshold,
   get_hkg_canfd_base_friction_threshold,
   get_standard_friction_threshold,
-  normalize_ftm_overrides,
+  normalize_flm_overrides,
 )
 from openpilot.starpilot.common.lateral_delay import full_lateral_delay
 from openpilot.system.hardware import PC
@@ -37,12 +38,12 @@ from openpilot.tools.lib.logreader import LogReader
 from openpilot.starpilot.system.the_galaxy import utilities
 
 
-FTM_STATUS_PATH = Path("/tmp/galaxy_ftm_status.json")
-FTM_LOG_PATH = Path("/tmp/galaxy_ftm.log")
-FTM_STATUS_MAX_AGE_SECONDS = 3600.0
-FTM_ANALYZER_ROUTE_LIMIT = 8
-FTM_ANALYZER_PROCESS = None
-FTM_ANALYZER_LOCK = threading.Lock()
+FLM_STATUS_PATH = Path("/tmp/galaxy_flm_status.json")
+FLM_LOG_PATH = Path("/tmp/galaxy_flm.log")
+FLM_STATUS_MAX_AGE_SECONDS = 3600.0
+FLM_ANALYZER_ROUTE_LIMIT = 8
+FLM_ANALYZER_PROCESS = None
+FLM_ANALYZER_LOCK = threading.Lock()
 
 TRIAL_PARAM_SPECS = {
   "AdvancedLateralTune": "bool",
@@ -54,12 +55,12 @@ TRIAL_PARAM_SPECS = {
   "SteerKP": "float",
   "SteerLatAccel": "float",
   "SteerRatio": "float",
-  "FTMActiveProfileId": "string",
-  "FTMActiveOverrides": "json",
-  "FTMTrialApplied": "bool",
+  "FLMActiveProfileId": "string",
+  "FLMActiveOverrides": "json",
+  "FLMTrialApplied": "bool",
 }
 
-FTM_ADVANCED_LATERAL_PARAM_KEYS = {
+FLM_ADVANCED_LATERAL_PARAM_KEYS = {
   "AdvancedLateralTune",
   "ForceAutoTune",
   "ForceAutoTuneOff",
@@ -70,7 +71,7 @@ FTM_ADVANCED_LATERAL_PARAM_KEYS = {
   "SteerLatAccel",
   "SteerRatio",
 }
-FTM_TRIAL_BASELINE_PARAM = "FTMTrialBaseline"
+FLM_TRIAL_BASELINE_PARAM = "FLMTrialBaseline"
 
 GENERIC_PARAM_METADATA = {
   "SteerDelay": {"min": 0.01, "max": 1.0, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
@@ -80,7 +81,7 @@ GENERIC_PARAM_METADATA = {
   "SteerRatio": {"min": 5.0, "max": 25.0, "precision": 0.001, "deltaType": "absolute", "safeLiveTrial": True},
 }
 
-FTM_REFERENCE_MODEL = {
+FLM_REFERENCE_MODEL = {
   "version": 1,
   "families": {
     "turn_in_boost": {
@@ -106,7 +107,7 @@ FTM_REFERENCE_MODEL = {
   },
 }
 
-FTM_PATH_SPECS = {
+FLM_PATH_SPECS = {
   "baseline_fix": {
     "title": "Baseline Fix",
     "description": "Use the broad knobs first to get the car into the right zip code before touching narrower cleanup layers.",
@@ -121,8 +122,8 @@ FTM_PATH_SPECS = {
   },
 }
 
-FTM_DRIVER_OVERRIDE_PRE_BUFFER_S = 0.35
-FTM_DRIVER_OVERRIDE_POST_BUFFER_S = 1.0
+FLM_DRIVER_OVERRIDE_PRE_BUFFER_S = 0.35
+FLM_DRIVER_OVERRIDE_POST_BUFFER_S = 1.0
 
 
 @dataclass
@@ -136,7 +137,7 @@ class RouteSource:
 
 
 @dataclass
-class FTMSample:
+class FLMSample:
   route: str
   segment: int
   t: float
@@ -165,12 +166,81 @@ def _get_galaxy_dir() -> Path:
   return Path(Paths.comma_home()) / "starpilot" / "data" / "galaxy" if PC else Path("/data/galaxy")
 
 
-def get_ftm_workspace_root() -> Path:
-  return _get_galaxy_dir() / "ftm"
+def get_flm_workspace_root() -> Path:
+  return _get_galaxy_dir() / "flm"
+
+
+def _legacy_workspace_root() -> Path:
+  return _get_galaxy_dir() / "".join(("f", "t", "m"))
+
+
+def _migrate_legacy_payload(value):
+  legacy_upper = "".join(("F", "T", "M"))
+  legacy_lower = legacy_upper.lower()
+  if isinstance(value, dict):
+    migrated = {}
+    for key, item in value.items():
+      migrated_key = str(key)
+      if migrated_key.startswith(legacy_upper):
+        migrated_key = f"FLM{migrated_key[len(legacy_upper):]}"
+      elif migrated_key.startswith(legacy_lower):
+        migrated_key = f"flm{migrated_key[len(legacy_lower):]}"
+      migrated[migrated_key] = _migrate_legacy_payload(item)
+    return migrated
+  if isinstance(value, list):
+    return [_migrate_legacy_payload(item) for item in value]
+  if isinstance(value, str):
+    legacy_method_name = "Firestar " + "Tuning Method"
+    return value.replace(legacy_method_name, "Firestar Lateral Method").replace(legacy_upper, "FLM")
+  return value
+
+
+def _migrate_legacy_workspace(root: Path) -> None:
+  marker = root / ".flm_rebrand_v1"
+  if marker.exists():
+    return
+
+  legacy_root = _legacy_workspace_root()
+  if legacy_root.is_dir() and legacy_root != root:
+    root.parent.mkdir(parents=True, exist_ok=True)
+    if root.exists():
+      shutil.copytree(legacy_root, root, dirs_exist_ok=True)
+      shutil.rmtree(legacy_root)
+    else:
+      legacy_root.replace(root)
+
+  if not root.exists():
+    return
+
+  legacy_lower = "".join(("f", "t", "m"))
+  legacy_reference = root / "reference" / f"{legacy_lower}_reference.json"
+  current_reference = root / "reference" / "flm_reference.json"
+  if legacy_reference.is_file() and not current_reference.exists():
+    legacy_reference.replace(current_reference)
+
+  for path in root.rglob("*.json"):
+    try:
+      payload = json.loads(path.read_text(encoding="utf-8"))
+      migrated = _migrate_legacy_payload(payload)
+      if migrated != payload:
+        path.write_text(json.dumps(migrated, indent=2, sort_keys=True), encoding="utf-8")
+    except Exception:
+      continue
+
+  legacy_upper = legacy_lower.upper()
+  for path in root.rglob("*.html"):
+    try:
+      content = path.read_text(encoding="utf-8")
+      content = content.replace(legacy_upper, "FLM").replace(legacy_lower, "flm")
+      path.write_text(content, encoding="utf-8")
+    except Exception:
+      continue
+
+  marker.touch()
 
 
 def _workspace_paths() -> dict[str, Path]:
-  root = get_ftm_workspace_root()
+  root = get_flm_workspace_root()
   return {
     "root": root,
     "reports": root / "reports",
@@ -181,14 +251,15 @@ def _workspace_paths() -> dict[str, Path]:
   }
 
 
-def ensure_ftm_workspace() -> dict[str, Path]:
+def ensure_flm_workspace() -> dict[str, Path]:
+  _migrate_legacy_workspace(get_flm_workspace_root())
   paths = _workspace_paths()
   for key, path in paths.items():
     if key != "root":
       path.mkdir(parents=True, exist_ok=True)
-  reference_path = paths["reference"] / "ftm_reference.json"
+  reference_path = paths["reference"] / "flm_reference.json"
   if not reference_path.exists():
-    reference_path.write_text(json.dumps(FTM_REFERENCE_MODEL, indent=2, sort_keys=True), encoding="utf-8")
+    reference_path.write_text(json.dumps(FLM_REFERENCE_MODEL, indent=2, sort_keys=True), encoding="utf-8")
   return paths
 
 
@@ -223,45 +294,45 @@ def _worker_env(repo_root: Path) -> dict[str, str]:
   return env
 
 
-def read_ftm_status() -> dict[str, Any]:
-  data = _read_json(FTM_STATUS_PATH, {})
+def read_flm_status() -> dict[str, Any]:
+  data = _read_json(FLM_STATUS_PATH, {})
   return data if isinstance(data, dict) else {}
 
 
-def _write_ftm_status(payload: dict[str, Any]) -> None:
+def _write_flm_status(payload: dict[str, Any]) -> None:
   payload = dict(payload)
   payload["updatedAt"] = time.time()
-  tmp_path = FTM_STATUS_PATH.with_suffix(".tmp")
+  tmp_path = FLM_STATUS_PATH.with_suffix(".tmp")
   tmp_path.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
-  tmp_path.replace(FTM_STATUS_PATH)
+  tmp_path.replace(FLM_STATUS_PATH)
 
 
-def clear_ftm_status() -> None:
+def clear_flm_status() -> None:
   try:
-    FTM_STATUS_PATH.unlink()
+    FLM_STATUS_PATH.unlink()
   except FileNotFoundError:
     pass
   except OSError:
     pass
 
 
-def ftm_analyzer_running() -> bool:
-  process = FTM_ANALYZER_PROCESS
+def flm_analyzer_running() -> bool:
+  process = FLM_ANALYZER_PROCESS
   if process is not None and process.poll() is None:
     return True
 
-  status = read_ftm_status()
+  status = read_flm_status()
   pid = int(status.get("pid") or 0)
   started_at = float(status.get("startedAt") or 0.0)
   if pid <= 0 or started_at <= 0:
     return False
-  if (time.time() - started_at) > FTM_STATUS_MAX_AGE_SECONDS:
-    clear_ftm_status()
+  if (time.time() - started_at) > FLM_STATUS_MAX_AGE_SECONDS:
+    clear_flm_status()
     return False
   try:
     os.kill(pid, 0)
   except ProcessLookupError:
-    clear_ftm_status()
+    clear_flm_status()
     return False
   except PermissionError:
     return True
@@ -270,12 +341,12 @@ def ftm_analyzer_running() -> bool:
   return True
 
 
-def stop_ftm_background_analysis() -> bool:
-  global FTM_ANALYZER_PROCESS
+def stop_flm_background_analysis() -> bool:
+  global FLM_ANALYZER_PROCESS
 
-  with FTM_ANALYZER_LOCK:
-    process = FTM_ANALYZER_PROCESS
-    status = read_ftm_status()
+  with FLM_ANALYZER_LOCK:
+    process = FLM_ANALYZER_PROCESS
+    status = read_flm_status()
     pid = int(status.get("pid") or 0)
 
     if process is not None and process.poll() is None:
@@ -284,8 +355,8 @@ def stop_ftm_background_analysis() -> bool:
         process.wait(timeout=2.0)
       except subprocess.TimeoutExpired:
         process.kill()
-      FTM_ANALYZER_PROCESS = None
-      clear_ftm_status()
+      FLM_ANALYZER_PROCESS = None
+      clear_flm_status()
       return True
 
     if pid > 0:
@@ -295,22 +366,22 @@ def stop_ftm_background_analysis() -> bool:
         pass
       except OSError:
         return False
-      clear_ftm_status()
+      clear_flm_status()
       return True
 
   return False
 
 
-def start_ftm_background_analysis(route_names: list[str], footage_paths: list[str]) -> bool:
-  global FTM_ANALYZER_PROCESS
+def start_flm_background_analysis(route_names: list[str], footage_paths: list[str]) -> bool:
+  global FLM_ANALYZER_PROCESS
 
   route_names = [str(route) for route in route_names if str(route).strip()]
   if not route_names:
     return False
 
-  ensure_ftm_workspace()
-  with FTM_ANALYZER_LOCK:
-    if ftm_analyzer_running():
+  ensure_flm_workspace()
+  with FLM_ANALYZER_LOCK:
+    if flm_analyzer_running():
       return True
 
     repo_root = Path(__file__).resolve().parents[3]
@@ -322,14 +393,14 @@ def start_ftm_background_analysis(route_names: list[str], footage_paths: list[st
       str(Path(__file__).resolve()),
       "worker",
       json.dumps({
-        "routes": route_names[:FTM_ANALYZER_ROUTE_LIMIT],
+        "routes": route_names[:FLM_ANALYZER_ROUTE_LIMIT],
         "footagePaths": [str(path) for path in footage_paths],
       }),
     ]
     log_file = None
     try:
-      log_file = open(FTM_LOG_PATH, "ab")
-      FTM_ANALYZER_PROCESS = subprocess.Popen(
+      log_file = open(FLM_LOG_PATH, "ab")
+      FLM_ANALYZER_PROCESS = subprocess.Popen(
         command,
         cwd=str(repo_root),
         env=_worker_env(repo_root),
@@ -337,23 +408,23 @@ def start_ftm_background_analysis(route_names: list[str], footage_paths: list[st
         stderr=log_file,
         start_new_session=True,
       )
-      _write_ftm_status({
-        "pid": FTM_ANALYZER_PROCESS.pid,
+      _write_flm_status({
+        "pid": FLM_ANALYZER_PROCESS.pid,
         "startedAt": time.time(),
         "running": True,
         "state": "queued",
-        "routes": route_names[:FTM_ANALYZER_ROUTE_LIMIT],
+        "routes": route_names[:FLM_ANALYZER_ROUTE_LIMIT],
         "progress": 0,
-        "total": len(route_names[:FTM_ANALYZER_ROUTE_LIMIT]),
+        "total": len(route_names[:FLM_ANALYZER_ROUTE_LIMIT]),
       })
     except Exception:
-      FTM_ANALYZER_PROCESS = None
+      FLM_ANALYZER_PROCESS = None
       return False
     finally:
       if log_file is not None:
         log_file.close()
 
-  return ftm_analyzer_running()
+  return flm_analyzer_running()
 
 
 def _parse_segment_num(segment_name: str) -> int:
@@ -422,7 +493,7 @@ def _route_label(route: str, segment: int) -> str:
   return f"{route}/{segment}"
 
 
-def _event_direction(samples: list[FTMSample]) -> str:
+def _event_direction(samples: list[FLMSample]) -> str:
   mean_desired = float(np.mean([sample.desired_la for sample in samples]))
   if mean_desired > 0.02:
     return "left"
@@ -431,7 +502,7 @@ def _event_direction(samples: list[FTMSample]) -> str:
   return "center"
 
 
-def _group_masked_events(samples: list[FTMSample], mask: list[bool], score_series: list[float], min_points: int = 5) -> list[dict[str, Any]]:
+def _group_masked_events(samples: list[FLMSample], mask: list[bool], score_series: list[float], min_points: int = 5) -> list[dict[str, Any]]:
   events: list[dict[str, Any]] = []
   start_idx = None
   for idx, active in enumerate(mask + [False]):
@@ -465,7 +536,7 @@ def _group_masked_events(samples: list[FTMSample], mask: list[bool], score_serie
   return events
 
 
-def _analysis_eligibility_mask(samples: list[FTMSample]) -> list[bool]:
+def _analysis_eligibility_mask(samples: list[FLMSample]) -> list[bool]:
   eligible = [bool(sample.lat_active) for sample in samples]
   group_start = 0
   while group_start < len(samples):
@@ -479,7 +550,7 @@ def _analysis_eligibility_mask(samples: list[FTMSample]) -> list[bool]:
       sample = samples[idx]
       if sample.steering_pressed:
         last_override = sample.t
-      if sample.steering_pressed or (sample.t - last_override) <= FTM_DRIVER_OVERRIDE_POST_BUFFER_S:
+      if sample.steering_pressed or (sample.t - last_override) <= FLM_DRIVER_OVERRIDE_POST_BUFFER_S:
         eligible[idx] = False
 
     next_override = math.inf
@@ -487,7 +558,7 @@ def _analysis_eligibility_mask(samples: list[FTMSample]) -> list[bool]:
       sample = samples[idx]
       if sample.steering_pressed:
         next_override = sample.t
-      if sample.steering_pressed or (next_override - sample.t) <= FTM_DRIVER_OVERRIDE_PRE_BUFFER_S:
+      if sample.steering_pressed or (next_override - sample.t) <= FLM_DRIVER_OVERRIDE_PRE_BUFFER_S:
         eligible[idx] = False
 
     # Force an event boundary between route segments even when lateral control stays active.
@@ -498,7 +569,7 @@ def _analysis_eligibility_mask(samples: list[FTMSample]) -> list[bool]:
   return eligible
 
 
-def _build_plot_data(samples: list[FTMSample], event: dict[str, Any], eligibility: list[bool] | None = None) -> dict[str, Any]:
+def _build_plot_data(samples: list[FLMSample], event: dict[str, Any], eligibility: list[bool] | None = None) -> dict[str, Any]:
   start_idx = int(event["startIdx"])
   end_idx = int(event["endIdx"])
   event_route = samples[start_idx].route
@@ -579,7 +650,7 @@ def _build_plot_svg(plot_data: dict[str, Any]) -> str:
     return " ".join(coords)
 
   return (
-    "<svg viewBox='0 0 380 140' class='ftm-plot' preserveAspectRatio='none'>"
+    "<svg viewBox='0 0 380 140' class='flm-plot' preserveAspectRatio='none'>"
     "<rect x='0' y='0' width='380' height='140' rx='8' ry='8' fill='#0f172a'/>"
     "<line x1='0' y1='120' x2='380' y2='120' stroke='#334155' stroke-width='1'/>"
     f"<polyline fill='none' stroke='#ef4444' stroke-width='2' points='{_points(desired)}'/>"
@@ -588,8 +659,8 @@ def _build_plot_svg(plot_data: dict[str, Any]) -> str:
   )
 
 
-def _segment_samples(segment_source: RouteSource) -> tuple[list[FTMSample], car.CarParams | None, dict[str, str]]:
-  samples: list[FTMSample] = []
+def _segment_samples(segment_source: RouteSource) -> tuple[list[FLMSample], car.CarParams | None, dict[str, str]]:
+  samples: list[FLMSample] = []
   car_params = None
   init_data: dict[str, str] = {}
   latest: dict[str, Any] = {}
@@ -634,7 +705,7 @@ def _segment_samples(segment_source: RouteSource) -> tuple[list[FTMSample], car.
     roll_deg = math.degrees(float(getattr(live_parameters, "roll", 0.0) or 0.0)) if live_parameters is not None else 0.0
     out_torque = float(getattr(getattr(car_output, "actuatorsOutput", None), "torque", 0.0) or 0.0) if car_output is not None else 0.0
 
-    samples.append(FTMSample(
+    samples.append(FLMSample(
       route=segment_source.route,
       segment=segment_source.segment_num,
       t=float(msg.logMonoTime) / 1e9,
@@ -679,9 +750,9 @@ def _current_param_state(CP, params: Params) -> dict[str, Any]:
     "SteerKP": params.get_float("SteerKP", return_default=True, default=KP) if advanced_enabled else KP,
     "SteerLatAccel": params.get_float("SteerLatAccel", return_default=True, default=stock_lat_accel) if advanced_enabled else stock_lat_accel,
     "SteerRatio": params.get_float("SteerRatio", return_default=True, default=stock_ratio) if advanced_enabled else stock_ratio,
-    "FTMActiveProfileId": params.get("FTMActiveProfileId", encoding="utf-8") or "",
-    "FTMActiveOverrides": normalize_ftm_overrides(params.get("FTMActiveOverrides", encoding="utf-8") or "{}"),
-    "FTMTrialApplied": params.get_bool("FTMTrialApplied"),
+    "FLMActiveProfileId": params.get("FLMActiveProfileId", encoding="utf-8") or "",
+    "FLMActiveOverrides": normalize_flm_overrides(params.get("FLMActiveOverrides", encoding="utf-8") or "{}"),
+    "FLMTrialApplied": params.get_bool("FLMTrialApplied"),
   }
 
 
@@ -691,7 +762,7 @@ def _stock_param_state(CP, capabilities: dict[str, Any]) -> dict[str, Any]:
   rich_profile = capabilities.get("richProfileKey")
   rich_knobs = {
     symbol: float(meta["defaultValue"])
-    for symbol, meta in get_ftm_supported_vehicle_knobs().items()
+    for symbol, meta in get_flm_supported_vehicle_knobs().items()
     if rich_profile and meta.get("profile") == rich_profile
   }
   return {
@@ -701,13 +772,13 @@ def _stock_param_state(CP, capabilities: dict[str, Any]) -> dict[str, Any]:
     "SteerKP": float(KP),
     "SteerLatAccel": float(getattr(torque_tune, "latAccelFactor", 0.0) or 0.0) if torque_tune is not None else 0.0,
     "SteerRatio": float(getattr(CP, "steerRatio", 0.0) or 0.0),
-    "FTMBaseFrictionThresholds": {
+    "FLMBaseFrictionThresholds": {
       friction_family: {
-        "speedKnots": list(FTM_FRICTION_SPEED_KNOTS),
+        "speedKnots": list(FLM_FRICTION_SPEED_KNOTS),
         "values": _baseline_family_curve(friction_family),
       },
     } if torque_tune is not None else {},
-    "FTMVehicleKnobs": rich_knobs,
+    "FLMVehicleKnobs": rich_knobs,
   }
 
 
@@ -749,14 +820,14 @@ def _baseline_family_curve(family: str) -> list[float]:
     "standard": get_standard_friction_threshold,
     "hkg_canfd": get_hkg_canfd_base_friction_threshold,
   }.get(family, get_standard_friction_threshold)
-  return [round(float(getter(knot)), 4) for knot in FTM_FRICTION_SPEED_KNOTS]
+  return [round(float(getter(knot)), 4) for knot in FLM_FRICTION_SPEED_KNOTS]
 
 
 def _current_family_curve(family: str, current: dict[str, Any]) -> list[float]:
-  active_overrides = current.get("FTMActiveOverrides", {}) if isinstance(current, dict) else {}
+  active_overrides = current.get("FLMActiveOverrides", {}) if isinstance(current, dict) else {}
   payload = active_overrides.get("baseFrictionThresholds", {}).get(family, {}) if isinstance(active_overrides, dict) else {}
   values = payload.get("values", []) if isinstance(payload, dict) else []
-  if isinstance(values, list) and len(values) == len(FTM_FRICTION_SPEED_KNOTS):
+  if isinstance(values, list) and len(values) == len(FLM_FRICTION_SPEED_KNOTS):
     try:
       return [round(float(value), 4) for value in values]
     except Exception:
@@ -776,11 +847,11 @@ def _round_to_precision(value: float, precision: float) -> float:
 
 
 def _current_vehicle_knob_value(symbol: str, current: dict[str, Any]) -> float | None:
-  knob = get_ftm_supported_vehicle_knobs().get(symbol)
+  knob = get_flm_supported_vehicle_knobs().get(symbol)
   if knob is None:
     return None
 
-  active_overrides = current.get("FTMActiveOverrides", {}) if isinstance(current, dict) else {}
+  active_overrides = current.get("FLMActiveOverrides", {}) if isinstance(current, dict) else {}
   vehicle_knobs = active_overrides.get("vehicleKnobs", {}) if isinstance(active_overrides, dict) else {}
   try:
     return float(vehicle_knobs.get(symbol, knob["defaultValue"]))
@@ -789,7 +860,7 @@ def _current_vehicle_knob_value(symbol: str, current: dict[str, Any]) -> float |
 
 
 def _vehicle_knob_adjustment(symbol: str, delta: float, current: dict[str, Any] | None = None) -> dict[str, Any] | None:
-  knob = get_ftm_supported_vehicle_knobs().get(symbol)
+  knob = get_flm_supported_vehicle_knobs().get(symbol)
   if knob is None:
     return None
   current_value = _current_vehicle_knob_value(symbol, current or {})
@@ -811,10 +882,10 @@ def _rich_profile_supports_knob(capabilities: dict[str, Any], suffix: str) -> bo
   rich_profile = capabilities.get("richProfileKey")
   if not rich_profile:
     return False
-  return f"{rich_profile}.{suffix}" in get_ftm_supported_vehicle_knobs()
+  return f"{rich_profile}.{suffix}" in get_flm_supported_vehicle_knobs()
 
 
-def _build_event_summaries(samples: list[FTMSample]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _build_event_summaries(samples: list[FLMSample]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
   eligibility = _analysis_eligibility_mask(samples)
   active_samples = [sample for sample, allowed in zip(samples, eligibility, strict=True) if allowed]
   if not active_samples:
@@ -964,7 +1035,7 @@ def _build_event_summaries(samples: list[FTMSample]) -> tuple[list[dict[str, Any
   return sorted(summaries, key=lambda item: item["severity"], reverse=True), summary_stats
 
 
-def _summaries_from_events(bucket: str, samples: list[FTMSample], events: list[dict[str, Any]],
+def _summaries_from_events(bucket: str, samples: list[FLMSample], events: list[dict[str, Any]],
                            eligibility: list[bool] | None = None) -> list[dict[str, Any]]:
   grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
   for event in events:
@@ -1007,7 +1078,7 @@ def _summaries_from_events(bucket: str, samples: list[FTMSample], events: list[d
   return summaries
 
 
-def classify_torque_samples(samples: list[FTMSample]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def classify_torque_samples(samples: list[FLMSample]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
   return _build_event_summaries(samples)
 
 
@@ -1282,7 +1353,7 @@ def _why_this_knob(adjustment: dict[str, Any]) -> str:
 def _render_adjustment_line(adjustment: dict[str, Any]) -> str:
   if adjustment["type"] == "friction_curve":
     curve = ", ".join(f"{value:.3f}" for value in adjustment["suggested"])
-    return f"Adjust {adjustment['family']} friction threshold curve at {FTM_FRICTION_SPEED_KNOTS} m/s to [{curve}]."
+    return f"Adjust {adjustment['family']} friction threshold curve at {FLM_FRICTION_SPEED_KNOTS} m/s to [{curve}]."
   if adjustment["type"] == "vehicle_knob":
     return f"Move `{adjustment['symbol']}` from {adjustment['current']:.3f} to {adjustment['suggested']:.3f}."
   return f"Move `{adjustment['paramKey']}` from {adjustment['current']:.3f} to {adjustment['suggested']:.3f}."
@@ -1434,7 +1505,7 @@ def _merge_primary_adjustments(suggestions: list[dict[str, Any]], multiplier: fl
   if "SteerDelay" in params_delta:
     params_delta["UseAutoSteerDelay"] = False
 
-  supported_knobs = get_ftm_supported_vehicle_knobs()
+  supported_knobs = get_flm_supported_vehicle_knobs()
   for symbol, bucket in vehicle_targets.items():
     meta = supported_knobs.get(symbol)
     if meta is None or bucket["weight"] <= 0:
@@ -1453,9 +1524,9 @@ def _merge_primary_adjustments(suggestions: list[dict[str, Any]], multiplier: fl
       for idx in range(len(bucket["current"]))
     ]
     if any(not math.isclose(float(bucket["current"][idx]), values[idx], abs_tol=1e-6) for idx in range(len(values))):
-      overrides["baseFrictionThresholds"][family] = {"speedKnots": list(FTM_FRICTION_SPEED_KNOTS), "values": values}
+      overrides["baseFrictionThresholds"][family] = {"speedKnots": list(FLM_FRICTION_SPEED_KNOTS), "values": values}
 
-  overrides = normalize_ftm_overrides(overrides)
+  overrides = normalize_flm_overrides(overrides)
   return params_delta, overrides, requires_force_auto_tune_off
 
 
@@ -1636,7 +1707,7 @@ def build_trial_profiles(report_id: str, suggestions: list[dict[str, Any]], feed
       "pathLabel": path_label,
       "description": f"{label} {path_label.lower()} trial generated from {len(actionable)} confirmed symptom dimension(s).",
       "genericParams": params_delta,
-      "ftmOverrides": overrides,
+      "flmOverrides": overrides,
       "requiresForceAutoTuneOff": bool(force_auto_tune_off),
       "capabilities": capabilities,
     }
@@ -1661,7 +1732,7 @@ def _add_parameters_start_here(capabilities: dict[str, Any], suggestions: list[d
   if any(suggestion.get("primaryAdjustmentRaw", {}).get("type") == "friction_curve" for suggestion in suggestions if suggestion.get("primaryAdjustmentRaw")):
     lines.append("Friction-threshold changes are active in this pass because the logs point to small-signal steering behavior, not just whole-tune authority.")
   if not capabilities.get("richProfileKey"):
-    lines.append("This car does not expose richer live FTM knobs yet, so generic advanced params and friction-threshold trials are the first code-level moves to test.")
+    lines.append("This car does not expose richer live FLM knobs yet, so generic advanced params and friction-threshold trials are the first code-level moves to test.")
   return lines
 
 
@@ -1677,7 +1748,7 @@ def build_recommendation_paths(report_id: str, summaries: list[dict[str, Any]], 
   ordered_keys = [decision["primaryPathKey"], decision["alternatePathKey"]]
   paths = []
   for path_key in ordered_keys:
-    spec = FTM_PATH_SPECS[path_key]
+    spec = FLM_PATH_SPECS[path_key]
     suggestions = all_suggestions[path_key]
     profiles = build_trial_profiles(report_id, suggestions, feedback, capabilities, path_key=path_key, path_label=spec["title"])
     paths.append({
@@ -1705,7 +1776,7 @@ def _render_report_html(report: dict[str, Any]) -> str:
     evidence = suggestion.get("evidence", {})
     current_vs_suggested = suggestion.get("currentVsSuggested")
     if current_vs_suggested is None:
-      delta_html = "<p class='ftm-muted'>No trial adjustment suggested for this dimension.</p>"
+      delta_html = "<p class='flm-muted'>No trial adjustment suggested for this dimension.</p>"
     elif current_vs_suggested["type"] == "friction_curve":
       delta_html = (
         f"<p><strong>Current:</strong> {current_vs_suggested['current']}</p>"
@@ -1717,7 +1788,7 @@ def _render_report_html(report: dict[str, Any]) -> str:
         f"<p><strong>{label}</strong>: {float(current_vs_suggested['current']):.3f} -> {float(current_vs_suggested['suggested']):.3f}</p>"
       )
     findings_html.append(
-      "<section class='ftm-card'>"
+      "<section class='flm-card'>"
       f"<h3>{suggestion['bucket'].replace('_', ' ').title()}</h3>"
       f"<p><strong>Observed behavior:</strong> {suggestion['observedBehavior']}</p>"
       f"<p><strong>Likely interpretation:</strong> {suggestion['likelyInterpretation']}</p>"
@@ -1740,7 +1811,7 @@ def _render_report_html(report: dict[str, Any]) -> str:
       badges.append("Active")
     badge = " / ".join(badges) or "Alternate"
     path_html.append(
-      "<section class='ftm-card'>"
+      "<section class='flm-card'>"
       f"<h3>{path.get('title', 'Path')}</h3>"
       f"<p><strong>{badge}:</strong> {path.get('description', '')}</p>"
       f"<p><strong>Why this path:</strong> {path.get('whySelected', '')}</p>"
@@ -1759,45 +1830,45 @@ def _render_report_html(report: dict[str, Any]) -> str:
           continue
         generic_lines.append(f"<li><code>{key}</code>: {value}</li>")
       override_lines = []
-      for family, payload in profile.get("ftmOverrides", {}).get("baseFrictionThresholds", {}).items():
+      for family, payload in profile.get("flmOverrides", {}).get("baseFrictionThresholds", {}).items():
         override_lines.append(f"<li><code>{family}</code> curve: {payload.get('values', [])}</li>")
-      for key, value in profile.get("ftmOverrides", {}).get("vehicleKnobs", {}).items():
+      for key, value in profile.get("flmOverrides", {}).get("vehicleKnobs", {}).items():
         override_lines.append(f"<li><code>{key}</code>: {value}</li>")
       cards.append(
-        "<section class='ftm-card'>"
+        "<section class='flm-card'>"
         f"<h3>{profile['label']}</h3>"
         f"<p>{profile['description']}</p>"
         f"<p><strong>Generic params:</strong></p><ul>{''.join(generic_lines) or '<li>None</li>'}</ul>"
-        f"<p><strong>FTM overrides:</strong></p><ul>{''.join(override_lines) or '<li>None</li>'}</ul>"
+        f"<p><strong>FLM overrides:</strong></p><ul>{''.join(override_lines) or '<li>None</li>'}</ul>"
         "</section>"
       )
-    path_profiles_html = "".join(cards) or "<p class='ftm-muted'>No trial profiles generated for this path.</p>"
+    path_profiles_html = "".join(cards) or "<p class='flm-muted'>No trial profiles generated for this path.</p>"
     profile_html.append(
       f"<h3>{path.get('title', 'Path')} Profiles</h3>"
       f"{path_profiles_html}"
     )
 
   start_here_lines = "".join(f"<li>{line}</li>" for line in report.get("addTheseParametersAndStartHere", []))
-  start_here_html = f"<section class='ftm-card'><h3>Add These Parameters And Start Here</h3><ul>{start_here_lines}</ul></section>" if start_here_lines else ""
-  findings_block = "".join(findings_html) or "<p class='ftm-muted'>No strong findings.</p>"
-  profiles_block = "".join(profile_html) or "<p class='ftm-muted'>No trial profiles generated.</p>"
+  start_here_html = f"<section class='flm-card'><h3>Add These Parameters And Start Here</h3><ul>{start_here_lines}</ul></section>" if start_here_lines else ""
+  findings_block = "".join(findings_html) or "<p class='flm-muted'>No strong findings.</p>"
+  profiles_block = "".join(profile_html) or "<p class='flm-muted'>No trial profiles generated.</p>"
   return (
     "<!doctype html><html><head><meta charset='utf-8'>"
-    "<title>FTM Tuning Report</title>"
+    "<title>FLM Tuning Report</title>"
     "<style>"
     "body{font-family:system-ui,sans-serif;background:#020617;color:#e2e8f0;margin:0;padding:24px;}"
-    ".ftm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;}"
-    ".ftm-card{background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:16px;margin-bottom:16px;}"
-    ".ftm-muted{color:#94a3b8;}"
+    ".flm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;}"
+    ".flm-card{background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:16px;margin-bottom:16px;}"
+    ".flm-muted{color:#94a3b8;}"
     "code{background:#111827;padding:2px 6px;border-radius:6px;}"
-    ".ftm-plot{width:100%;height:140px;margin-top:12px;}"
+    ".flm-plot{width:100%;height:140px;margin-top:12px;}"
     "</style></head><body>"
-    f"<h1>FTM Tuning Report</h1>"
+    f"<h1>FLM Tuning Report</h1>"
     f"<p>{report['car']['carFingerprint']} | {report['car'].get('gitBranch', '')} {report['car'].get('gitCommit', '')}</p>"
-    f"<div class='ftm-grid'><section class='ftm-card'><h3>Routes</h3><p>{', '.join(report.get('routeNames', []))}</p></section>"
-    f"<section class='ftm-card'><h3>Control Path</h3><p>{report['car'].get('controlPath', 'unknown')}</p></section>"
-    f"<section class='ftm-card'><h3>Friction Family</h3><p>{report['capabilities'].get('frictionFamily', 'standard')}</p></section>"
-    f"<section class='ftm-card'><h3>Nonlinear Torque Map</h3><p>{'Asymmetric left/right siglin' if report['capabilities'].get('nonlinearTorqueMap', {}).get('asymmetric') else ('Symmetric siglin' if report['capabilities'].get('nonlinearTorqueMap') else 'Not detected')}</p></section></div>"
+    f"<div class='flm-grid'><section class='flm-card'><h3>Routes</h3><p>{', '.join(report.get('routeNames', []))}</p></section>"
+    f"<section class='flm-card'><h3>Control Path</h3><p>{report['car'].get('controlPath', 'unknown')}</p></section>"
+    f"<section class='flm-card'><h3>Friction Family</h3><p>{report['capabilities'].get('frictionFamily', 'standard')}</p></section>"
+    f"<section class='flm-card'><h3>Nonlinear Torque Map</h3><p>{'Asymmetric left/right siglin' if report['capabilities'].get('nonlinearTorqueMap', {}).get('asymmetric') else ('Symmetric siglin' if report['capabilities'].get('nonlinearTorqueMap') else 'Not detected')}</p></section></div>"
     f"{''.join(path_html)}"
     f"{start_here_html}"
     f"<h2>Active Findings: {primary_path.get('title', 'Recommendations')}</h2>"
@@ -1809,22 +1880,22 @@ def _render_report_html(report: dict[str, Any]) -> str:
 
 
 def analyze_routes(route_names: list[str], footage_paths: list[str], feedback: dict[str, Any] | None = None, report_id: str | None = None) -> dict[str, Any]:
-  ensure_ftm_workspace()
+  ensure_flm_workspace()
   params = Params(return_defaults=True)
-  report_id = report_id or f"ftm-{int(time.time())}"
+  report_id = report_id or f"flm-{int(time.time())}"
   feedback = feedback or {}
 
   sources, warnings = resolve_route_sources(route_names, footage_paths)
   if not sources:
     raise RuntimeError("No local routes with qlogs or rlogs were found for the selected routes.")
 
-  all_samples: list[FTMSample] = []
+  all_samples: list[FLMSample] = []
   car_params = None
   init_data: dict[str, str] = {}
   used_qlog = False
   processed_segments = 0
   for idx, source in enumerate(sources, start=1):
-    _write_ftm_status({
+    _write_flm_status({
       "pid": os.getpid(),
       "startedAt": time.time(),
       "running": True,
@@ -1849,7 +1920,7 @@ def analyze_routes(route_names: list[str], footage_paths: list[str], feedback: d
 
   torque_control = car_params.lateralTuning.which() == "torque"
   hyundai_canfd = bool(getattr(car_params, "flags", 0) & HyundaiFlags.CANFD)
-  capabilities = get_ftm_capabilities(
+  capabilities = get_flm_capabilities(
     car_params.carFingerprint,
     brand=str(getattr(car_params, "brand", "") or ""),
     hyundai_canfd=hyundai_canfd,
@@ -1886,11 +1957,11 @@ def analyze_routes(route_names: list[str], footage_paths: list[str], feedback: d
       "bucket": "angle_control_diagnostic",
       "evidence": summaries[0]["evidence"],
       "currentVsSuggested": None,
-      "observedBehavior": "This route is using an angle-control path, so the torque-specific FTM trial system stays in diagnostic mode.",
+      "observedBehavior": "This route is using an angle-control path, so the torque-specific FLM trial system stays in diagnostic mode.",
       "likelyInterpretation": "You can still inspect lane behavior here, but torque-controller trial profiles do not apply.",
-      "primaryAdjustment": "Do not apply an FTM torque profile to this car.",
+      "primaryAdjustment": "Do not apply an FLM torque profile to this car.",
       "whatNotToTouchYet": "Do not write torque-controller override blobs for an angle-control path.",
-      "ifThatWasWrong": "If the car later moves to torque control, re-run FTM on a fresh route.",
+      "ifThatWasWrong": "If the car later moves to torque control, re-run FLM on a fresh route.",
       "plotSvg": "",
       "plotData": {},
     }]
@@ -1947,14 +2018,14 @@ def analyze_routes(route_names: list[str], footage_paths: list[str], feedback: d
     "addTheseParametersAndStartHere": _add_parameters_start_here(capabilities, suggestions, path_decision["primaryPathKey"]),
   }
 
-  paths = ensure_ftm_workspace()
+  paths = ensure_flm_workspace()
   html = _render_report_html(report)
   report["htmlPath"] = str(paths["reports"] / f"{report_id}.html")
   report["jsonPath"] = str(paths["reports"] / f"{report_id}.json")
   (paths["reports"] / f"{report_id}.html").write_text(html, encoding="utf-8")
   _write_json(paths["reports"] / f"{report_id}.json", report)
   _write_json(paths["profiles"] / f"{report_id}.json", profiles)
-  _write_ftm_status({
+  _write_flm_status({
     "pid": os.getpid(),
     "startedAt": time.time(),
     "running": False,
@@ -1968,7 +2039,7 @@ def analyze_routes(route_names: list[str], footage_paths: list[str], feedback: d
 
 
 def load_report(report_id: str) -> dict[str, Any]:
-  paths = ensure_ftm_workspace()
+  paths = ensure_flm_workspace()
   report_path = paths["reports"] / f"{report_id}.json"
   report = _read_json(report_path, {})
   if not isinstance(report, dict) or not report:
@@ -1979,12 +2050,12 @@ def load_report(report_id: str) -> dict[str, Any]:
 
 
 def select_report_path(report_id: str, path_key: str) -> dict[str, Any]:
-  paths = ensure_ftm_workspace()
+  paths = ensure_flm_workspace()
   report = load_report(report_id)
   report_paths = [path for path in report.get("paths", []) if isinstance(path, dict)]
   selected_path = next((path for path in report_paths if path.get("key") == path_key), None)
   if selected_path is None:
-    raise ValueError(f"Unknown FTM path: {path_key}")
+    raise ValueError(f"Unknown FLM path: {path_key}")
 
   report["selectedPathKey"] = path_key
   report["pathSelectionSource"] = "manual"
@@ -2020,23 +2091,23 @@ def _active_trial_display_state(paths: dict[str, Path], snapshot: Any) -> dict[s
     return snapshot
 
   generic_params = dict(profile.get("genericParams", {}))
-  ftm_overrides = normalize_ftm_overrides(profile.get("ftmOverrides", {}))
+  flm_overrides = normalize_flm_overrides(profile.get("flmOverrides", {}))
   return {
     **snapshot,
-    "profileLabel": str(profile.get("label", "FTM") or "FTM"),
+    "profileLabel": str(profile.get("label", "FLM") or "FLM"),
     "pathKey": str(profile.get("pathKey", "") or ""),
     "pathLabel": str(profile.get("pathLabel", "") or ""),
     "appliedGenericParams": {
       key: value for key, value in generic_params.items()
-      if key in FTM_ADVANCED_LATERAL_PARAM_KEYS
+      if key in FLM_ADVANCED_LATERAL_PARAM_KEYS
     },
-    "appliedFrictionThresholds": ftm_overrides.get("baseFrictionThresholds", {}),
-    "appliedVehicleKnobs": ftm_overrides.get("vehicleKnobs", {}),
+    "appliedFrictionThresholds": flm_overrides.get("baseFrictionThresholds", {}),
+    "appliedVehicleKnobs": flm_overrides.get("vehicleKnobs", {}),
   }
 
 
 def list_workspace() -> dict[str, Any]:
-  paths = ensure_ftm_workspace()
+  paths = ensure_flm_workspace()
   reports = []
   for path in sorted(paths["reports"].glob("*.json"), reverse=True):
     payload = _read_json(path, {})
@@ -2051,9 +2122,9 @@ def list_workspace() -> dict[str, Any]:
     })
   feedback_files = sorted(paths["feedback"].glob("*.json"), reverse=True)
   params = Params(return_defaults=True)
-  current_profile_id = params.get("FTMActiveProfileId", encoding="utf-8") or ""
+  current_profile_id = params.get("FLMActiveProfileId", encoding="utf-8") or ""
   raw_active_snapshot = _read_json(paths["snapshots"] / "active.json", {})
-  if params.get_bool("FTMTrialApplied"):
+  if params.get_bool("FLMTrialApplied"):
     active_payload = raw_active_snapshot if isinstance(raw_active_snapshot, dict) else {}
     baseline_snapshot = _find_revert_snapshot(paths, raw_active_snapshot, current_profile_id, params)
     if baseline_snapshot is not None:
@@ -2076,18 +2147,18 @@ def list_workspace() -> dict[str, Any]:
     "reports": reports[:20],
     "feedbackCount": len(feedback_files),
     "activeTrial": active_snapshot,
-    "status": read_ftm_status(),
+    "status": read_flm_status(),
   }
 
 
 def delete_report(report_id: str) -> dict[str, Any]:
-  paths = ensure_ftm_workspace()
+  paths = ensure_flm_workspace()
   params = Params(return_defaults=True)
-  if params.get_bool("FTMTrialApplied"):
-    raise RuntimeError("Revert or keep the active FTM trial before deleting tuning reports.")
+  if params.get_bool("FLMTrialApplied"):
+    raise RuntimeError("Revert or keep the active FLM trial before deleting tuning reports.")
   active_snapshot = _read_json(paths["snapshots"] / "active.json", {})
   if isinstance(active_snapshot, dict) and active_snapshot.get("reportId") == report_id:
-    raise RuntimeError("Revert the active FTM trial before deleting its source report.")
+    raise RuntimeError("Revert the active FLM trial before deleting its source report.")
 
   removed = []
   direct_paths = [
@@ -2108,9 +2179,9 @@ def delete_report(report_id: str) -> dict[str, Any]:
   if not removed:
     raise FileNotFoundError(report_id)
 
-  status = read_ftm_status()
+  status = read_flm_status()
   if not status.get("running") and status.get("reportId") == report_id:
-    _clear_ftm_status()
+    _clear_flm_status()
 
   return {
     "message": f"Deleted tuning report {report_id}.",
@@ -2120,15 +2191,15 @@ def delete_report(report_id: str) -> dict[str, Any]:
 
 
 def clear_workspace() -> dict[str, Any]:
-  paths = ensure_ftm_workspace()
-  status = read_ftm_status()
+  paths = ensure_flm_workspace()
+  status = read_flm_status()
   if status.get("running"):
-    raise RuntimeError("Stop the active FTM analysis before clearing the workspace.")
+    raise RuntimeError("Stop the active FLM analysis before clearing the workspace.")
 
   params = Params(return_defaults=True)
   active_snapshot = _read_json(paths["snapshots"] / "active.json", {})
-  if params.get_bool("FTMTrialApplied") or (isinstance(active_snapshot, dict) and active_snapshot.get("params")):
-    raise RuntimeError("Revert or keep the active FTM trial before clearing the workspace.")
+  if params.get_bool("FLMTrialApplied") or (isinstance(active_snapshot, dict) and active_snapshot.get("params")):
+    raise RuntimeError("Revert or keep the active FLM trial before clearing the workspace.")
 
   removed = []
   for key in ("reports", "profiles", "feedback", "snapshots"):
@@ -2138,7 +2209,7 @@ def clear_workspace() -> dict[str, Any]:
         removed.append(str(path))
 
   _clear_persistent_trial_baseline(params)
-  _clear_ftm_status()
+  _clear_flm_status()
 
   return {
     "message": "Cleared saved tuning reports, feedback, profiles, and snapshots.",
@@ -2155,14 +2226,14 @@ def _snapshot_current_trial_state(params: Params) -> dict[str, Any]:
     elif kind == "float":
       snapshot[key] = params.get_float(key, return_default=True)
     elif kind == "json":
-      snapshot[key] = normalize_ftm_overrides(params.get(key, encoding="utf-8") or "{}")
+      snapshot[key] = normalize_flm_overrides(params.get(key, encoding="utf-8") or "{}")
     else:
       snapshot[key] = params.get(key, encoding="utf-8") or ""
   return snapshot
 
 
 def _read_persistent_trial_baseline(params: Params) -> dict[str, Any] | None:
-  raw = params.get(FTM_TRIAL_BASELINE_PARAM, encoding="utf-8") or {}
+  raw = params.get(FLM_TRIAL_BASELINE_PARAM, encoding="utf-8") or {}
   if isinstance(raw, str):
     try:
       raw = json.loads(raw)
@@ -2170,18 +2241,18 @@ def _read_persistent_trial_baseline(params: Params) -> dict[str, Any] | None:
       return None
   if not isinstance(raw, dict) or not isinstance(raw.get("params"), dict):
     return None
-  if raw["params"].get("FTMTrialApplied", False):
+  if raw["params"].get("FLMTrialApplied", False):
     return None
   return raw
 
 
 def _persist_trial_baseline(params: Params, snapshot: dict[str, Any]) -> None:
-  if isinstance(snapshot.get("params"), dict) and not snapshot["params"].get("FTMTrialApplied", False):
-    params.put(FTM_TRIAL_BASELINE_PARAM, snapshot)
+  if isinstance(snapshot.get("params"), dict) and not snapshot["params"].get("FLMTrialApplied", False):
+    params.put(FLM_TRIAL_BASELINE_PARAM, snapshot)
 
 
 def _clear_persistent_trial_baseline(params: Params) -> None:
-  params.remove(FTM_TRIAL_BASELINE_PARAM)
+  params.remove(FLM_TRIAL_BASELINE_PARAM)
 
 
 def _profile_report_id(profile_id: str) -> str:
@@ -2211,9 +2282,9 @@ def _recover_report_baseline(paths: dict[str, Path], profile_id: str,
   }
   if not baseline_params:
     return None
-  if not baseline_params.get("FTMTrialApplied", False):
-    baseline_params["FTMTrialApplied"] = False
-    baseline_params.setdefault("FTMActiveProfileId", "")
+  if not baseline_params.get("FLMTrialApplied", False):
+    baseline_params["FLMTrialApplied"] = False
+    baseline_params.setdefault("FLMActiveProfileId", "")
     return {
       "reportId": report_id,
       "profileId": profile_id,
@@ -2222,7 +2293,7 @@ def _recover_report_baseline(paths: dict[str, Path], profile_id: str,
       "recoverySource": "report",
     }
 
-  previous_profile_id = str(baseline_params.get("FTMActiveProfileId", "") or "")
+  previous_profile_id = str(baseline_params.get("FLMActiveProfileId", "") or "")
   if previous_profile_id and previous_profile_id != profile_id:
     return _recover_report_baseline(paths, previous_profile_id, visited_profiles)
   return None
@@ -2236,14 +2307,14 @@ def _apply_param_bundle(params: Params, bundle: dict[str, Any]) -> None:
     elif kind == "float":
       params.put_float(key, float(value))
     elif kind == "json":
-      params.put(key, normalize_ftm_overrides(value))
+      params.put(key, normalize_flm_overrides(value))
     elif kind == "string":
       params.put(key, str(value or ""))
 
 
-def _merge_ftm_override_state(base: dict[str, Any], delta: dict[str, Any]) -> dict[str, Any]:
-  base = normalize_ftm_overrides(base)
-  delta = normalize_ftm_overrides(delta)
+def _merge_flm_override_state(base: dict[str, Any], delta: dict[str, Any]) -> dict[str, Any]:
+  base = normalize_flm_overrides(base)
+  delta = normalize_flm_overrides(delta)
   merged = {
     "schemaVersion": 1,
     "baseFrictionThresholds": {
@@ -2255,13 +2326,13 @@ def _merge_ftm_override_state(base: dict[str, Any], delta: dict[str, Any]) -> di
       **delta.get("vehicleKnobs", {}),
     },
   }
-  return normalize_ftm_overrides(merged)
+  return normalize_flm_overrides(merged)
 
 
 def _find_revert_snapshot(paths: dict[str, Path], active_snapshot: dict[str, Any],
                           current_profile_id: str = "", params: Params | None = None) -> dict[str, Any] | None:
   if isinstance(active_snapshot, dict) and isinstance(active_snapshot.get("params"), dict):
-    if not active_snapshot["params"].get("FTMTrialApplied", False):
+    if not active_snapshot["params"].get("FLMTrialApplied", False):
       return active_snapshot
 
   if params is not None:
@@ -2276,7 +2347,7 @@ def _find_revert_snapshot(paths: dict[str, Path], active_snapshot: dict[str, Any
       continue
     candidate = _read_json(path, {})
     candidate_params = candidate.get("params", {}) if isinstance(candidate, dict) else {}
-    if not isinstance(candidate_params, dict) or candidate_params.get("FTMTrialApplied", False):
+    if not isinstance(candidate_params, dict) or candidate_params.get("FLMTrialApplied", False):
       continue
     captured_at = float(candidate.get("capturedAt", 0.0) or 0.0)
     if captured_at > cutoff:
@@ -2292,7 +2363,7 @@ def _find_revert_snapshot(paths: dict[str, Path], active_snapshot: dict[str, Any
 
 
 def apply_trial_profile(report_id: str, profile_id: str) -> dict[str, Any]:
-  paths = ensure_ftm_workspace()
+  paths = ensure_flm_workspace()
   params = Params(return_defaults=True)
   profiles = _read_json(paths["profiles"] / f"{report_id}.json", [])
   if not isinstance(profiles, list):
@@ -2302,21 +2373,21 @@ def apply_trial_profile(report_id: str, profile_id: str) -> dict[str, Any]:
     raise FileNotFoundError(profile_id)
 
   generic_params = dict(profile.get("genericParams", {}))
-  ftm_overrides = normalize_ftm_overrides(profile.get("ftmOverrides", {}))
+  flm_overrides = normalize_flm_overrides(profile.get("flmOverrides", {}))
   current_state = _snapshot_current_trial_state(params)
   raw_active_snapshot = _read_json(paths["snapshots"] / "active.json", {})
   previous_display_state = _active_trial_display_state(paths, raw_active_snapshot) or {}
-  trial_already_active = bool(current_state.get("FTMTrialApplied", False))
+  trial_already_active = bool(current_state.get("FLMTrialApplied", False))
 
   if trial_already_active:
     baseline_snapshot = _find_revert_snapshot(
       paths,
       raw_active_snapshot,
-      str(current_state.get("FTMActiveProfileId", "") or ""),
+      str(current_state.get("FLMActiveProfileId", "") or ""),
       params,
     )
     if baseline_snapshot is None:
-      raise RuntimeError("The active FTM trial has no recoverable rollback baseline. Keep the current tune as the new baseline before applying another profile.")
+      raise RuntimeError("The active FLM trial has no recoverable rollback baseline. Keep the current tune as the new baseline before applying another profile.")
     baseline_params = baseline_snapshot["params"]
     session_started_at = float(baseline_snapshot.get("sessionStartedAt", baseline_snapshot.get("capturedAt", time.time())) or time.time())
   else:
@@ -2324,12 +2395,12 @@ def apply_trial_profile(report_id: str, profile_id: str) -> dict[str, Any]:
     session_started_at = time.time()
 
   previous_generic_params = dict(previous_display_state.get("appliedGenericParams", {}))
-  for key in FTM_ADVANCED_LATERAL_PARAM_KEYS:
+  for key in FLM_ADVANCED_LATERAL_PARAM_KEYS:
     if key in current_state and current_state.get(key) != baseline_params.get(key):
       previous_generic_params[key] = current_state[key]
 
-  baseline_overrides = normalize_ftm_overrides(baseline_params.get("FTMActiveOverrides", {}))
-  current_overrides = normalize_ftm_overrides(current_state.get("FTMActiveOverrides", {}))
+  baseline_overrides = normalize_flm_overrides(baseline_params.get("FLMActiveOverrides", {}))
+  current_overrides = normalize_flm_overrides(current_state.get("FLMActiveOverrides", {}))
   previous_friction_thresholds = dict(previous_display_state.get("appliedFrictionThresholds", {}))
   for family, payload in current_overrides.get("baseFrictionThresholds", {}).items():
     if payload != baseline_overrides.get("baseFrictionThresholds", {}).get(family):
@@ -2343,22 +2414,22 @@ def apply_trial_profile(report_id: str, profile_id: str) -> dict[str, Any]:
     **previous_generic_params,
     **{
       key: value for key, value in generic_params.items()
-      if key in FTM_ADVANCED_LATERAL_PARAM_KEYS
+      if key in FLM_ADVANCED_LATERAL_PARAM_KEYS
     },
   }
   applied_friction_thresholds = {
     **previous_friction_thresholds,
-    **ftm_overrides.get("baseFrictionThresholds", {}),
+    **flm_overrides.get("baseFrictionThresholds", {}),
   }
   applied_vehicle_knobs = {
     **previous_vehicle_knobs,
-    **ftm_overrides.get("vehicleKnobs", {}),
+    **flm_overrides.get("vehicleKnobs", {}),
   }
   now = time.time()
   snapshot = {
     "reportId": report_id,
     "profileId": profile_id,
-    "profileLabel": str(profile.get("label", "FTM") or "FTM"),
+    "profileLabel": str(profile.get("label", "FLM") or "FLM"),
     "pathKey": str(profile.get("pathKey", "") or ""),
     "pathLabel": str(profile.get("pathLabel", "") or ""),
     "capturedAt": session_started_at,
@@ -2375,25 +2446,25 @@ def apply_trial_profile(report_id: str, profile_id: str) -> dict[str, Any]:
   _persist_trial_baseline(params, snapshot)
 
   bundle = generic_params
-  bundle["FTMActiveProfileId"] = profile_id
-  bundle["FTMActiveOverrides"] = _merge_ftm_override_state(
-    current_state.get("FTMActiveOverrides", {}),
-    ftm_overrides,
+  bundle["FLMActiveProfileId"] = profile_id
+  bundle["FLMActiveOverrides"] = _merge_flm_override_state(
+    current_state.get("FLMActiveOverrides", {}),
+    flm_overrides,
   )
-  bundle["FTMTrialApplied"] = True
+  bundle["FLMTrialApplied"] = True
   _apply_param_bundle(params, bundle)
   return {
-    "message": f"Applied {profile.get('label', 'FTM')} profile.",
+    "message": f"Applied {profile.get('label', 'FLM')} profile.",
     "profile": profile,
   }
 
 
 def revert_trial_profile() -> dict[str, Any]:
-  paths = ensure_ftm_workspace()
+  paths = ensure_flm_workspace()
   snapshot_path = paths["snapshots"] / "active.json"
   snapshot = _read_json(snapshot_path, {})
   params = Params(return_defaults=True)
-  current_profile_id = params.get("FTMActiveProfileId", encoding="utf-8") or ""
+  current_profile_id = params.get("FLMActiveProfileId", encoding="utf-8") or ""
   revert_snapshot = _find_revert_snapshot(paths, snapshot if isinstance(snapshot, dict) else {}, current_profile_id, params)
   if revert_snapshot is None:
     raise FileNotFoundError("active trial snapshot")
@@ -2404,7 +2475,7 @@ def revert_trial_profile() -> dict[str, Any]:
   except FileNotFoundError:
     pass
   return {
-    "message": "Reverted the complete FTM trial session to its original baseline.",
+    "message": "Reverted the complete FLM trial session to its original baseline.",
     "snapshot": {
       **(snapshot if isinstance(snapshot, dict) else {}),
       "params": revert_snapshot["params"],
@@ -2414,26 +2485,26 @@ def revert_trial_profile() -> dict[str, Any]:
 
 
 def accept_trial_as_baseline() -> dict[str, Any]:
-  paths = ensure_ftm_workspace()
+  paths = ensure_flm_workspace()
   params = Params(return_defaults=True)
   active_snapshot = _read_json(paths["snapshots"] / "active.json", {})
-  if not params.get_bool("FTMTrialApplied") and not (isinstance(active_snapshot, dict) and active_snapshot):
+  if not params.get_bool("FLMTrialApplied") and not (isinstance(active_snapshot, dict) and active_snapshot):
     raise FileNotFoundError("active trial")
 
-  params.put_bool("FTMTrialApplied", False)
-  params.put("FTMActiveProfileId", "")
+  params.put_bool("FLMTrialApplied", False)
+  params.put("FLMActiveProfileId", "")
   _clear_persistent_trial_baseline(params)
   for path in paths["snapshots"].glob("*.json"):
     path.unlink()
 
   return {
-    "message": "Kept the current tuning values and made them the new FTM baseline.",
+    "message": "Kept the current tuning values and made them the new FLM baseline.",
     "workspace": list_workspace(),
   }
 
 
 def record_feedback(report_id: str, feedback: dict[str, Any]) -> dict[str, Any]:
-  paths = ensure_ftm_workspace()
+  paths = ensure_flm_workspace()
   normalized = {
     "acceptedDimensions": [str(item) for item in feedback.get("acceptedDimensions", [])],
     "ignoredDimensions": [str(item) for item in feedback.get("ignoredDimensions", [])],
@@ -2469,7 +2540,7 @@ def record_feedback(report_id: str, feedback: dict[str, Any]) -> dict[str, Any]:
   _write_json(paths["reports"] / f"{report_id}.json", report)
   _write_json(paths["profiles"] / f"{report_id}.json", report["profiles"])
   return {
-    "message": "Saved FTM feedback.",
+    "message": "Saved FLM feedback.",
     "feedback": normalized,
     "profiles": report["profiles"],
     "report": load_report(report_id),
@@ -2480,8 +2551,8 @@ def run_worker(payload_json: str) -> None:
   payload = json.loads(payload_json)
   routes = [str(route) for route in payload.get("routes", [])]
   footage_paths = [str(path) for path in payload.get("footagePaths", [])]
-  ensure_ftm_workspace()
-  _write_ftm_status({
+  ensure_flm_workspace()
+  _write_flm_status({
     "pid": os.getpid(),
     "startedAt": time.time(),
     "running": True,
@@ -2492,7 +2563,7 @@ def run_worker(payload_json: str) -> None:
   })
   try:
     report = analyze_routes(routes, footage_paths)
-    _write_ftm_status({
+    _write_flm_status({
       "pid": os.getpid(),
       "startedAt": time.time(),
       "running": False,
@@ -2503,7 +2574,7 @@ def run_worker(payload_json: str) -> None:
       "reportId": report["reportId"],
     })
   except Exception as error:
-    _write_ftm_status({
+    _write_flm_status({
       "pid": os.getpid(),
       "startedAt": time.time(),
       "running": False,
@@ -2526,7 +2597,7 @@ def main() -> None:
     report = analyze_routes(routes, footage_paths)
     print(json.dumps({"reportId": report["reportId"], "htmlPath": report["htmlPath"], "jsonPath": report["jsonPath"]}, indent=2))
     return
-  print("Usage: ftm_workspace.py analyze <route> [<route>...]")
+  print("Usage: flm_workspace.py analyze <route> [<route>...]")
 
 
 if __name__ == "__main__":

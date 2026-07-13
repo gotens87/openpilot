@@ -12,11 +12,11 @@ const FAVORITE_OPTION_COLLATOR = new Intl.Collator(undefined, { numeric: true, s
 // Plain variables — scheduling/routing flags that must NOT be reactive
 let syncScheduled = false
 let lastParams = null
-let ftmWorkspaceInflight = null
-let lastFtmWorkspaceFetch = 0
+let flmWorkspaceInflight = null
+let lastFlmWorkspaceFetch = 0
 const DYNAMIC_DEFAULT_DEP_KEYS = new Set(["AccelerationProfile", "EVTuning", "TruckTuning"])
 const PANDA_FIRMWARE_TOGGLE_KEYS = new Set(["IgnoreIgnitionLine", "RemoteStartBootsComma", "HKGRemoteStartBootsComma"])
-const FTM_ADVANCED_LATERAL_KEYS = new Set([
+const FLM_ADVANCED_LATERAL_KEYS = new Set([
   "AdvancedLateralTune", "ForceAutoTune", "ForceAutoTuneOff", "UseAutoSteerDelay", "SteerDelay",
   "SteerFriction", "SteerKP", "SteerLatAccel", "SteerRatio",
 ])
@@ -28,7 +28,7 @@ const state = reactive({
   paramMetaByKey: {},
   values: {},
   defaultValues: {},
-  ftmActiveTrial: null,
+  flmActiveTrial: null,
   loadingLayout: true,
   loadingValues: true,
   filter: "",
@@ -274,28 +274,28 @@ async function fetchDefaultValues() {
   }
 }
 
-async function fetchFtmWorkspace(force = false) {
+async function fetchFlmWorkspace(force = false) {
   const now = Date.now()
-  if (!force && now - lastFtmWorkspaceFetch < 1500) return
-  if (ftmWorkspaceInflight) return ftmWorkspaceInflight
+  if (!force && now - lastFlmWorkspaceFetch < 1500) return
+  if (flmWorkspaceInflight) return flmWorkspaceInflight
 
-  lastFtmWorkspaceFetch = now
-  ftmWorkspaceInflight = fetch("/api/ftm/workspace", { cache: "no-store" })
+  lastFlmWorkspaceFetch = now
+  flmWorkspaceInflight = fetch("/api/flm/workspace", { cache: "no-store" })
     .then(async res => {
       if (!res.ok) return
       const workspace = await res.json()
-      state.ftmActiveTrial = workspace?.activeTrial || null
+      state.flmActiveTrial = workspace?.activeTrial || null
     })
-    .catch(error => console.warn("Failed to load active FTM trial state:", error))
+    .catch(error => console.warn("Failed to load active FLM trial state:", error))
     .finally(() => {
-      ftmWorkspaceInflight = null
+      flmWorkspaceInflight = null
     })
 
-  return ftmWorkspaceInflight
+  return flmWorkspaceInflight
 }
 
 async function refreshParamsAndDefaults() {
-  await Promise.all([fetchDefaultValues(), fetchFtmWorkspace(true)])
+  await Promise.all([fetchDefaultValues(), fetchFlmWorkspace(true)])
 
   try {
     const valuesRes = await fetch("/api/params/all")
@@ -344,7 +344,7 @@ async function fetchLayoutAndParams() {
 
   // Pull params once at page load; local state handles subsequent edits.
   try {
-    const [defaultsLoaded] = await Promise.all([fetchDefaultValues(), fetchFtmWorkspace(true)])
+    const [defaultsLoaded] = await Promise.all([fetchDefaultValues(), fetchFlmWorkspace(true)])
     if (!defaultsLoaded) {
       state.defaultValues = {}
     }
@@ -1035,9 +1035,9 @@ function valuesEqual(left, right) {
   return left === right
 }
 
-function getFtmParamStatus(key) {
-  const trial = state.ftmActiveTrial
-  if (!trial || !FTM_ADVANCED_LATERAL_KEYS.has(key)) return null
+function getFlmParamStatus(key) {
+  const trial = state.flmActiveTrial
+  if (!trial || !FLM_ADVANCED_LATERAL_KEYS.has(key)) return null
 
   const applied = trial.appliedGenericParams || {}
   const hasExplicitMetadata = Object.prototype.hasOwnProperty.call(applied, key)
@@ -1054,7 +1054,7 @@ function getFtmParamStatus(key) {
   }
 }
 
-function formatFtmValue(param, value) {
+function formatFlmValue(param, value) {
   if (value === undefined || value === null) return "not set"
   if (param.data_type === "bool") return value ? "On" : "Off"
   if (param.ui_type === "numeric") {
@@ -1064,8 +1064,8 @@ function formatFtmValue(param, value) {
   return String(value)
 }
 
-function getFtmTrialSummary() {
-  const trial = state.ftmActiveTrial
+function getFlmTrialSummary() {
+  const trial = state.flmActiveTrial
   if (!trial) return null
   const genericCount = Object.keys(trial.appliedGenericParams || {}).filter(key => key !== "AdvancedLateralTune").length
   const thresholdCount = Object.keys(trial.appliedFrictionThresholds || {}).length
@@ -1234,8 +1234,8 @@ function renderSettingRow(p) {
   const isChild = p.parent_key ? "ds-child-modifier" : ""
   const lockReason = () => getSettingLockReason(p)
   const isLocked = () => lockReason() !== ""
-  const ftmParamStatus = getFtmParamStatus(p.key)
-  const ftmTrialSummary = p.key === "AdvancedLateralTune" ? getFtmTrialSummary() : null
+  const flmParamStatus = getFlmParamStatus(p.key)
+  const flmTrialSummary = p.key === "AdvancedLateralTune" ? getFlmTrialSummary() : null
   let rowControl = ""
 
   if (isNumeric) {
@@ -1358,30 +1358,30 @@ function renderSettingRow(p) {
         <div class="ds-row-text">
           <div class="ds-row-heading">
             <span class="ds-row-label">${p.label}</span>
-            ${ftmParamStatus ? html`<span class="ds-ftm-badge">Currently overridden by FTM</span>` : ""}
+            ${flmParamStatus ? html`<span class="ds-flm-badge">Currently overridden by FLM</span>` : ""}
           </div>
           ${p.description ? html`<div class="ds-row-desc">${p.description}</div>` : ""}
           ${() => {
             const reason = lockReason()
             return reason ? html`<div class="ds-row-desc"><strong>Locked:</strong> ${reason}</div>` : ""
           }}
-          ${ftmParamStatus ? html`
-            <div class="ds-ftm-detail">
-              Effective now: <strong>${formatFtmValue(p, ftmParamStatus.effectiveValue)}</strong>.
-              Revert restores: <strong>${formatFtmValue(p, ftmParamStatus.previousValue)}</strong>.
+          ${flmParamStatus ? html`
+            <div class="ds-flm-detail">
+              Effective now: <strong>${formatFlmValue(p, flmParamStatus.effectiveValue)}</strong>.
+              Revert restores: <strong>${formatFlmValue(p, flmParamStatus.previousValue)}</strong>.
               You can still edit this while the trial is active.
             </div>
           ` : ""}
-          ${ftmTrialSummary ? html`
-            <div class="ds-ftm-summary">
-              <div><strong>FTM trial active:</strong> ${ftmTrialSummary.title}</div>
+          ${flmTrialSummary ? html`
+            <div class="ds-flm-summary">
+              <div><strong>FLM trial active:</strong> ${flmTrialSummary.title}</div>
               <div>
-                ${ftmTrialSummary.genericCount} advanced setting${ftmTrialSummary.genericCount === 1 ? "" : "s"},
-                ${ftmTrialSummary.thresholdCount} friction curve${ftmTrialSummary.thresholdCount === 1 ? "" : "s"}, and
-                ${ftmTrialSummary.vehicleKnobCount} vehicle-specific knob${ftmTrialSummary.vehicleKnobCount === 1 ? "" : "s"} active.
+                ${flmTrialSummary.genericCount} advanced setting${flmTrialSummary.genericCount === 1 ? "" : "s"},
+                ${flmTrialSummary.thresholdCount} friction curve${flmTrialSummary.thresholdCount === 1 ? "" : "s"}, and
+                ${flmTrialSummary.vehicleKnobCount} vehicle-specific knob${flmTrialSummary.vehicleKnobCount === 1 ? "" : "s"} active.
               </div>
               <div>Revert from Lateral Tuning restores the exact settings saved before this trial.</div>
-              <a class="ds-ftm-link" href="/tuning">Open Lateral Tuning</a>
+              <a class="ds-flm-link" href="/tuning">Open Lateral Tuning</a>
             </div>
           ` : ""}
 
@@ -1446,7 +1446,7 @@ function resolveActiveSectionSlug(params) {
 export function DeviceSettings({ params }) {
   lastParams = params
 
-  fetchFtmWorkspace()
+  fetchFlmWorkspace()
 
   if (!state.fetched) {
     state.fetched = true
