@@ -796,6 +796,10 @@ def get_ftm_runtime_overrides() -> dict:
   return _ftm_copy_json(_FTM_ACTIVE_OVERRIDES) if _FTM_ACTIVE_OVERRIDES else {}
 
 
+def ftm_runtime_overrides_active() -> bool:
+  return bool(_FTM_ACTIVE_OVERRIDES)
+
+
 def _ftm_base_friction_threshold(family: str, v_ego: float, default_fn) -> float:
   payload = _FTM_ACTIVE_OVERRIDES.get("baseFrictionThresholds", {}).get(family, {})
   values = payload.get("values", [])

@@ -300,6 +300,44 @@ class TestLatControl:
     finally:
       clear_ftm_runtime_overrides()
 
+  @pytest.mark.parametrize(("trial_applied", "profile_id"), [(False, "profile"), (True, "")])
+  def test_ftm_surface_helpers_require_active_trial(self, monkeypatch, trial_applied, profile_id):
+    controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(GM.CHEVROLET_BOLT_ACC_2022_2023)
+    starpilot_toggles.ftm_trial_applied = trial_applied
+    starpilot_toggles.ftm_active_profile_id = profile_id
+    starpilot_toggles.ftm_active_overrides = {
+      "vehicleKnobs": {"gm_bolt_2022_2023.highway_center_taper_max": 0.10},
+    }
+
+    def fail_if_called(*_args, **_kwargs):
+      raise AssertionError("inactive FTM trial reached the runtime shaping path")
+
+    monkeypatch.setattr(latcontrol_torque, "get_ftm_full_surface_ff_scale", fail_if_called)
+    controller.update(True, CS, VM, params, False, 0.0025, False, 0.2, None, None, starpilot_toggles)
+
+    assert get_ftm_runtime_overrides() == {}
+
+  def test_ftm_surface_helpers_run_for_active_trial(self, monkeypatch):
+    controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(GM.CHEVROLET_BOLT_ACC_2022_2023)
+    starpilot_toggles.ftm_trial_applied = True
+    starpilot_toggles.ftm_active_profile_id = "report:cleanup:recommended"
+    starpilot_toggles.ftm_active_overrides = {
+      "vehicleKnobs": {"gm_bolt_2022_2023.highway_center_taper_max": 0.10},
+    }
+    calls = []
+
+    def record_call(*_args, **_kwargs):
+      calls.append(True)
+      return 1.0
+
+    monkeypatch.setattr(latcontrol_torque, "get_ftm_full_surface_ff_scale", record_call)
+    try:
+      controller.update(True, CS, VM, params, False, 0.0025, False, 0.2, None, None, starpilot_toggles)
+      assert calls
+      assert get_ftm_runtime_overrides()["vehicleKnobs"]["gm_bolt_2022_2023.highway_center_taper_max"] == pytest.approx(0.10)
+    finally:
+      clear_ftm_runtime_overrides()
+
   def test_sonata_hybrid_center_taper_curve(self):
     assert get_sonata_hybrid_center_taper_scale(0.0, 30.0) < get_sonata_hybrid_center_taper_scale(0.0, 15.0)
     assert get_sonata_hybrid_center_taper_scale(0.0, 3.0) < get_sonata_hybrid_center_taper_scale(0.0, 10.0)

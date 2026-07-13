@@ -55,7 +55,9 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--classifier-expansion-indices", help="Comma-separated detector crop expansion indices to evaluate.")
   parser.add_argument("--strong-rescue-min-proposal-confidence", type=float, help="Override single-frame tiny-sign proposal confidence.")
   parser.add_argument("--strong-rescue-min-read-confidence", type=float, help="Override single-frame tiny-sign classifier confidence.")
+  parser.add_argument("--strong-rescue-min-support", type=int, help="Override agreeing crops required for tiny-sign strong rescue.")
   parser.add_argument("--low-speed-change-consistent-detections", type=int, help="Override reads required to change from 30+ mph to below 30 mph.")
+  parser.add_argument("--low-speed-change-min-confidence", type=float, help="Override confidence required to change from 30+ mph to below 30 mph.")
   parser.add_argument(
     "--allow-low-speed-strong-consensus",
     action="store_true",
@@ -88,6 +90,7 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--strong-detection-confidence", type=float, help="Override one-frame publication confidence.")
   parser.add_argument("--consistent-detections", type=int, help="Override matching reads required for an initial publication.")
   parser.add_argument("--change-consistent-detections", type=int, help="Override matching reads required to change a publication.")
+  parser.add_argument("--change-single-read-min-confidence", type=float, help="Override confidence for a one-read speed change.")
   parser.add_argument("--max-cases", type=int, default=0, help="Optional evaluation cap after deduplication.")
   return parser.parse_args()
 
@@ -206,8 +209,14 @@ def main() -> int:
     slv.DETECTOR_CLASSIFIER_STRONG_RESCUE_MIN_PROPOSAL_CONFIDENCE = args.strong_rescue_min_proposal_confidence
   if args.strong_rescue_min_read_confidence is not None:
     slv.DETECTOR_CLASSIFIER_STRONG_RESCUE_MIN_READ_CONFIDENCE = args.strong_rescue_min_read_confidence
+  if args.strong_rescue_min_support is not None:
+    if args.strong_rescue_min_support < 1:
+      raise ValueError("--strong-rescue-min-support must be at least 1")
+    slv.DETECTOR_CLASSIFIER_STRONG_RESCUE_MIN_SUPPORT = args.strong_rescue_min_support
   if args.low_speed_change_consistent_detections is not None:
     slv.LOW_SPEED_CHANGE_CONSISTENT_DETECTIONS = args.low_speed_change_consistent_detections
+  if args.low_speed_change_min_confidence is not None:
+    slv.LOW_SPEED_CHANGE_MIN_CONFIDENCE = args.low_speed_change_min_confidence
   if args.allow_low_speed_strong_consensus:
     slv.LOW_SPEED_CHANGE_ALLOW_STRONG_CONSENSUS = True
   if args.enable_strong_model_consensus:
@@ -226,6 +235,8 @@ def main() -> int:
     slv.CONSISTENT_DETECTIONS = args.consistent_detections
   if args.change_consistent_detections is not None:
     slv.CHANGE_CONSISTENT_DETECTIONS = args.change_consistent_detections
+  if args.change_single_read_min_confidence is not None:
+    slv.CHANGE_SINGLE_READ_MIN_CONFIDENCE = args.change_single_read_min_confidence
   cases = load_cases(queue_path, labels_path, args.dedupe_seconds)
   if args.route_file:
     selected_routes = {
@@ -322,6 +333,8 @@ def main() -> int:
     "measured_classifier_forward_seconds": args.measured_classifier_forward_seconds,
     "initial_speed_limit_mph": args.initial_speed_limit,
     "low_speed_change_consistent_detections": slv.LOW_SPEED_CHANGE_CONSISTENT_DETECTIONS,
+    "low_speed_change_min_confidence": slv.LOW_SPEED_CHANGE_MIN_CONFIDENCE,
+    "change_single_read_min_confidence": slv.CHANGE_SINGLE_READ_MIN_CONFIDENCE,
     "low_speed_change_allow_strong_consensus": slv.LOW_SPEED_CHANGE_ALLOW_STRONG_CONSENSUS,
     "strong_model_consensus_enabled": slv.DETECTOR_CLASSIFIER_STRONG_MODEL_CONSENSUS_ENABLED,
     "strong_model_min_proposal_confidence": slv.DETECTOR_CLASSIFIER_STRONG_MODEL_MIN_PROPOSAL_CONFIDENCE,

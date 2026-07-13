@@ -43,6 +43,7 @@ HISTORY_SECONDS = 2.0
 CONSISTENT_DETECTIONS = 2
 # These counts must remain achievable at the measured 1.5 Hz onroad cadence.
 CHANGE_CONSISTENT_DETECTIONS = 2
+CHANGE_SINGLE_READ_MIN_CONFIDENCE = 0.83
 LOW_SPEED_CHANGE_CONSISTENT_DETECTIONS = 2
 LOW_SPEED_CHANGE_MIN_CONFIDENCE = 0.90
 LOW_SPEED_CHANGE_ALLOW_STRONG_CONSENSUS = True
@@ -1903,13 +1904,18 @@ class SpeedLimitVisionDaemon:
 
     if current_speed_limit > 0 and candidate_speed_limit != current_speed_limit:
       required_count = CHANGE_CONSISTENT_DETECTIONS
-      allow_single_frame_consensus = has_strong_consensus
+      allow_single_frame_confirmation = (
+        has_strong_consensus or best_confidence >= CHANGE_SINGLE_READ_MIN_CONFIDENCE
+      )
       if current_speed_limit >= 30 and candidate_speed_limit < 30:
         required_count = LOW_SPEED_CHANGE_CONSISTENT_DETECTIONS
-        allow_single_frame_consensus = has_strong_consensus and LOW_SPEED_CHANGE_ALLOW_STRONG_CONSENSUS
+        allow_single_frame_confirmation = (
+          best_confidence >= CHANGE_SINGLE_READ_MIN_CONFIDENCE or
+          (has_strong_consensus and LOW_SPEED_CHANGE_ALLOW_STRONG_CONSENSUS)
+        )
         if best_confidence < LOW_SPEED_CHANGE_MIN_CONFIDENCE:
           return None
-      if candidate_count < required_count and not allow_single_frame_consensus:
+      if candidate_count < required_count and not allow_single_frame_confirmation:
         return None
       if candidate_count <= current_count:
         return None

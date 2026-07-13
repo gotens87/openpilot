@@ -14,12 +14,17 @@ def daemon_with_history(current_speed, entries):
   return daemon
 
 
-def test_speed_change_requires_two_matching_reads():
-  daemon = daemon_with_history(40, [(55, 0.95)])
+def test_speed_change_requires_two_matching_reads_below_single_read_threshold():
+  daemon = daemon_with_history(40, [(55, 0.82)])
   assert daemon._confirm_detection() is None
 
   daemon.history.append(HistoryEntry(55, 0.76, 1.0))
-  assert daemon._confirm_detection() == pytest.approx((55, 0.95))
+  assert daemon._confirm_detection() == pytest.approx((55, 0.82))
+
+
+def test_speed_change_accepts_single_high_confidence_read():
+  daemon = daemon_with_history(40, [(55, 0.84)])
+  assert daemon._confirm_detection() == pytest.approx((55, 0.84))
 
 
 def test_speed_change_accepts_single_strong_consensus_read():
@@ -28,12 +33,17 @@ def test_speed_change_accepts_single_strong_consensus_read():
   assert daemon._confirm_detection() == pytest.approx((60, 0.74))
 
 
-def test_low_speed_change_requires_two_high_confidence_reads():
-  daemon = daemon_with_history(40, [(25, 0.95)])
+def test_low_speed_change_requires_two_reads_below_low_speed_threshold():
+  daemon = daemon_with_history(40, [(25, 0.89)])
   assert daemon._confirm_detection() is None
 
   daemon.history.append(HistoryEntry(25, 0.96, 1.0))
   assert daemon._confirm_detection() == pytest.approx((25, 0.96))
+
+
+def test_low_speed_change_accepts_single_high_confidence_read():
+  daemon = daemon_with_history(40, [(25, 0.91)])
+  assert daemon._confirm_detection() == pytest.approx((25, 0.91))
 
 
 def test_low_speed_change_accepts_single_strong_consensus_read():

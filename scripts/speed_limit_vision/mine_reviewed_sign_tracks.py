@@ -6,6 +6,7 @@ import csv
 import hashlib
 import math
 
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,6 +36,7 @@ class TrackCase:
   frame_time_s: float
   expected_speed_mph: int
   anchor_bbox: tuple[int, int, int, int]
+  anchor_bbox_source: str
 
 
 @dataclass(frozen=True)
@@ -43,6 +45,7 @@ class TrackSample:
   bbox: tuple[int, int, int, int]
   crop_bbox: tuple[int, int, int, int]
   detector_confidence: float
+  tracking_confidence: float
   predicted_speed_mph: int
   read_confidence: float
   sharpness: float
@@ -54,17 +57,20 @@ class TrackSample:
 
 
 def parse_args() -> argparse.Namespace:
-  parser = argparse.ArgumentParser(description="Track human-reviewed signs into later, larger route frames.")
+  parser = argparse.ArgumentParser(description="Track human-reviewed signs into nearby route frames.")
   parser.add_argument("--queue", type=Path, required=True, help="Reviewed manual_review_queue.csv.")
   parser.add_argument("--labels", type=Path, help="Defaults to manual_review_labels.csv beside the queue.")
   parser.add_argument("--models-dir", type=Path, default=Path("starpilot/assets/vision_models"))
   parser.add_argument("--output-dir", type=Path, required=True)
+  parser.add_argument("--window-before", type=float, default=0.0, help="Seconds to track backward before the reviewed frame.")
   parser.add_argument("--window-after", type=float, default=2.5, help="Seconds to track after the reviewed anchor frame.")
   parser.add_argument("--sample-interval", type=float, default=0.10, help="Minimum spacing between ranked samples.")
   parser.add_argument("--detector-interval", type=float, default=0.20, help="How often to snap optical flow to detector proposals.")
   parser.add_argument("--max-samples-per-track", type=int, default=4)
+  parser.add_argument("--max-samples-before-track", type=int, default=4)
   parser.add_argument("--dedupe-seconds", type=float, default=3.0)
   parser.add_argument("--min-area-growth", type=float, default=0.85)
+  parser.add_argument("--min-backward-area-ratio", type=float, default=0.20)
   parser.add_argument("--limit", type=int, default=0)
   return parser.parse_args()
 
@@ -200,6 +206,70 @@ def encode_jpeg(image: np.ndarray, quality: int = 90) -> bytes:
   return encoded.tobytes()
 
 
+def ranked_samples(candidates: list[TrackSample], limit: int, sample_interval: float) -> list[TrackSample]:
+  selected: list[TrackSample] = []
+  for candidate in sorted(candidates, key=lambda item: item.score, reverse=True):
+    if any(abs(candidate.time_s - kept.time_s) < max(sample_interval * 1.5, 0.12) for kept in selected):
+      continue
+    selected.append(candidate)
+    if len(selected) >= limit:
+      break
+  return selected
+
+
+def make_sample(
+  case: TrackCase,
+  daemon: slv.SpeedLimitVisionDaemon,
+  frame: np.ndarray,
+  bbox: tuple[int, int, int, int],
+  detector_confidence: float,
+  tracking_confidence: float,
+  anchor_area: int,
+  time_s: float,
+  time_distance_s: float,
+  backward: bool,
+) -> TrackSample | None:
+  height, width = frame.shape[:2]
+  crop_box = expanded_bbox(bbox, width, height)
+  x1, y1, x2, y2 = crop_box
+  crop = frame[y1:y2, x1:x2]
+  if crop.size == 0:
+    return None
+  read = daemon._classify_speed_limit_from_model(crop)
+  predicted_speed = int(read[0]) if read is not None else 0
+  read_confidence = float(read[1]) if read is not None else 0.0
+  gray_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+  sharpness = float(cv2.Laplacian(gray_crop, cv2.CV_64F).var())
+  brightness = float(gray_crop.mean())
+  growth = bbox_area(bbox) / anchor_area
+  growth_score = math.log2(max(growth, 0.25)) * (0.15 if backward else 0.55)
+  exact_bonus = read_confidence * 2.0 if predicted_speed == case.expected_speed_mph else 0.0
+  wrong_penalty = read_confidence * 1.5 if predicted_speed and predicted_speed != case.expected_speed_mph else 0.0
+  score = (
+    growth_score +
+    min(sharpness / 180.0, 1.0) * 0.35 +
+    detector_confidence * 0.45 +
+    tracking_confidence * 0.20 +
+    exact_bonus - wrong_penalty +
+    min(time_distance_s, 1.5) * (0.04 if backward else 0.08)
+  )
+  return TrackSample(
+    time_s=time_s,
+    bbox=bbox,
+    crop_bbox=crop_box,
+    detector_confidence=detector_confidence,
+    tracking_confidence=tracking_confidence,
+    predicted_speed_mph=predicted_speed,
+    read_confidence=read_confidence,
+    sharpness=sharpness,
+    brightness=brightness,
+    area_ratio_to_anchor=growth,
+    score=score,
+    frame_jpeg=encode_jpeg(frame),
+    crop_jpeg=encode_jpeg(crop, 95),
+  )
+
+
 def load_cases(queue_path: Path, labels_path: Path, dedupe_seconds: float) -> tuple[list[TrackCase], list[str]]:
   with queue_path.open(encoding="utf-8", newline="") as queue_file:
     fieldnames = list(csv.DictReader(queue_file).fieldnames or ())
@@ -210,7 +280,8 @@ def load_cases(queue_path: Path, labels_path: Path, dedupe_seconds: float) -> tu
     if row.get("review_status") not in POSITIVE_STATUSES:
       continue
     speed = parse_speed(row.get("review_speed_limit_mph", ""))
-    bbox = parse_bbox(row.get("review_bbox") or row.get("bbox", ""))
+    reviewed_bbox = parse_bbox(row.get("review_bbox", ""))
+    bbox = reviewed_bbox or parse_bbox(row.get("bbox", ""))
     try:
       frame_time_s = float(row.get("frame_time_s", ""))
       segment = int(row.get("segment", ""))
@@ -225,18 +296,96 @@ def load_cases(queue_path: Path, labels_path: Path, dedupe_seconds: float) -> tu
       continue
     seen.add(dedupe_key)
     digest = hashlib.sha1(f"{row.get('record_key')}:{speed}".encode()).hexdigest()[:16]
-    cases.append(TrackCase(row, f"sign_track_{digest}", video_path.resolve(), frame_time_s, speed, bbox))
+    cases.append(TrackCase(
+      row,
+      f"sign_track_{digest}",
+      video_path.resolve(),
+      frame_time_s,
+      speed,
+      bbox,
+      "review_bbox" if reviewed_bbox is not None else "bbox",
+    ))
   return cases, fieldnames
+
+
+def mine_backward_samples(
+  case: TrackCase,
+  daemon: slv.SpeedLimitVisionDaemon,
+  args: argparse.Namespace,
+  frames: list[tuple[int, np.ndarray]],
+  anchor_frame: np.ndarray,
+  anchor_frame_index: int,
+  fps: float,
+  anchor_bbox: tuple[int, int, int, int],
+  anchor_area: int,
+) -> list[TrackSample]:
+  if not frames or args.max_samples_before_track <= 0:
+    return []
+  previous_gray = cv2.cvtColor(anchor_frame, cv2.COLOR_BGR2GRAY)
+  bbox = anchor_bbox
+  points = feature_points(previous_gray, bbox)
+  next_sample_elapsed = args.sample_interval
+  next_detector_elapsed = 0.0
+  candidates: list[TrackSample] = []
+  height, width = anchor_frame.shape[:2]
+
+  for frame_index, frame in reversed(frames):
+    elapsed = (anchor_frame_index - frame_index) / fps
+    current_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    bbox, points = flow_bbox(previous_gray, current_gray, bbox, points)
+    previous_gray = current_gray
+    if bbox is None:
+      break
+    x1, y1, x2, y2 = bbox
+    growth = bbox_area(bbox) / anchor_area
+    if growth < args.min_backward_area_ratio or growth > 1.35 or x1 <= 0 or y1 <= 0 or x2 >= width or y2 >= height:
+      break
+    detector_confidence = 0.0
+    if elapsed + 1e-6 >= next_detector_elapsed:
+      proposal = matching_proposal(daemon, frame, bbox)
+      next_detector_elapsed = elapsed + args.detector_interval
+      if proposal is not None:
+        detector_confidence, proposal_bbox = proposal
+        bbox = proposal_bbox
+        points = feature_points(previous_gray, bbox)
+        growth = bbox_area(bbox) / anchor_area
+    if elapsed + 1e-6 < next_sample_elapsed:
+      continue
+    next_sample_elapsed = elapsed + args.sample_interval
+    tracking_confidence = min(len(points) / 12.0, 1.0) if points is not None else 0.0
+    sample = make_sample(
+      case,
+      daemon,
+      frame,
+      bbox,
+      detector_confidence,
+      tracking_confidence,
+      anchor_area,
+      frame_index / fps,
+      elapsed,
+      backward=True,
+    )
+    if sample is not None:
+      candidates.append(sample)
+  return ranked_samples(candidates, args.max_samples_before_track, args.sample_interval)
 
 
 def mine_case(case: TrackCase, daemon: slv.SpeedLimitVisionDaemon, args: argparse.Namespace) -> list[TrackSample]:
   capture = cv2.VideoCapture(str(case.video_path))
   fps = capture.get(cv2.CAP_PROP_FPS) or 20.0
   anchor_frame_index = max(int(round(case.frame_time_s * fps)), 0)
+  before_frame_count = max(int(round(args.window_before * fps)), 0)
+  earlier_frames: deque[tuple[int, np.ndarray]] = deque(maxlen=before_frame_count)
   # Raw comma HEVC streams have no seek index. CAP_PROP_POS_FRAMES silently
   # returns frame zero, so advance sequentially to preserve timestamp alignment.
-  for _frame_index in range(anchor_frame_index):
-    if not capture.grab():
+  for frame_index in range(anchor_frame_index):
+    if before_frame_count and frame_index >= anchor_frame_index - before_frame_count:
+      ok, frame = capture.read()
+      if not ok or frame is None:
+        capture.release()
+        return []
+      earlier_frames.append((frame_index, frame))
+    elif not capture.grab():
       capture.release()
       return []
   ok, anchor_frame = capture.read()
@@ -250,6 +399,17 @@ def mine_case(case: TrackCase, daemon: slv.SpeedLimitVisionDaemon, args: argpars
     capture.release()
     return []
   anchor_area = max(bbox_area(bbox), 1)
+  backward_samples = mine_backward_samples(
+    case,
+    daemon,
+    args,
+    list(earlier_frames),
+    anchor_frame,
+    anchor_frame_index,
+    fps,
+    bbox,
+    anchor_area,
+  )
   previous_gray = cv2.cvtColor(anchor_frame, cv2.COLOR_BGR2GRAY)
   points = feature_points(previous_gray, bbox)
   next_sample_at = case.frame_time_s
@@ -280,41 +440,23 @@ def mine_case(case: TrackCase, daemon: slv.SpeedLimitVisionDaemon, args: argpars
         points = feature_points(previous_gray, bbox)
     if time_s + 1e-6 >= next_sample_at:
       next_sample_at = time_s + args.sample_interval
-      crop_box = expanded_bbox(bbox, width, height)
-      x1, y1, x2, y2 = crop_box
-      crop = current_frame[y1:y2, x1:x2]
-      if crop.size:
-        read = daemon._classify_speed_limit_from_model(crop)
-        predicted_speed = int(read[0]) if read is not None else 0
-        read_confidence = float(read[1]) if read is not None else 0.0
-        gray_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-        sharpness = float(cv2.Laplacian(gray_crop, cv2.CV_64F).var())
-        brightness = float(gray_crop.mean())
-        growth = bbox_area(bbox) / anchor_area
-        exact_bonus = read_confidence * 2.0 if predicted_speed == case.expected_speed_mph else 0.0
-        wrong_penalty = read_confidence * 1.5 if predicted_speed and predicted_speed != case.expected_speed_mph else 0.0
-        score = (
-          math.log2(max(growth, 0.25)) * 0.55 +
-          min(sharpness / 180.0, 1.0) * 0.35 +
-          detector_confidence * 0.45 +
-          exact_bonus - wrong_penalty +
-          min(max(time_s - case.frame_time_s, 0.0), 1.5) * 0.08
+      growth = bbox_area(bbox) / anchor_area
+      if growth >= args.min_area_growth:
+        tracking_confidence = min(len(points) / 12.0, 1.0) if points is not None else 0.0
+        sample = make_sample(
+          case,
+          daemon,
+          current_frame,
+          bbox,
+          detector_confidence,
+          tracking_confidence,
+          anchor_area,
+          time_s,
+          max(time_s - case.frame_time_s, 0.0),
+          backward=False,
         )
-        if growth >= args.min_area_growth:
-          candidates.append(TrackSample(
-            time_s=time_s,
-            bbox=bbox,
-            crop_bbox=crop_box,
-            detector_confidence=detector_confidence,
-            predicted_speed_mph=predicted_speed,
-            read_confidence=read_confidence,
-            sharpness=sharpness,
-            brightness=brightness,
-            area_ratio_to_anchor=growth,
-            score=score,
-            frame_jpeg=encode_jpeg(current_frame),
-            crop_jpeg=encode_jpeg(crop, 95),
-          ))
+        if sample is not None:
+          candidates.append(sample)
     if current_index >= end_frame_index:
       break
     ok, current_frame = capture.read()
@@ -323,14 +465,8 @@ def mine_case(case: TrackCase, daemon: slv.SpeedLimitVisionDaemon, args: argpars
     current_index += 1
   capture.release()
 
-  selected: list[TrackSample] = []
-  for candidate in sorted(candidates, key=lambda item: item.score, reverse=True):
-    if any(abs(candidate.time_s - kept.time_s) < max(args.sample_interval * 1.5, 0.12) for kept in selected):
-      continue
-    selected.append(candidate)
-    if len(selected) >= args.max_samples_per_track:
-      break
-  return selected
+  selected = ranked_samples(candidates, args.max_samples_per_track, args.sample_interval)
+  return [*backward_samples, *selected]
 
 
 def main() -> int:
@@ -371,9 +507,11 @@ def main() -> int:
         "frame_path": str(frame_path),
         "crop_path": str(crop_path),
         "source_video_path": str(case.video_path),
+        "anchor_bbox_source": case.anchor_bbox_source,
         "bbox": ",".join(str(value) for value in sample.bbox),
         "crop_bbox": ",".join(str(value) for value in sample.crop_bbox),
         "detector_confidence": f"{sample.detector_confidence:.6f}",
+        "tracking_confidence": f"{sample.tracking_confidence:.6f}",
         "predicted_speed_limit_mph": str(sample.predicted_speed_mph or ""),
         "read_confidence": f"{sample.read_confidence:.6f}",
         "sharpness": f"{sample.sharpness:.3f}",

@@ -158,7 +158,10 @@ class LatControlTorque(LatControl):
   def update(self, active, CS, VM, params, steer_limited_by_safety, desired_curvature, curvature_limited, lat_delay, calibrated_pose, model_data, starpilot_toggles):
     pid_log = log.ControlsState.LateralTorqueState.new_message()
     pid_log.version = VERSION
-    set_ftm_runtime_overrides(getattr(starpilot_toggles, "ftm_active_overrides", None))
+    ftm_profile_active = bool(getattr(starpilot_toggles, "ftm_trial_applied", False) and
+                              getattr(starpilot_toggles, "ftm_active_profile_id", ""))
+    set_ftm_runtime_overrides(getattr(starpilot_toggles, "ftm_active_overrides", None) if ftm_profile_active else None)
+    ftm_surface_active = ftm_profile_active and ftm_runtime_overrides_active()
     if not active:
       output_torque = 0.0
       pid_log.active = False
@@ -326,7 +329,7 @@ class LatControlTorque(LatControl):
         friction_threshold = CIVIC_BOSCH_MODIFIED_B_FIXED_FRICTION_THRESHOLD
         friction_scale = get_civic_bosch_modified_b_friction_scale(CS.vEgo, setpoint, desired_lateral_jerk)
         friction_scale = 1.0 + ((friction_scale - 1.0) * civic_bosch_modified_a_center_taper)
-      if self.ftm_surface_profile_key and not ioniq_6_active:
+      if ftm_surface_active and self.ftm_surface_profile_key and not ioniq_6_active:
         universal_ftm_profile = self.ftm_surface_profile_key == FTM_UNIVERSAL_PROFILE_KEY
         ftm_full_surface_center_taper = get_ftm_full_surface_center_taper_scale(self.ftm_surface_profile_key, setpoint, CS.vEgo,
                                                                                 include_base_center=universal_ftm_profile)
@@ -364,7 +367,7 @@ class LatControlTorque(LatControl):
         actual_angle_no_offset = CS.steeringAngleDeg - params.angleOffsetDeg
         output_torque = get_ioniq_6_low_speed_angle_assist_torque(desired_angle_no_offset, actual_angle_no_offset,
                                                                   output_torque, CS.vEgo)
-      elif self.ftm_surface_profile_key and not CS.steeringPressed:
+      elif ftm_surface_active and self.ftm_surface_profile_key and not CS.steeringPressed:
         desired_angle_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
         actual_angle_no_offset = CS.steeringAngleDeg - params.angleOffsetDeg
         output_torque = get_ftm_full_surface_low_speed_angle_assist_torque(self.ftm_surface_profile_key, desired_angle_no_offset,
