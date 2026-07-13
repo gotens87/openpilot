@@ -75,16 +75,26 @@ class CorruptTileMonitor:
 def quarantine_offline_tile(filename: str) -> Path | None:
   tile_path = Path(filename)
   try:
-    tile_path.relative_to(OFFLINE_ROOT)
+    relative_path = tile_path.relative_to(OFFLINE_ROOT)
   except ValueError:
     cloudlog.warning(f"mapd_wrapper refusing to quarantine unexpected path: {filename}")
     return None
 
-  if not tile_path.exists():
+  quarantine_path = tile_path if tile_path.is_file() else None
+  if quarantine_path is None and len(relative_path.parts) >= 2:
+    archive_path = OFFLINE_ROOT / relative_path.parts[0] / f"{relative_path.parts[1]}.tar.gz"
+    if archive_path.is_file():
+      quarantine_path = archive_path
+
+  if quarantine_path is None:
     return None
 
-  quarantined = tile_path.with_name(f"{tile_path.name}.corrupt.{int(time.time())}")
-  tile_path.rename(quarantined)
+  quarantined = quarantine_path.with_name(f"{quarantine_path.name}.corrupt.{int(time.time())}")
+  try:
+    quarantine_path.rename(quarantined)
+  except OSError:
+    cloudlog.exception(f"mapd_wrapper failed to quarantine offline data: {quarantine_path}")
+    return None
   return quarantined
 
 

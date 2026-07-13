@@ -32,7 +32,7 @@ def test_quarantine_offline_tile_renames_file(tmp_path, monkeypatch):
   tile.parent.mkdir(parents=True)
   tile.write_text("bad")
 
-  monkeypatch.setattr("openpilot.starpilot.navigation.mapd_wrapper.OFFLINE_ROOT", offline_root)
+  monkeypatch.setitem(quarantine_offline_tile.__globals__, "OFFLINE_ROOT", offline_root)
 
   quarantined = quarantine_offline_tile(tile.as_posix())
 
@@ -40,3 +40,20 @@ def test_quarantine_offline_tile_renames_file(tmp_path, monkeypatch):
   assert not tile.exists()
   assert Path(quarantined).exists()
   assert Path(quarantined).name.startswith(f"{tile.name}.corrupt.")
+
+
+def test_quarantine_offline_tile_renames_backing_archive(tmp_path, monkeypatch):
+  offline_root = tmp_path / "offline"
+  archive = offline_root / "34/-88.tar.gz"
+  archive.parent.mkdir(parents=True)
+  archive.write_text("bad archive")
+  virtual_tile = offline_root / "34/-88/34.750000_-87.750000_35.000000_-87.500000"
+
+  monkeypatch.setitem(quarantine_offline_tile.__globals__, "OFFLINE_ROOT", offline_root)
+
+  quarantined = quarantine_offline_tile(virtual_tile.as_posix())
+
+  assert quarantined is not None
+  assert not archive.exists()
+  assert Path(quarantined).exists()
+  assert Path(quarantined).name.startswith(f"{archive.name}.corrupt.")
