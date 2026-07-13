@@ -43,6 +43,8 @@ def parse_args() -> argparse.Namespace:
   crop_ocr_group.add_argument("--crop-ocr", action="store_true", dest="crop_ocr", default=None, help="Enable crop OCR confirmation.")
   crop_ocr_group.add_argument("--no-crop-ocr", action="store_false", dest="crop_ocr", help="Evaluate the model-only detector/classifier path.")
   parser.add_argument("--separate-reject-classifier", action="store_true", help="Enable the optional second-stage reject classifier during eval.")
+  parser.add_argument("--classifier-expansion-limit", type=int, help="Evaluate only the first N detector crop expansions.")
+  parser.add_argument("--classifier-expansion-indices", help="Comma-separated detector crop expansion indices to evaluate.")
   parser.add_argument("--include-uncertain", action="store_true", help="Include uncertain_positive review rows in positive metrics.")
   parser.add_argument("--advisory-positive", action="store_true", help="Score reviewed advisory rows as readable speed positives.")
   parser.add_argument("--strict-positive-recall", type=float, help="Exit non-zero if positive exact recall is below this value.")
@@ -165,6 +167,15 @@ def main() -> int:
     slv.US_REJECT_CLASSIFIER_MIN_CONFIDENCE = args.classifier_reject_min_confidence
   if args.trusted_model_min_confidence is not None:
     slv.DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_READ_CONFIDENCE = args.trusted_model_min_confidence
+  if args.classifier_expansion_indices:
+    indices = tuple(int(value) for value in args.classifier_expansion_indices.split(","))
+    if not indices or min(indices) < 0 or max(indices) >= len(slv.DETECTOR_CLASSIFIER_EXPANSIONS):
+      raise ValueError("--classifier-expansion-indices contains an invalid index")
+    slv.DETECTOR_CLASSIFIER_EXPANSIONS = tuple(slv.DETECTOR_CLASSIFIER_EXPANSIONS[index] for index in indices)
+  elif args.classifier_expansion_limit is not None:
+    if args.classifier_expansion_limit < 1:
+      raise ValueError("--classifier-expansion-limit must be at least 1")
+    slv.DETECTOR_CLASSIFIER_EXPANSIONS = slv.DETECTOR_CLASSIFIER_EXPANSIONS[:args.classifier_expansion_limit]
   if args.strong_rescue_min_proposal_confidence is not None:
     slv.DETECTOR_CLASSIFIER_STRONG_RESCUE_MIN_PROPOSAL_CONFIDENCE = args.strong_rescue_min_proposal_confidence
   if args.strong_rescue_min_read_confidence is not None:

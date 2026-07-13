@@ -51,6 +51,8 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--crop-ocr", action="store_true", help="Evaluate with crop OCR confirmation enabled.")
   parser.add_argument("--classifier-min-confidence", type=float, help="Override the value classifier confidence threshold.")
   parser.add_argument("--trusted-model-min-confidence", type=float, help="Override tiny-box trusted model confidence.")
+  parser.add_argument("--classifier-expansion-limit", type=int, help="Evaluate only the first N detector crop expansions.")
+  parser.add_argument("--classifier-expansion-indices", help="Comma-separated detector crop expansion indices to evaluate.")
   parser.add_argument("--strong-rescue-min-proposal-confidence", type=float, help="Override single-frame tiny-sign proposal confidence.")
   parser.add_argument("--strong-rescue-min-read-confidence", type=float, help="Override single-frame tiny-sign classifier confidence.")
   parser.add_argument("--low-speed-change-consistent-detections", type=int, help="Override reads required to change from 30+ mph to below 30 mph.")
@@ -66,6 +68,7 @@ def parse_args() -> argparse.Namespace:
   )
   parser.add_argument("--initial-speed-limit", type=int, default=0, help="Seed each replay window with a currently published speed limit.")
   parser.add_argument("--positive-only", action="store_true", help="Replay only reviewed speed signs, omitting ignored-crop windows.")
+  parser.add_argument("--route-file", type=Path, help="Only replay routes listed one per line in this file.")
   parser.add_argument("--max-cases", type=int, default=0, help="Optional evaluation cap after deduplication.")
   return parser.parse_args()
 
@@ -134,8 +137,13 @@ def replay_video_cases(cases: list[ReviewedCase], args: argparse.Namespace) -> d
   }
   first_frame = max(int(min(window[0] for window in windows.values()) * fps), 0)
   end_frame = max(int(max(window[1] for window in windows.values()) * fps), first_frame)
-  capture.set(cv2.CAP_PROP_POS_FRAMES, first_frame)
-  frame_index = first_frame
+  # Raw comma HEVC streams do not contain a usable random-access index.
+  # OpenCV accepts CAP_PROP_POS_FRAMES but still returns frame zero.
+  frame_index = 0
+  while frame_index < first_frame:
+    if not capture.grab():
+      break
+    frame_index += 1
 
   while frame_index <= end_frame:
     ok, frame_bgr = capture.read()
@@ -168,6 +176,15 @@ def main() -> int:
     slv.US_CLASSIFIER_MIN_CONFIDENCE = args.classifier_min_confidence
   if args.trusted_model_min_confidence is not None:
     slv.DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_READ_CONFIDENCE = args.trusted_model_min_confidence
+  if args.classifier_expansion_indices:
+    indices = tuple(int(value) for value in args.classifier_expansion_indices.split(","))
+    if not indices or min(indices) < 0 or max(indices) >= len(slv.DETECTOR_CLASSIFIER_EXPANSIONS):
+      raise ValueError("--classifier-expansion-indices contains an invalid index")
+    slv.DETECTOR_CLASSIFIER_EXPANSIONS = tuple(slv.DETECTOR_CLASSIFIER_EXPANSIONS[index] for index in indices)
+  elif args.classifier_expansion_limit is not None:
+    if args.classifier_expansion_limit < 1:
+      raise ValueError("--classifier-expansion-limit must be at least 1")
+    slv.DETECTOR_CLASSIFIER_EXPANSIONS = slv.DETECTOR_CLASSIFIER_EXPANSIONS[:args.classifier_expansion_limit]
   if args.strong_rescue_min_proposal_confidence is not None:
     slv.DETECTOR_CLASSIFIER_STRONG_RESCUE_MIN_PROPOSAL_CONFIDENCE = args.strong_rescue_min_proposal_confidence
   if args.strong_rescue_min_read_confidence is not None:
@@ -179,6 +196,11 @@ def main() -> int:
   if args.enable_strong_model_consensus:
     slv.DETECTOR_CLASSIFIER_STRONG_MODEL_CONSENSUS_ENABLED = True
   cases = load_cases(queue_path, labels_path, args.dedupe_seconds)
+  if args.route_file:
+    selected_routes = {
+      line.strip() for line in args.route_file.expanduser().resolve().read_text(encoding="utf-8").splitlines() if line.strip()
+    }
+    cases = [case for case in cases if case.route in selected_routes]
   if args.positive_only:
     cases = [case for case in cases if not case.negative]
   if args.max_cases > 0:
