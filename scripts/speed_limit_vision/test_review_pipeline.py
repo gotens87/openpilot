@@ -1,5 +1,7 @@
 import importlib.util
 
+import pytest
+
 from argparse import Namespace
 from pathlib import Path
 
@@ -219,3 +221,17 @@ def test_corrected_bbox_regenerates_classifier_crop(tmp_path):
   assert crop is not None and crop.shape[:2] == (72, 96)
   assert crop.mean() > 150
   assert crop_bbox == "52,14,148,86"
+
+
+def test_corrected_bbox_requires_readable_source_frame(tmp_path):
+  row = {
+    "record_key": "missing-corrected-box-frame",
+    "frame_path": str(tmp_path / "missing-frame.jpg"),
+    "crop_path": str(tmp_path / "original-crop.jpg"),
+    "bbox": "0,0,20,20",
+    "crop_bbox": "0,0,24,24",
+    "review_bbox": "60,20,140,80",
+  }
+
+  with pytest.raises(RuntimeError, match="unreadable frame"):
+    import_queue.corrected_classifier_crop(row, tmp_path, overwrite=False)
