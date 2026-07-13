@@ -1232,8 +1232,8 @@ function renderSettingRow(p) {
   const isColor = p.ui_type === "color"
   const isGroup = isGroupParam(p)
   const isChild = p.parent_key ? "ds-child-modifier" : ""
-  const lockReason = getSettingLockReason(p)
-  const isLocked = lockReason !== ""
+  const lockReason = () => getSettingLockReason(p)
+  const isLocked = () => lockReason() !== ""
   const ftmParamStatus = getFtmParamStatus(p.key)
   const ftmTrialSummary = p.key === "AdvancedLateralTune" ? getFtmTrialSummary() : null
   let rowControl = ""
@@ -1259,7 +1259,7 @@ function renderSettingRow(p) {
             <div class="ds-stepper">
               <button
                 class="ds-stepper-btn"
-                disabled="${() => isLocked || !canDecrease || false}"
+                disabled="${() => isLocked() || !canDecrease || false}"
                 @click="${() => stepNumericParam(p, -1)}">-</button>
               <div class="ds-stepper-meta">
                 <span>${formatSliderValue(bounds.min, String(bounds.step), p.precision, p.key)} to ${formatSliderValue(bounds.max, String(bounds.step), p.precision, p.key)}</span>
@@ -1273,7 +1273,7 @@ function renderSettingRow(p) {
                     min="${bounds.min}"
                     max="${bounds.max}"
                     step="${bounds.step}"
-                    disabled="${() => isLocked || updating}"
+                    disabled="${() => isLocked() || updating}"
                     value="${() => formatNumericForInput(resolveCurrentNumericValue(p, numericBounds(p)), precision)}"
                     @keydown="${(e) => {
                       if (e.key !== "Enter") return
@@ -1282,17 +1282,17 @@ function renderSettingRow(p) {
                     }}" />
                   <button
                     class="ds-apply-btn"
-                    disabled="${() => isLocked || updating}"
+                    disabled="${() => isLocked() || updating}"
                     @click="${() => applyManualNumericParam(p)}">Apply</button>
                 </div>
                 <button
                   class="ds-reset-btn"
-                  disabled="${() => isLocked || !canReset || false}"
+                  disabled="${() => isLocked() || !canReset || false}"
                   @click="${() => resetNumericParam(p)}">Reset to Default</button>
               </div>
               <button
                 class="ds-stepper-btn"
-                disabled="${() => isLocked || !canIncrease || false}"
+                disabled="${() => isLocked() || !canIncrease || false}"
                 @click="${() => stepNumericParam(p, 1)}">+</button>            </div>
           `
     })()}
@@ -1304,7 +1304,7 @@ function renderSettingRow(p) {
         class="ds-select"
         id="ds-${p.key}"
         data-endpoint="${p.options_endpoint || ""}"
-        disabled="${() => isLocked}"
+        disabled="${() => isLocked()}"
         @change="${() => updateParam(p.key, "dropdown")}">
         <option value="">Loading...</option>
       </select>
@@ -1316,12 +1316,12 @@ function renderSettingRow(p) {
           type="color"
           class="ds-color"
           id="ds-${p.key}"
-          disabled="${() => isLocked}"
+          disabled="${() => isLocked()}"
           value="${() => resolveColorInputValue(p)}"
           @change="${() => updateParam(p.key, "color")}" />
         <button
           class="ds-reset-btn"
-          disabled="${() => isLocked || isStockColorValue(state.values[p.key])}"
+          disabled="${() => isLocked() || isStockColorValue(state.values[p.key])}"
           @click="${() => resetColorParam(p)}">Stock</button>
       </div>
     `
@@ -1361,7 +1361,10 @@ function renderSettingRow(p) {
             ${ftmParamStatus ? html`<span class="ds-ftm-badge">Currently overridden by FTM</span>` : ""}
           </div>
           ${p.description ? html`<div class="ds-row-desc">${p.description}</div>` : ""}
-          ${lockReason ? html`<div class="ds-row-desc"><strong>Locked:</strong> ${lockReason}</div>` : ""}
+          ${() => {
+            const reason = lockReason()
+            return reason ? html`<div class="ds-row-desc"><strong>Locked:</strong> ${reason}</div>` : ""
+          }}
           ${ftmParamStatus ? html`
             <div class="ds-ftm-detail">
               Effective now: <strong>${formatFtmValue(p, ftmParamStatus.effectiveValue)}</strong>.
