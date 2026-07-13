@@ -15,11 +15,11 @@ def daemon_with_history(current_speed, entries):
 
 
 def test_speed_change_requires_two_matching_reads():
-  daemon = daemon_with_history(40, [(55, 0.70)])
+  daemon = daemon_with_history(40, [(55, 0.95)])
   assert daemon._confirm_detection() is None
 
   daemon.history.append(HistoryEntry(55, 0.76, 1.0))
-  assert daemon._confirm_detection() == pytest.approx((55, 0.76))
+  assert daemon._confirm_detection() == pytest.approx((55, 0.95))
 
 
 def test_speed_change_accepts_single_strong_consensus_read():
@@ -69,8 +69,9 @@ def test_detector_classifier_runtime_reads_regulatory_sign_without_ocr(model_onl
   assert detection.speed_limit_mph == 55
 
 
-def test_detector_classifier_marks_three_strong_model_crops_as_consensus(model_only_runtime):
-  daemon = detector_classifier_daemon(regulatory=True, model_read=(20, 0.999), proposal_confidence=0.80)
+def test_detector_classifier_marks_two_strong_model_crops_as_consensus(model_only_runtime):
+  reads = iter(((20, 0.96), (20, 0.97), None))
+  daemon = detector_classifier_daemon(regulatory=True, model_read=lambda _crop: next(reads), proposal_confidence=0.80)
   detection = daemon._detect_sign_from_detector_classifier(np.zeros((480, 960, 3), dtype=np.uint8))
 
   assert detection is not None

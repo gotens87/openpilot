@@ -200,8 +200,9 @@ DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_READ_CONFIDENCE = 0.65
 DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_SUPPORT = 2
 DETECTOR_CLASSIFIER_STRONG_MODEL_MIN_PROPOSAL_CONFIDENCE = 0.60
 DETECTOR_CLASSIFIER_STRONG_MODEL_MIN_READ_CONFIDENCE = 0.995
+DETECTOR_CLASSIFIER_STRONG_MODEL_CONSENSUS_MIN_READ_CONFIDENCE = 0.95
 DETECTOR_CLASSIFIER_STRONG_MODEL_CONSENSUS_ENABLED = True
-DETECTOR_CLASSIFIER_STRONG_MODEL_CONSENSUS_MIN_SUPPORT = 3
+DETECTOR_CLASSIFIER_STRONG_MODEL_CONSENSUS_MIN_SUPPORT = 2
 DETECTOR_CLASSIFIER_MODEL_ONLY_CONSENSUS_MIN_CONFIDENCE = 0.90
 DETECTOR_CLASSIFIER_MODEL_ONLY_CONSENSUS_MIN_SUPPORT = 2
 SCHOOL_ZONE_SPEED_PRIOR = 0.12
@@ -1475,6 +1476,13 @@ class SpeedLimitVisionDaemon:
           proposal_confidence >= DETECTOR_CLASSIFIER_STRONG_MODEL_MIN_PROPOSAL_CONFIDENCE and
           model_read[1] >= DETECTOR_CLASSIFIER_STRONG_MODEL_MIN_READ_CONFIDENCE
         )
+        strong_model_consensus_read = (
+          class_id == 0 and
+          model_read is not None and
+          not is_small_box and
+          proposal_confidence >= DETECTOR_CLASSIFIER_STRONG_MODEL_MIN_PROPOSAL_CONFIDENCE and
+          model_read[1] >= DETECTOR_CLASSIFIER_STRONG_MODEL_CONSENSUS_MIN_READ_CONFIDENCE
+        )
         model_only_consensus_read = (
           not DETECTOR_CLASSIFIER_CROP_OCR_ENABLED and
           class_id == 0 and
@@ -1527,7 +1535,7 @@ class SpeedLimitVisionDaemon:
           speed_regulatory_support[speed_limit_mph] = speed_regulatory_support.get(speed_limit_mph, 0) + 1
         if trusted_model_read:
           speed_trusted_model_support[speed_limit_mph] = speed_trusted_model_support.get(speed_limit_mph, 0) + 1
-        if strong_model_read:
+        if strong_model_consensus_read:
           speed_strong_model_support[speed_limit_mph] = speed_strong_model_support.get(speed_limit_mph, 0) + 1
         if needs_ocr_confirmation and model_only_consensus_read:
           speed_model_only_rescue_support[speed_limit_mph] = speed_model_only_rescue_support.get(speed_limit_mph, 0) + 1
@@ -2109,6 +2117,7 @@ class SpeedLimitVisionDaemon:
         "candidate",
         candidateSpeedLimitMph=detection.speed_limit_mph,
         candidateConfidence=round(detection.confidence, 4),
+        candidateStrongConsensus=detection.strong_consensus,
       )
 
     self.history.append(HistoryEntry(detection.speed_limit_mph, detection.confidence, now, detection.strong_consensus))

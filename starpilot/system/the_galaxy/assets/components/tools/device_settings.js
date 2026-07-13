@@ -17,7 +17,7 @@ let lastFtmWorkspaceFetch = 0
 const DYNAMIC_DEFAULT_DEP_KEYS = new Set(["AccelerationProfile", "EVTuning", "TruckTuning"])
 const PANDA_FIRMWARE_TOGGLE_KEYS = new Set(["IgnoreIgnitionLine", "RemoteStartBootsComma", "HKGRemoteStartBootsComma"])
 const FTM_ADVANCED_LATERAL_KEYS = new Set([
-  "AdvancedLateralTune", "ForceAutoTune", "ForceAutoTuneOff", "SteerDelay",
+  "AdvancedLateralTune", "ForceAutoTune", "ForceAutoTuneOff", "UseAutoSteerDelay", "SteerDelay",
   "SteerFriction", "SteerKP", "SteerLatAccel", "SteerRatio",
 ])
 
@@ -1020,6 +1020,9 @@ function clearSearchFilter() {
 const cancelButtonKeys = new Set(["CancelButtonControl", "LongCancelButtonControl", "VeryLongCancelButtonControl"])
 
 function getSettingLockReason(param) {
+  if (param?.disabled_when_key_true && state.values[param.disabled_when_key_true]) {
+    return param.disabled_reason || "Disabled by another setting."
+  }
   return ""
 }
 
@@ -1256,7 +1259,7 @@ function renderSettingRow(p) {
             <div class="ds-stepper">
               <button
                 class="ds-stepper-btn"
-                disabled="${() => !canDecrease || false}"
+                disabled="${() => isLocked || !canDecrease || false}"
                 @click="${() => stepNumericParam(p, -1)}">-</button>
               <div class="ds-stepper-meta">
                 <span>${formatSliderValue(bounds.min, String(bounds.step), p.precision, p.key)} to ${formatSliderValue(bounds.max, String(bounds.step), p.precision, p.key)}</span>
@@ -1270,7 +1273,7 @@ function renderSettingRow(p) {
                     min="${bounds.min}"
                     max="${bounds.max}"
                     step="${bounds.step}"
-                    disabled="${() => updating}"
+                    disabled="${() => isLocked || updating}"
                     value="${() => formatNumericForInput(resolveCurrentNumericValue(p, numericBounds(p)), precision)}"
                     @keydown="${(e) => {
                       if (e.key !== "Enter") return
@@ -1279,17 +1282,17 @@ function renderSettingRow(p) {
                     }}" />
                   <button
                     class="ds-apply-btn"
-                    disabled="${() => updating}"
+                    disabled="${() => isLocked || updating}"
                     @click="${() => applyManualNumericParam(p)}">Apply</button>
                 </div>
                 <button
                   class="ds-reset-btn"
-                  disabled="${() => !canReset || false}"
+                  disabled="${() => isLocked || !canReset || false}"
                   @click="${() => resetNumericParam(p)}">Reset to Default</button>
               </div>
               <button
                 class="ds-stepper-btn"
-                disabled="${() => !canIncrease || false}"
+                disabled="${() => isLocked || !canIncrease || false}"
                 @click="${() => stepNumericParam(p, 1)}">+</button>            </div>
           `
     })()}

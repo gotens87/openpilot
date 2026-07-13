@@ -543,6 +543,7 @@ function mergedFtmOverrides() {
 
 function formatTuneComparisonValue(value) {
   if (Array.isArray(value)) return renderCurve(value)
+  if (typeof value === "boolean") return value ? "On" : "Off"
   const numeric = Number(value)
   return Number.isFinite(numeric) ? numeric.toFixed(3) : String(value ?? "-")
 }
@@ -556,6 +557,7 @@ function tuneComparisonRows() {
   const rows = [
     ["Lat accel", "SteerLatAccel"],
     ["Friction", "SteerFriction"],
+    ["Auto steer delay", "UseAutoSteerDelay"],
     ["Steer delay", "SteerDelay"],
     ["Steer ratio", "SteerRatio"],
     ["KP", "SteerKP"],

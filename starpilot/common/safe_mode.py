@@ -26,6 +26,7 @@ SAFE_MODE_MANAGED_KEYS = (
   "AdvancedLateralTune",
   "ForceAutoTune",
   "ForceAutoTuneOff",
+  "UseAutoSteerDelay",
   "ForceTorqueController",
   "SteerDelay",
   "SteerFriction",
@@ -196,6 +197,7 @@ SAFE_MODE_MANAGED_KEYS = (
 SAFE_MODE_FIXED_VALUES = {
   "ExperimentalMode": False,
   "LongitudinalPersonality": int(log.LongitudinalPersonality.relaxed),
+  "UseAutoSteerDelay": True,
 }
 
 SAFE_MODE_STOCK_PARAM_MAP = {

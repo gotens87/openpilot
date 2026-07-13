@@ -30,6 +30,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
   get_standard_friction_threshold,
   normalize_ftm_overrides,
 )
+from openpilot.starpilot.common.lateral_delay import full_lateral_delay
 from openpilot.system.hardware import PC
 from openpilot.system.hardware.hw import Paths
 from openpilot.tools.lib.logreader import LogReader
@@ -47,6 +48,7 @@ TRIAL_PARAM_SPECS = {
   "AdvancedLateralTune": "bool",
   "ForceAutoTune": "bool",
   "ForceAutoTuneOff": "bool",
+  "UseAutoSteerDelay": "bool",
   "SteerDelay": "float",
   "SteerFriction": "float",
   "SteerKP": "float",
@@ -61,6 +63,7 @@ FTM_ADVANCED_LATERAL_PARAM_KEYS = {
   "AdvancedLateralTune",
   "ForceAutoTune",
   "ForceAutoTuneOff",
+  "UseAutoSteerDelay",
   "SteerDelay",
   "SteerFriction",
   "SteerKP",
@@ -661,7 +664,7 @@ def _segment_samples(segment_source: RouteSource) -> tuple[list[FTMSample], car.
 def _current_param_state(CP, params: Params) -> dict[str, Any]:
   advanced_enabled = params.get_bool("AdvancedLateralTune")
   torque_tune = CP.lateralTuning.torque if CP.lateralTuning.which() == "torque" else None
-  stock_delay = float(getattr(CP, "steerActuatorDelay", 0.0) or 0.0)
+  stock_delay = full_lateral_delay(float(getattr(CP, "steerActuatorDelay", 0.0) or 0.0))
   stock_ratio = float(getattr(CP, "steerRatio", 0.0) or 0.0)
   stock_friction = float(getattr(torque_tune, "friction", 0.0) or 0.0) if torque_tune is not None else 0.0
   stock_lat_accel = float(getattr(torque_tune, "latAccelFactor", 0.0) or 0.0) if torque_tune is not None else 0.0
@@ -669,6 +672,7 @@ def _current_param_state(CP, params: Params) -> dict[str, Any]:
     "AdvancedLateralTune": advanced_enabled,
     "ForceAutoTune": params.get_bool("ForceAutoTune"),
     "ForceAutoTuneOff": params.get_bool("ForceAutoTuneOff"),
+    "UseAutoSteerDelay": params.get_bool("UseAutoSteerDelay"),
     "SteerDelay": params.get_float("SteerDelay", return_default=True, default=stock_delay) if advanced_enabled else stock_delay,
     "SteerFriction": params.get_float("SteerFriction", return_default=True, default=stock_friction) if advanced_enabled else stock_friction,
     "SteerKP": params.get_float("SteerKP", return_default=True, default=KP) if advanced_enabled else KP,
@@ -690,7 +694,8 @@ def _stock_param_state(CP, capabilities: dict[str, Any]) -> dict[str, Any]:
     if rich_profile and meta.get("profile") == rich_profile
   }
   return {
-    "SteerDelay": float(getattr(CP, "steerActuatorDelay", 0.0) or 0.0),
+    "UseAutoSteerDelay": True,
+    "SteerDelay": full_lateral_delay(float(getattr(CP, "steerActuatorDelay", 0.0) or 0.0)),
     "SteerFriction": float(getattr(torque_tune, "friction", 0.0) or 0.0) if torque_tune is not None else 0.0,
     "SteerKP": float(KP),
     "SteerLatAccel": float(getattr(torque_tune, "latAccelFactor", 0.0) or 0.0) if torque_tune is not None else 0.0,
@@ -1424,6 +1429,9 @@ def _merge_primary_adjustments(suggestions: list[dict[str, Any]], multiplier: fl
     precision = float(GENERIC_PARAM_METADATA[param_key]["precision"])
     if not math.isclose(float(bucket["current"]), next_value, abs_tol=max(precision / 2.0, 1e-6)):
       params_delta[param_key] = next_value
+
+  if "SteerDelay" in params_delta:
+    params_delta["UseAutoSteerDelay"] = False
 
   supported_knobs = get_ftm_supported_vehicle_knobs()
   for symbol, bucket in vehicle_targets.items():

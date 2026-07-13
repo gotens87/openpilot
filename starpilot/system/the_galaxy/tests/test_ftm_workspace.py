@@ -241,7 +241,8 @@ def test_stock_param_state_captures_generic_and_rich_defaults(tmp_path):
   stock = module._stock_param_state(CP, capabilities)
   assert stock["SteerLatAccel"] == pytest.approx(3.0)
   assert stock["SteerFriction"] == pytest.approx(0.09)
-  assert stock["SteerDelay"] == pytest.approx(0.1)
+  assert stock["UseAutoSteerDelay"] is True
+  assert stock["SteerDelay"] == pytest.approx(0.3)
   assert stock["SteerRatio"] == pytest.approx(14.26)
   assert len(stock["FTMBaseFrictionThresholds"]["hkg_canfd"]["values"]) == 5
   assert stock["FTMVehicleKnobs"]["hyundai_ioniq_6.turn_in_boost_left"] == pytest.approx(1.64)
@@ -567,6 +568,26 @@ def test_merge_primary_adjustments_averages_conflicting_deltas(tmp_path):
 
   params_delta, overrides, _ = module._merge_primary_adjustments(suggestions, 1.0)
   assert params_delta["SteerLatAccel"] == pytest.approx(1.65, abs=1e-4)
+  assert overrides == {}
+
+
+def test_merge_primary_adjustments_disables_auto_delay_for_manual_delay_trial(tmp_path):
+  module, _ = _load_ftm_workspace_module(tmp_path)
+  suggestions = [{
+    "severity": 1.0,
+    "primaryAdjustmentRaw": {
+      "type": "generic_param",
+      "paramKey": "SteerDelay",
+      "current": 0.31,
+      "suggested": 0.33,
+      "delta": 0.02,
+    },
+  }]
+
+  params_delta, overrides, _ = module._merge_primary_adjustments(suggestions, 1.0)
+
+  assert params_delta["SteerDelay"] == pytest.approx(0.33)
+  assert params_delta["UseAutoSteerDelay"] is False
   assert overrides == {}
 
 

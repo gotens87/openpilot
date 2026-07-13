@@ -40,6 +40,10 @@ class StarPilotCard:
     self.hyundai_preserve_aol_across_reverse = getattr(self.CP, "carFingerprint", None) == HYUNDAI_CAR.HYUNDAI_SONATA_HYBRID
     self.hyundai_aol_needs_engagement = self.CP.brand == "hyundai" and not (hyundai_flags & HyundaiFlags.CANFD) and not kia_forte_non_scc
     self.hyundai_aol_ready = False
+    # Nissan's angle-control EPS can fault if AOL starts while the wheel is at a
+    # large parking angle. Require one normal openpilot engagement before AOL.
+    self.nissan_aol_needs_engagement = self.CP.brand == "nissan"
+    self.nissan_aol_ready = False
     self.prev_active = False
     self.prev_cruise_enabled = False
     self.decel_pressed = False
@@ -114,6 +118,7 @@ class StarPilotCard:
   def update(self, carState, starpilotCarState, sm, starpilot_toggles):
     self.switchback_mode_enabled = self.params_memory.get_bool("SwitchbackModeEnabled")
     button_event_types = [self._button_type_raw(be) for be in carState.buttonEvents]
+    button_managed_aol = starpilot_toggles.always_on_lateral_lkas or starpilot_toggles.main_cruise_aol_toggle
 
     if self.hyundai_aol_needs_engagement:
       if carState.gearShifter in NON_DRIVING_GEARS:
@@ -123,6 +128,13 @@ class StarPilotCard:
           self.always_on_lateral_allowed = False
       elif sm["selfdriveState"].active or carState.cruiseState.enabled:
         self.hyundai_aol_ready = True
+
+    if self.nissan_aol_needs_engagement:
+      if carState.gearShifter in NON_DRIVING_GEARS:
+        self.nissan_aol_ready = False
+        self.always_on_lateral_allowed = False
+      elif sm["selfdriveState"].active:
+        self.nissan_aol_ready = True
 
     if self.CP.brand == "hyundai" or starpilot_toggles.lkas_allowed_for_aol:
       for be, be_type in zip(carState.buttonEvents, button_event_types, strict=False):
@@ -139,8 +151,10 @@ class StarPilotCard:
             self.always_on_lateral_allowed = not self.always_on_lateral_allowed
           elif starpilot_toggles.main_cruise_slc_adopt and starpilot_toggles.speed_limit_controller:
             self.params_memory.put_bool("SLCAdoptSpeedLimit", True)
-    elif starpilot_toggles.always_on_lateral_main:
-      if pacifica_hybrid_aol_requires_set_press(self.CP.carFingerprint, self.CP.pcmCruise):
+    if starpilot_toggles.always_on_lateral_main and not button_managed_aol:
+      car_fingerprint = getattr(self.CP, "carFingerprint", None)
+      pcm_cruise = getattr(self.CP, "pcmCruise", False)
+      if pacifica_hybrid_aol_requires_set_press(car_fingerprint, pcm_cruise):
         # Chrysler Pacifica Hybrid stock ACC can fall back to plain cruise if AOL
         # starts steering before the driver presses SET.
         if not carState.cruiseState.available:
@@ -163,9 +177,11 @@ class StarPilotCard:
     self.always_on_lateral_enabled = self.always_on_lateral_allowed and self.always_on_lateral_set
     self.always_on_lateral_enabled &= carState.gearShifter not in NON_DRIVING_GEARS
     self.always_on_lateral_enabled &= not self.hyundai_aol_needs_engagement or self.hyundai_aol_ready
+    self.always_on_lateral_enabled &= not self.nissan_aol_needs_engagement or self.nissan_aol_ready
     self.always_on_lateral_enabled &= sm["starpilotPlan"].lateralCheck
     self.always_on_lateral_enabled &= sm["liveCalibration"].calPerc >= 1
-    self.always_on_lateral_enabled &= (ET.IMMEDIATE_DISABLE not in sm["selfdriveState"].alertType + sm["starpilotSelfdriveState"].alertType) or self.frogs_go_moo
+    alert_types = sm["selfdriveState"].alertType + sm["starpilotSelfdriveState"].alertType
+    self.always_on_lateral_enabled &= ET.IMMEDIATE_DISABLE not in alert_types or self.frogs_go_moo
     self.always_on_lateral_enabled &= not (carState.brakePressed and carState.vEgo < starpilot_toggles.always_on_lateral_pause_speed) or carState.standstill
     self.always_on_lateral_enabled &= not self.error_log.is_file() or self.frogs_go_moo
 

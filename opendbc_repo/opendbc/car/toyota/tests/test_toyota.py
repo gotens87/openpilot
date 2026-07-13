@@ -357,6 +357,22 @@ class TestToyotaCarController:
     assert parser.vl["LKAS_HUD"]["LEFT_LINE"] == 0
     assert parser.vl["LKAS_HUD"]["RIGHT_LINE"] == 0
 
+  def test_acc_control_can_suppress_long_press_behavior_while_gap_button_is_held(self):
+    packer = CANPacker(DBC[CAR.TOYOTA_HIGHLANDER_TSS2][Bus.pt])
+    parser = CANParser(DBC[CAR.TOYOTA_HIGHLANDER_TSS2][Bus.pt], [("ACC_CONTROL", 0)], 0)
+
+    default_msg = toyotacan.create_accel_command(
+      packer, 0.0, False, True, False, False, 1, False, 0, False,
+    )
+    parser.update([(1, [default_msg])])
+    assert parser.vl["ACC_CONTROL"]["ALLOW_LONG_PRESS"] == 1
+
+    suppressed_msg = toyotacan.create_accel_command(
+      packer, 0.0, False, True, False, False, 1, False, 0, False, allow_long_press=0,
+    )
+    parser.update([(1, [suppressed_msg])])
+    assert parser.vl["ACC_CONTROL"]["ALLOW_LONG_PRESS"] == 0
+
   def test_auto_brake_hold_sends_modified_pre_collision_after_timer(self):
     controller = self._make_controller()
     controller.packer = CANPacker(DBC[CAR.TOYOTA_CAMRY_TSS2][Bus.pt])

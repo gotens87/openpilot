@@ -295,6 +295,14 @@ class CAR(Platforms):
     CarSpecs(mass=3017 * CV.LB_TO_KG, wheelbase=2.72, steerRatio=12.9, tireStiffnessFactor=0.65),
     flags=HyundaiFlags.CHECKSUM_CRC8 | HyundaiFlags.HYBRID,
   )
+  # 2026 CN7 Hybrid Limited. Initial port based on route
+  # 24d8ddb7d33b028f/00000008--d1f2ac19cc; keep this separate from the
+  # 2021-23 platform until its changed CAN receive checks are validated.
+  HYUNDAI_ELANTRA_HEV_2026 = HyundaiPlatformConfig(
+    [HyundaiCarDocs("Hyundai Elantra Hybrid 2026", "Limited", car_parts=CarParts.common([CarHarness.hyundai_k]))],
+    HYUNDAI_ELANTRA_HEV_2021.specs,
+    flags=HyundaiFlags.CHECKSUM_CRC8 | HyundaiFlags.HYBRID,
+  )
   HYUNDAI_GENESIS = HyundaiPlatformConfig(
     [
       # TODO: check 2015 packages

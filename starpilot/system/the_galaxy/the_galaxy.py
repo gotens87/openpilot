@@ -63,6 +63,7 @@ from openpilot.starpilot.common.maps_catalog import (
 )
 from openpilot.starpilot.common.experimental_state import sync_persist_chill_state, sync_persist_experimental_state
 from openpilot.starpilot.common.favorite_slots import FAVORITE_SLOTS_PARAM, normalize_favorite_slots
+from openpilot.starpilot.common.lateral_delay import full_lateral_delay
 from openpilot.starpilot.common.starpilot_utilities import delete_file, get_lock_status, run_cmd
 from openpilot.starpilot.common.starpilot_variables import ACTIVE_THEME_PATH, ERROR_LOGS_PATH, EXCLUDED_KEYS, LEGACY_STARPILOT_PARAM_RENAMES, MAPS_PATH, MODELS_PATH, RESOURCES_REPO, SCREEN_RECORDINGS_PATH, STOCK_THEME_PATH, THEME_SAVE_PATH,\
                                                            default_ev_tuning_enabled, migrate_cancel_button_controls, update_starpilot_toggles
@@ -845,6 +846,7 @@ _TROUBLESHOOT_CEM_KEYS = [
 
 _TROUBLESHOOT_ADVANCED_LATERAL_KEYS = [
   "AdvancedLateralTune",
+  "UseAutoSteerDelay",
   "SteerDelay",
   "SteerFriction",
   "SteerOffset",
@@ -2450,6 +2452,18 @@ def _is_blank_param_raw(raw_value):
     return len(raw_value.strip()) == 0
   return False
 
+def _get_use_old_ui_enabled():
+  if not _raylib_ui_toggle_affects_device():
+    return False
+
+  raw_value = _safe_params_get_live_raw("UseOldUI")
+  if _is_blank_param_raw(raw_value):
+    legacy_raw_value = _safe_params_get_live_raw("TryRaylibUI")
+    if not _is_blank_param_raw(legacy_raw_value):
+      return not _coerce_param_value(legacy_raw_value, bool)
+
+  return _coerce_param_value(raw_value, bool)
+
 def _has_runtime_default_value(key, raw_value):
   if _is_blank_param_raw(raw_value):
     return False
@@ -2483,7 +2497,7 @@ def _get_runtime_default_param_overrides():
         overrides["EVTuning"] = default_ev_tuning_enabled(cp)
 
         car_param_defaults = {
-          "SteerDelay": getattr(cp, "steerActuatorDelay", None),
+          "SteerDelay": full_lateral_delay(getattr(cp, "steerActuatorDelay", 0.0)),
           "SteerRatio": getattr(cp, "steerRatio", None),
           "LongitudinalActuatorDelay": getattr(cp, "longitudinalActuatorDelay", None),
           "StartAccel": getattr(cp, "startAccel", None),
@@ -2528,6 +2542,11 @@ def _get_runtime_default_param_overrides():
   return overrides
 
 def _get_current_param_value(key, value_type, defaults_lookup=None):
+  if key == "UseOldUI":
+    return _get_use_old_ui_enabled()
+  if key == "TryRaylibUI":
+    return _raylib_ui_toggle_affects_device() and not _get_use_old_ui_enabled()
+
   if key == CUSTOM_ACCEL_PROFILE_INITIALIZED_KEY:
     return _get_custom_accel_profile_initialized()
 
@@ -3100,6 +3119,12 @@ def _build_troubleshoot_payload():
       "id": "fingerprint",
       "label": "Fingerprint",
       "value": _get_fingerprint_snapshot_text(),
+      "resettable": False,
+    },
+    {
+      "id": "lan_ip",
+      "label": "LAN IP",
+      "value": utilities.get_current_lan_ip() or "Unavailable",
       "resettable": False,
     },
     *_get_hardware_snapshot_items(),
@@ -3761,6 +3786,8 @@ def setup(app):
   def disable_device_settings_asset_cache(response):
     if request.path in {
       "/assets/components/router.js",
+      "/assets/components/home/home.js",
+      "/assets/components/home/home.css",
       "/assets/components/tools/device_settings.js",
       "/assets/components/tools/device_settings.css",
       "/assets/components/tools/device_settings_layout.json",
@@ -4166,22 +4193,24 @@ def setup(app):
       if key not in allowed_keys:
         return jsonify({"error": f"Parameter '{key}' is not editable."}), 403
 
-      if key == "TryRaylibUI":
+      if key in {"UseOldUI", "TryRaylibUI"}:
         enabled = str_val.strip() in ("1", "true", "True")
+        use_old_ui = enabled if key == "UseOldUI" else not enabled
+        updated = {"UseOldUI": use_old_ui, "TryRaylibUI": not use_old_ui}
         if not _raylib_ui_toggle_affects_device():
-          current_enabled = params.get_bool("TryRaylibUI")
           return jsonify({
-            "message": "Try raylib UI is only available on tici/tizi devices.",
-            "updated": {"TryRaylibUI": current_enabled},
+            "message": "Use Old UI is only available on tici/tizi devices.",
+            "updated": {"UseOldUI": False, "TryRaylibUI": False},
           }), 200
 
         if params.get_bool("IsOnroad"):
-          return jsonify({"error": "Cannot change Try raylib UI while driving."}), 403
+          return jsonify({"error": "Cannot change Use Old UI while driving."}), 403
 
-        params.put_bool("TryRaylibUI", enabled)
+        params.put_bool("UseOldUI", use_old_ui)
+        params.put_bool("TryRaylibUI", not use_old_ui)
         return jsonify({
-          "message": f"{'Raylib' if enabled else 'Qt'} UI selected. UI will restart shortly.",
-          "updated": {"TryRaylibUI": enabled},
+          "message": f"{'Old' if use_old_ui else 'Raylib'} UI selected. UI will restart shortly.",
+          "updated": updated,
         }), 200
 
       # 1. Prevent changing the model or reboot-required toggles while the car is actively driving
@@ -4499,6 +4528,10 @@ def setup(app):
       return _serialize_param_write_value(_get_custom_accel_profile_initialized()), 200
     if request_key == "LeadIndicator":
       return _serialize_param_write_value(_get_lead_indicator_enabled()), 200
+    if request_key == "UseOldUI":
+      return ("1" if _get_use_old_ui_enabled() else "0"), 200
+    if request_key == "TryRaylibUI":
+      return ("1" if _raylib_ui_toggle_affects_device() and not _get_use_old_ui_enabled() else "0"), 200
     if request_key == "IsRHD" and not params.get_bool("IsRHDOverride"):
       return ("1" if params.get_bool("IsRhdDetected") else "0"), 200
     value = params.get(request_key) or ""
@@ -4535,7 +4568,11 @@ def setup(app):
       default_val = defaults_lookup.get(key)
 
       try:
-        if t == bool:
+        if key == "UseOldUI":
+          result[key] = False
+        elif key == "TryRaylibUI":
+          result[key] = _raylib_ui_toggle_affects_device()
+        elif t == bool:
           if isinstance(default_val, bytes):
             default_str = default_val.decode("utf-8", errors="replace")
           else:

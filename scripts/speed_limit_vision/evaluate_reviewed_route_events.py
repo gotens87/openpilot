@@ -66,9 +66,28 @@ def parse_args() -> argparse.Namespace:
     action="store_true",
     help="Mark three agreeing high-confidence regulatory model crops as strong consensus.",
   )
+  parser.add_argument(
+    "--strong-model-min-proposal-confidence",
+    type=float,
+    help="Override proposal confidence required for a crop to contribute to strong model consensus.",
+  )
+  parser.add_argument(
+    "--strong-model-consensus-min-read-confidence",
+    type=float,
+    help="Override classifier confidence required for a crop to contribute to strong model consensus.",
+  )
+  parser.add_argument(
+    "--strong-model-consensus-min-support",
+    type=int,
+    help="Override the number of agreeing classifier crops required for strong model consensus.",
+  )
   parser.add_argument("--initial-speed-limit", type=int, default=0, help="Seed each replay window with a currently published speed limit.")
   parser.add_argument("--positive-only", action="store_true", help="Replay only reviewed speed signs, omitting ignored-crop windows.")
+  parser.add_argument("--negative-only", action="store_true", help="Replay only ignored not-speed-limit windows.")
   parser.add_argument("--route-file", type=Path, help="Only replay routes listed one per line in this file.")
+  parser.add_argument("--strong-detection-confidence", type=float, help="Override one-frame publication confidence.")
+  parser.add_argument("--consistent-detections", type=int, help="Override matching reads required for an initial publication.")
+  parser.add_argument("--change-consistent-detections", type=int, help="Override matching reads required to change a publication.")
   parser.add_argument("--max-cases", type=int, default=0, help="Optional evaluation cap after deduplication.")
   return parser.parse_args()
 
@@ -111,7 +130,7 @@ def load_cases(queue_path: Path, labels_path: Path, dedupe_seconds: float) -> li
   return cases
 
 
-def replay_video_cases(cases: list[ReviewedCase], args: argparse.Namespace) -> dict[str, tuple[list[int], list[int], int]]:
+def replay_video_cases(cases: list[ReviewedCase], args: argparse.Namespace) -> dict[str, tuple[list[dict[str, str]], int]]:
   daemons = {
     case.record_key: RouteReplayDaemon(
       runtime_context=None,
@@ -160,9 +179,7 @@ def replay_video_cases(cases: list[ReviewedCase], args: argparse.Namespace) -> d
   results = {}
   for case in cases:
     daemon = daemons[case.record_key]
-    candidates = [int(event["candidateSpeedLimitMph"]) for event in daemon.events if event["event"] == "candidate"]
-    publishes = [int(event["speedLimitMph"]) for event in daemon.events if event["event"] == "publish"]
-    results[case.record_key] = candidates, publishes, daemon.inference_frames
+    results[case.record_key] = daemon.events, daemon.inference_frames
   return results
 
 
@@ -195,6 +212,20 @@ def main() -> int:
     slv.LOW_SPEED_CHANGE_ALLOW_STRONG_CONSENSUS = True
   if args.enable_strong_model_consensus:
     slv.DETECTOR_CLASSIFIER_STRONG_MODEL_CONSENSUS_ENABLED = True
+  if args.strong_model_min_proposal_confidence is not None:
+    slv.DETECTOR_CLASSIFIER_STRONG_MODEL_MIN_PROPOSAL_CONFIDENCE = args.strong_model_min_proposal_confidence
+  if args.strong_model_consensus_min_read_confidence is not None:
+    slv.DETECTOR_CLASSIFIER_STRONG_MODEL_CONSENSUS_MIN_READ_CONFIDENCE = args.strong_model_consensus_min_read_confidence
+  if args.strong_model_consensus_min_support is not None:
+    if args.strong_model_consensus_min_support < 1:
+      raise ValueError("--strong-model-consensus-min-support must be at least 1")
+    slv.DETECTOR_CLASSIFIER_STRONG_MODEL_CONSENSUS_MIN_SUPPORT = args.strong_model_consensus_min_support
+  if args.strong_detection_confidence is not None:
+    slv.STRONG_DETECTION_CONFIDENCE = args.strong_detection_confidence
+  if args.consistent_detections is not None:
+    slv.CONSISTENT_DETECTIONS = args.consistent_detections
+  if args.change_consistent_detections is not None:
+    slv.CHANGE_CONSISTENT_DETECTIONS = args.change_consistent_detections
   cases = load_cases(queue_path, labels_path, args.dedupe_seconds)
   if args.route_file:
     selected_routes = {
@@ -203,13 +234,17 @@ def main() -> int:
     cases = [case for case in cases if case.route in selected_routes]
   if args.positive_only:
     cases = [case for case in cases if not case.negative]
+  if args.negative_only:
+    cases = [case for case in cases if case.negative]
+  if args.positive_only and args.negative_only:
+    raise ValueError("--positive-only and --negative-only are mutually exclusive")
   if args.max_cases > 0:
     cases = cases[:args.max_cases]
 
   output_rows: list[dict[str, object]] = []
   positive_by_speed: dict[int, Counter[str]] = defaultdict(Counter)
   negative_counts: Counter[str] = Counter()
-  results: dict[str, tuple[list[int], list[int], int]] = {}
+  results: dict[str, tuple[list[dict[str, str]], int]] = {}
   cases_by_video: dict[Path, list[ReviewedCase]] = defaultdict(list)
   for case in cases:
     cases_by_video[case.source_video_path].append(case)
@@ -219,9 +254,15 @@ def main() -> int:
       print(f"Replayed {index}/{len(cases_by_video)} video segments", flush=True)
 
   for case in cases:
-    candidates, publishes, inference_frames = results.get(case.record_key, ([], [], 0))
+    events, inference_frames = results.get(case.record_key, ([], 0))
+    candidate_events = [event for event in events if event["event"] == "candidate"]
+    publish_events = [event for event in events if event["event"] == "publish"]
+    candidates = [int(event["candidateSpeedLimitMph"]) for event in candidate_events]
+    publishes = [int(event["speedLimitMph"]) for event in publish_events]
     candidate_hit = case.expected_speed_limit_mph in candidates if not case.negative else False
     publish_hit = case.expected_speed_limit_mph in publishes if not case.negative else False
+    wrong_candidate_values = [] if case.negative else [value for value in candidates if value != case.expected_speed_limit_mph]
+    wrong_publish_values = [] if case.negative else [value for value in publishes if value != case.expected_speed_limit_mph]
     false_candidate = bool(candidates) if case.negative else False
     false_publish = bool(publishes) if case.negative else False
     if case.negative:
@@ -231,6 +272,8 @@ def main() -> int:
         total=1,
         candidate_hit=int(candidate_hit),
         publish_hit=int(publish_hit),
+        wrong_candidate=int(bool(wrong_candidate_values)),
+        wrong_publish=int(bool(wrong_publish_values)),
       )
     output_rows.append({
       "record_key": case.record_key,
@@ -241,8 +284,15 @@ def main() -> int:
       "negative": case.negative,
       "candidate_values": "|".join(str(value) for value in candidates),
       "publish_values": "|".join(str(value) for value in publishes),
+      "candidate_confidences": "|".join(event.get("candidateConfidence", "") for event in candidate_events),
+      "candidate_strong_consensus": "|".join(event.get("candidateStrongConsensus", "") for event in candidate_events),
+      "publish_confidences": "|".join(event.get("confidence", "") for event in publish_events),
       "candidate_hit": candidate_hit,
       "publish_hit": publish_hit,
+      "wrong_candidate_values": "|".join(str(value) for value in wrong_candidate_values),
+      "wrong_publish_values": "|".join(str(value) for value in wrong_publish_values),
+      "wrong_candidate": bool(wrong_candidate_values),
+      "wrong_publish": bool(wrong_publish_values),
       "false_candidate": false_candidate,
       "false_publish": false_publish,
       "inference_frames": inference_frames,
@@ -274,6 +324,9 @@ def main() -> int:
     "low_speed_change_consistent_detections": slv.LOW_SPEED_CHANGE_CONSISTENT_DETECTIONS,
     "low_speed_change_allow_strong_consensus": slv.LOW_SPEED_CHANGE_ALLOW_STRONG_CONSENSUS,
     "strong_model_consensus_enabled": slv.DETECTOR_CLASSIFIER_STRONG_MODEL_CONSENSUS_ENABLED,
+    "strong_model_min_proposal_confidence": slv.DETECTOR_CLASSIFIER_STRONG_MODEL_MIN_PROPOSAL_CONFIDENCE,
+    "strong_model_consensus_min_read_confidence": slv.DETECTOR_CLASSIFIER_STRONG_MODEL_CONSENSUS_MIN_READ_CONFIDENCE,
+    "strong_model_consensus_min_support": slv.DETECTOR_CLASSIFIER_STRONG_MODEL_CONSENSUS_MIN_SUPPORT,
     "positive": dict(totals),
     "positive_by_speed": {str(speed): dict(counts) for speed, counts in sorted(positive_by_speed.items())},
     "negative": dict(negative_counts),
