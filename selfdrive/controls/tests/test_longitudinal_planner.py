@@ -3092,6 +3092,87 @@ def test_stable_follow_cruise_hysteresis_skips_fast_closing_radar_lead():
   assert hysteresis == 0.0
 
 
+def test_vision_follow_cruise_hold_keeps_high_confidence_matched_lead_through_small_crossover():
+  v_ego = 22.5
+  t_follow = 1.20
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead_one = make_lead(status=True, d_rel=32.0, v_lead=22.0, a_lead=-0.02, radar=False, model_prob=0.99)
+  lead_two = make_lead(status=False)
+
+  sticky = planner.mpc.get_vision_follow_cruise_hold(
+    "lead0",
+    lead_one,
+    lead_two,
+    101.0,
+    200.0,
+    100.0,
+    v_ego,
+    t_follow,
+    True,
+  )
+
+  assert sticky == "lead0"
+
+
+@pytest.mark.parametrize("tracking_lead, radar, model_prob, cruise_obstacle", [
+  (False, False, 0.99, 100.0),
+  (True, True, 1.0, 100.0),
+  (True, False, 0.80, 100.0),
+  (True, False, 0.99, 98.0),
+])
+def test_vision_follow_cruise_hold_skips_nonmatching_or_clear_cruise_cases(
+  tracking_lead, radar, model_prob, cruise_obstacle,
+):
+  v_ego = 22.5
+  t_follow = 1.20
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead_one = make_lead(status=True, d_rel=32.0, v_lead=22.0, a_lead=-0.02, radar=radar, model_prob=model_prob)
+  lead_two = make_lead(status=False)
+
+  sticky = planner.mpc.get_vision_follow_cruise_hold(
+    "lead0",
+    lead_one,
+    lead_two,
+    101.0,
+    200.0,
+    cruise_obstacle,
+    v_ego,
+    t_follow,
+    tracking_lead,
+  )
+
+  assert sticky is None
+
+
+@pytest.mark.parametrize("prev_source, lead_accel", [
+  ("cruise", -0.02),
+  ("lead0", -0.60),
+])
+def test_vision_follow_cruise_hold_never_delays_restrictive_transition(prev_source, lead_accel):
+  v_ego = 22.5
+  t_follow = 1.20
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead_one = make_lead(status=True, d_rel=32.0, v_lead=22.0, a_lead=lead_accel, radar=False, model_prob=0.99)
+  lead_two = make_lead(status=False)
+
+  sticky = planner.mpc.get_vision_follow_cruise_hold(
+    prev_source,
+    lead_one,
+    lead_two,
+    101.0,
+    200.0,
+    100.0,
+    v_ego,
+    t_follow,
+    True,
+  )
+
+  assert sticky is None
+
+
 def test_near_duplicate_lead_source_hysteresis_prefers_previous_source_for_identical_radar_track():
   v_ego = 27.0
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)

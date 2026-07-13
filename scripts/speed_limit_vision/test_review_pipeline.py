@@ -235,3 +235,53 @@ def test_corrected_bbox_requires_readable_source_frame(tmp_path):
 
   with pytest.raises(RuntimeError, match="unreadable frame"):
     import_queue.corrected_classifier_crop(row, tmp_path, overwrite=False)
+
+
+def test_corrected_record_removes_inherited_classifier_sample(tmp_path):
+  stale = tmp_path / "train" / "55" / "base_review_bad_record_key_hash.jpg"
+  retained = tmp_path / "train" / "55" / "base_review_other_record_hash.jpg"
+  stale.parent.mkdir(parents=True)
+  stale.write_bytes(b"stale")
+  retained.write_bytes(b"retained")
+
+  removed = build_review_classifier.remove_inherited_records(tmp_path, ["bad:record/key"])
+
+  assert removed == 1
+  assert not stale.exists()
+  assert retained.exists()
+
+
+def test_reject_repeat_spec_preserves_record_key_punctuation():
+  counts = build_review_classifier.parse_reject_repeat_counts(["route/sign=track:55=32"])
+
+  assert counts == {"route/sign=track:55": 32}
+
+  with pytest.raises(ValueError, match="at least 1"):
+    build_review_classifier.parse_reject_repeat_counts(["bad-record=0"])
+
+
+def test_conditional_reject_generates_runtime_crop_expansions(tmp_path):
+  import cv2
+  import numpy as np
+
+  frame_path = tmp_path / "frame.jpg"
+  crop_path = tmp_path / "crop.jpg"
+  frame = np.zeros((100, 200, 3), dtype=np.uint8)
+  cv2.imwrite(str(frame_path), frame)
+  cv2.imwrite(str(crop_path), frame[20:80, 60:140])
+  row = {
+    "record_key": "conditional-sign",
+    "frame_path": str(frame_path),
+    "crop_path": str(crop_path),
+    "bbox": "60,20,140,80",
+    "review_bbox": "60,20,140,80",
+    "review_ignore_reason": "conditional_restriction",
+  }
+
+  rows = import_queue.classifier_reject_variant_rows(row, "train", tmp_path, overwrite=False)
+
+  assert len(rows) == 4
+  assert rows[1]["crop_bbox"] == "60,20,140,80"
+  assert rows[2]["crop_bbox"] == "52,16,148,87"
+  assert rows[3]["crop_bbox"] == "60,20,154,90"
+  assert all(Path(variant["crop_path"]).is_file() for variant in rows)

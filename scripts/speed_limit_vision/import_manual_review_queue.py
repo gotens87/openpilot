@@ -305,6 +305,58 @@ def classifier_reject_row(row: dict[str, str], split: str) -> dict[str, object]:
   }
 
 
+RUNTIME_REJECT_CROP_EXPANSIONS = (
+  (0.00, 0.00, 0.00, 0.00),
+  (0.10, 0.06, 0.10, 0.12),
+  (0.00, 0.00, 0.18, 0.18),
+)
+
+
+def classifier_reject_variant_rows(
+  row: dict[str, str],
+  split: str,
+  output_dir: Path,
+  overwrite: bool,
+) -> list[dict[str, object]]:
+  rows = [classifier_reject_row(row, split)]
+  if row.get("review_ignore_reason") != "conditional_restriction":
+    return rows
+
+  frame_path = Path(row.get("frame_path", "")).expanduser()
+  frame = cv2.imread(str(frame_path))
+  bbox = parse_bbox(row.get("review_bbox") or row.get("bbox", ""))
+  if frame is None or bbox is None:
+    raise RuntimeError(f"Cannot generate conditional reject crops for {row['record_key']}: unreadable frame or bbox")
+
+  image_h, image_w = frame.shape[:2]
+  x1, y1, x2, y2 = bbox
+  box_width = x2 - x1
+  box_height = y2 - y1
+  reject_dir = output_dir / "corrected_classifier_reject_crops"
+  ensure_dir(reject_dir)
+  for index, (expand_left, expand_top, expand_right, expand_bottom) in enumerate(RUNTIME_REJECT_CROP_EXPANSIONS):
+    crop_bbox = (
+      max(int(x1 - box_width * expand_left), 0),
+      max(int(y1 - box_height * expand_top), 0),
+      min(int(x2 + box_width * expand_right), image_w),
+      min(int(y2 + box_height * expand_bottom), image_h),
+    )
+    crop_x1, crop_y1, crop_x2, crop_y2 = crop_bbox
+    crop = frame[crop_y1:crop_y2, crop_x1:crop_x2]
+    crop_path = reject_dir / f"{safe_stem(row['record_key'])}_runtime_expansion_{index}.jpg"
+    if crop.size == 0:
+      raise RuntimeError(f"Cannot generate conditional reject crop for {row['record_key']}: empty bbox {crop_bbox}")
+    if overwrite or not crop_path.is_file():
+      if not cv2.imwrite(str(crop_path), crop, [cv2.IMWRITE_JPEG_QUALITY, 94]):
+        raise RuntimeError(f"Cannot write conditional reject crop for {row['record_key']}: {crop_path}")
+    variant = classifier_reject_row(row, split)
+    variant["record_key"] = f"{row['record_key']}_runtime_expansion_{index}"
+    variant["crop_path"] = str(crop_path)
+    variant["crop_bbox"] = ",".join(str(value) for value in crop_bbox)
+    rows.append(variant)
+  return rows
+
+
 def corrected_classifier_crop(
   row: dict[str, str],
   output_dir: Path,
@@ -508,7 +560,7 @@ def main() -> int:
 
   for row in classifier_reject_rows:
     split = split_for_key(split_group_key(row), args.val_modulo, args.val_remainder)
-    reject_rows.append(classifier_reject_row(row, split))
+    reject_rows.extend(classifier_reject_variant_rows(row, split, output_dir, args.overwrite))
 
   write_csv(classifier_manifest, CLASSIFIER_FIELDNAMES, classifier_rows)
   write_csv(runtime_manifest, RUNTIME_FIELDNAMES, runtime_rows)
