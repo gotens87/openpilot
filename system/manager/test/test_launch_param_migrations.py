@@ -211,7 +211,7 @@ def test_apply_launch_param_migrations_preserves_custom_acceleration_profile_wit
   assert params.get_int("AccelerationProfile") == 1
 
 
-def test_apply_launch_param_migrations_inverts_try_raylib_ui_enabled(tmp_path):
+def test_apply_launch_param_migrations_defaults_old_ui_off_from_try_raylib_enabled(tmp_path):
   params = FileBackedFakeParams(tmp_path / "params")
   params.put_bool("TryRaylibUI", True)
 
@@ -221,20 +221,19 @@ def test_apply_launch_param_migrations_inverts_try_raylib_ui_enabled(tmp_path):
   assert marker_path(tmp_path, USE_OLD_UI_MIGRATION_MARKER).is_file()
 
 
-def test_apply_launch_param_migrations_inverts_try_raylib_ui_disabled(tmp_path):
+def test_apply_launch_param_migrations_defaults_old_ui_off_from_try_raylib_disabled(tmp_path):
   params = FileBackedFakeParams(tmp_path / "params")
   params.put_bool("TryRaylibUI", False)
 
   apply_launch_param_migrations(params)
 
-  assert params.get_bool("UseOldUI")
+  assert not params.get_bool("UseOldUI")
   assert marker_path(tmp_path, USE_OLD_UI_MIGRATION_MARKER).is_file()
 
 
-def test_apply_launch_param_migrations_does_not_overwrite_use_old_ui(tmp_path):
+def test_apply_launch_param_migrations_resets_existing_use_old_ui(tmp_path):
   params = FileBackedFakeParams(tmp_path / "params")
-  params.put_bool("TryRaylibUI", False)
-  params.put_bool("UseOldUI", False)
+  params.put_bool("UseOldUI", True)
 
   apply_launch_param_migrations(params)
 

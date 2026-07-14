@@ -9,7 +9,6 @@ from typing import Protocol
 LONG_PITCH_KEY = "LongPitch"
 STEER_KP_KEY = "SteerKP"
 STEER_KP_STOCK_KEY = "SteerKPStock"
-TRY_RAYLIB_UI_KEY = "TryRaylibUI"
 USE_OLD_UI_KEY = "UseOldUI"
 
 DEFAULT_STEER_KP = 0.6
@@ -19,7 +18,7 @@ QT_STEER_KP_PLACEHOLDER = 1.0
 LAUNCH_PARAM_MIGRATION_MARKER = ".starpilot_launch_param_migrations_v2"
 BRANCH_DEFAULTS_MIGRATION_MARKER = ".starpilot_branch_defaults_migrations_v1"
 ACCELERATION_PROFILE_MIGRATION_MARKER = ".starpilot_acceleration_profile_default_v1"
-USE_OLD_UI_MIGRATION_MARKER = ".starpilot_use_old_ui_migration_v1"
+USE_OLD_UI_MIGRATION_MARKER = ".starpilot_use_old_ui_migration_v2"
 LATERAL_METHOD_REBRAND_MIGRATION_MARKER = ".starpilot_lateral_method_rebrand_v1"
 MARKER_DIRNAME = ".starpilot_param_migrations"
 
@@ -186,8 +185,7 @@ def _apply_use_old_ui_migration(params: ParamsLike, marker: Path) -> None:
 
   marker.parent.mkdir(parents=True, exist_ok=True)
 
-  if _param_file_exists(params, TRY_RAYLIB_UI_KEY) and not _param_file_exists(params, USE_OLD_UI_KEY):
-    params.put_bool(USE_OLD_UI_KEY, not params.get_bool(TRY_RAYLIB_UI_KEY))
+  params.put_bool(USE_OLD_UI_KEY, False)
 
   marker.touch()
 
