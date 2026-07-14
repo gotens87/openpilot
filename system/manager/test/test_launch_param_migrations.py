@@ -3,12 +3,15 @@ from pathlib import Path
 from openpilot.system.manager.launch_param_migrations import (
   ACCELERATION_PROFILE_MIGRATION_MARKER,
   BRANCH_DEFAULTS_MIGRATION_MARKER,
+  DEVELOPER_METRIC_DISPLAY_KEYS,
+  DEVELOPER_METRIC_DISPLAY_MIGRATION_MARKER,
   DEFAULT_STEER_KP,
   LAUNCH_PARAM_MIGRATION_MARKER,
   LATERAL_METHOD_REBRAND_MIGRATION_MARKER,
   MARKER_DIRNAME,
   STANDARD_ACCELERATION_PROFILE,
   USE_OLD_UI_MIGRATION_MARKER,
+  VISION_SPEED_LIMIT_DETECTION_MIGRATION_MARKER,
   apply_launch_param_migrations,
 )
 
@@ -258,3 +261,51 @@ def test_apply_launch_param_migrations_preserves_active_lateral_method_trial(tmp
     assert params.get(f"FLM{suffix}") == value
     assert not Path(params.get_param_path(f"{legacy_prefix}{suffix}")).exists()
   assert marker_path(tmp_path, LATERAL_METHOD_REBRAND_MIGRATION_MARKER).is_file()
+
+
+def test_apply_launch_param_migrations_enables_vision_speed_limit_detection_once(tmp_path):
+  params = FileBackedFakeParams(tmp_path / "params")
+  params.put_bool("VisionSpeedLimitDetection", False)
+  params.put("SLCPriority1", "Dashboard")
+  params.put("SLCPriority2", "Map Data")
+
+  apply_launch_param_migrations(params)
+
+  assert params.get_bool("VisionSpeedLimitDetection")
+  assert params.get("SLCPriority1") == "Dashboard"
+  assert params.get("SLCPriority2") == "Map Data"
+  assert marker_path(tmp_path, VISION_SPEED_LIMIT_DETECTION_MIGRATION_MARKER).is_file()
+
+
+def test_apply_launch_param_migrations_does_not_reenable_vision_speed_limit_detection_after_marker(tmp_path):
+  params = FileBackedFakeParams(tmp_path / "params")
+  params.put_bool("VisionSpeedLimitDetection", False)
+  marker_path(tmp_path, VISION_SPEED_LIMIT_DETECTION_MIGRATION_MARKER).touch()
+
+  apply_launch_param_migrations(params)
+
+  assert not params.get_bool("VisionSpeedLimitDetection")
+
+
+def test_apply_launch_param_migrations_disables_developer_metric_display_once(tmp_path):
+  params = FileBackedFakeParams(tmp_path / "params")
+  for key in DEVELOPER_METRIC_DISPLAY_KEYS:
+    params.put_bool(key, True)
+
+  apply_launch_param_migrations(params)
+
+  for key in DEVELOPER_METRIC_DISPLAY_KEYS:
+    assert not params.get_bool(key)
+  assert marker_path(tmp_path, DEVELOPER_METRIC_DISPLAY_MIGRATION_MARKER).is_file()
+
+
+def test_apply_launch_param_migrations_preserves_developer_metric_display_after_marker(tmp_path):
+  params = FileBackedFakeParams(tmp_path / "params")
+  for key in DEVELOPER_METRIC_DISPLAY_KEYS:
+    params.put_bool(key, True)
+  marker_path(tmp_path, DEVELOPER_METRIC_DISPLAY_MIGRATION_MARKER).touch()
+
+  apply_launch_param_migrations(params)
+
+  for key in DEVELOPER_METRIC_DISPLAY_KEYS:
+    assert params.get_bool(key)

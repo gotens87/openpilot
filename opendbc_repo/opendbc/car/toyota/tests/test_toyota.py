@@ -8,7 +8,7 @@ from opendbc.can import CANPacker, CANParser
 from opendbc.car.structs import CarParams
 from opendbc.car.fw_versions import build_fw_dict
 from opendbc.car.toyota import toyotacan
-from opendbc.car.toyota.carcontroller import CarController, get_prius_positive_feedforward_scale, limit_interceptor_pcm_accel, \
+from opendbc.car.toyota.carcontroller import CarController, get_long_tune, get_prius_positive_feedforward_scale, limit_interceptor_pcm_accel, \
                                              limit_interceptor_stopping_accel, limit_no_lead_cruise_sign_flip, \
                                              limit_prius_stopping_accel, update_permit_braking
 from opendbc.car.toyota.carstate import calculate_interceptor_gas_pressed
@@ -82,7 +82,7 @@ class TestToyotaInterfaces:
     assert abs(car_params.vEgoStopping - 0.25) < 1e-6
     assert abs(car_params.vEgoStarting - 0.25) < 1e-6
 
-  def test_camry_continental_radar_keeps_standard_longitudinal_tune(self):
+  def test_camry_hybrid_continental_radar_uses_ths_longitudinal_tune(self):
     fingerprint = {bus: ({0x2FF: 8} if bus == 0 else {}) for bus in range(8)}
     hybrid_fw = [CarParams.CarFw(ecu=Ecu.hybrid, address=0x7D2, fwVersion=b"test")]
     car_params = CarInterface.get_params(
@@ -98,16 +98,43 @@ class TestToyotaInterfaces:
     assert car_params.openpilotLongitudinalControl
     assert not car_params.radarUnavailable
     assert abs(car_params.radarTimeStepDEPRECATED - 0.1) < 1e-6
-    assert abs(car_params.longitudinalActuatorDelay - 0.15) < 1e-6
-    assert abs(car_params.vEgoStopping - 0.5) < 1e-6
-    assert abs(car_params.vEgoStarting - 0.5) < 1e-6
-    assert abs(car_params.stoppingDecelRate - 0.8) < 1e-6
+    assert abs(car_params.longitudinalActuatorDelay - 0.05) < 1e-6
+    assert abs(car_params.vEgoStopping - 0.25) < 1e-6
+    assert abs(car_params.vEgoStarting - 0.25) < 1e-6
+    assert abs(car_params.stoppingDecelRate - 0.3) < 1e-6
     assert not car_params.flags & ToyotaFlags.NO_STOP_TIMER.value
+
+    controller = get_long_tune(car_params, SimpleNamespace(ACCEL_MIN=-3.5, ACCEL_MAX=2.0))
+    controller.speed = 0.0
+    assert controller.k_i == pytest.approx(0.5)
+    assert controller.k_f == pytest.approx(0.8)
 
     radar_interface = RadarInterface(car_params)
     assert radar_interface.radar_acc_tssp
     assert radar_interface.rcp is not None
     assert radar_interface.pt_cp is not None
+
+  def test_camry_ice_keeps_legacy_longitudinal_tune(self):
+    fingerprint = {bus: ({0x2FF: 8} if bus == 0 else {}) for bus in range(8)}
+    car_params = CarInterface.get_params(
+      CAR.TOYOTA_CAMRY,
+      fingerprint,
+      [],
+      alpha_long=True,
+      is_release=False,
+      docs=False,
+      starpilot_toggles=SimpleNamespace(),
+    )
+
+    assert not car_params.flags & ToyotaFlags.HYBRID.value
+    assert car_params.longitudinalActuatorDelay == pytest.approx(0.15)
+    assert car_params.vEgoStopping == pytest.approx(0.5)
+    assert car_params.stoppingDecelRate == pytest.approx(0.8)
+
+    controller = get_long_tune(car_params, SimpleNamespace(ACCEL_MIN=-3.5, ACCEL_MAX=2.0))
+    controller.speed = 0.0
+    assert controller.k_i == pytest.approx(3.6)
+    assert controller.k_f == pytest.approx(1.0)
 
   def test_camry_continental_radar_converts_absolute_target_speed(self):
     radar_interface = RadarInterface.__new__(RadarInterface)
