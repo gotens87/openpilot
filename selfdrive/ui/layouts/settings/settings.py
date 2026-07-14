@@ -117,8 +117,16 @@ class SettingsLayout(Widget):
     w = self._sidebar_width
     sidebar_rect = rl.Rectangle(rect.x, rect.y, w, rect.height)
     panel_rect = rl.Rectangle(rect.x + w, rect.y, rect.width - w, rect.height)
-    self._draw_sidebar(sidebar_rect)
+
+    original_events = list(gui_app.mouse_events)
+    if not self._sidebar_expanded:
+      tab_zone = rl.Rectangle(rect.x, rect.y + 581 - 70, 40, 140)
+      gui_app.mouse_events[:] = [e for e in original_events if not rl.check_collision_point_rec(e.pos, tab_zone)]
+
     self._draw_current_panel(panel_rect)
+
+    gui_app.mouse_events[:] = original_events
+    self._draw_sidebar(sidebar_rect)
 
   def _draw_chevron(self, cx: float, cy: float, right: bool, color: rl.Color, size: int = 14, bloom: bool = False):
     half = size / 2
@@ -144,38 +152,45 @@ class SettingsLayout(Widget):
     line_rect = rl.Rectangle(rect.x, rect.y, 2, rect.height)
     rl.draw_rectangle_rec(line_rect, ACCENT_LINE_COLOR)
 
-    # Orb position: fixed anchor that stays at the same screen position
-    # in both states — visual indicator when collapsed, collapse trigger when expanded
-    orb_cx = int(rect.x + 5)
-    orb_cy = int(rect.y + 581)
-    depth_boost = 0.8 if self._panel_depth > 0 else 1.0
+    # Unified Protruding Edge Tab (Expand/Collapse toggle)
+    tab_cy = int(rect.y + 581)
+    tab_h = 140
+    tab_w = 70
+    tab_x = rect.x - 30  # Leaves exactly 40px protruding onto the screen
+    tab_y = tab_cy - (tab_h / 2)
+    tab_rect = rl.Rectangle(tab_x, tab_y, tab_w, tab_h)
+
+    # Hit zone is the visible portion on screen
+    self._collapse_btn_rect = rl.Rectangle(rect.x, tab_y, 40, tab_h)
+
+    # Interaction state
+    is_pressed = False
+    mouse_pos = gui_app.last_mouse_event.pos
+    if gui_app.last_mouse_event.left_down:
+      if self._sidebar_expanded:
+        is_pressed = rl.check_collision_point_rec(mouse_pos, self._collapse_btn_rect)
+      else:
+        is_pressed = self._swipe_start is not None
+
+    # Tab Colors and Styling
+    accent = rl.Color(139, 92, 246, 255)
+    tab_bg = rl.Color(139, 92, 246, 120 if is_pressed else 60)
+    tab_border = rl.Color(accent.r, accent.g, accent.b, 255 if is_pressed else 160)
+
+    # Faint outer glow behind the tab
+    glow_rect = rl.Rectangle(tab_x - 10, tab_y - 10, tab_w + 20, tab_h + 20)
+    rl.draw_rectangle_rounded(glow_rect, 0.5, 30, rl.Color(accent.r, accent.g, accent.b, 30))
+
+    # Solid core and crisp border
+    rl.draw_rectangle_rounded(tab_rect, 0.5, 30, tab_bg)
+    rl.draw_rectangle_rounded_lines_ex(tab_rect, 0.5, 30, 2.0, tab_border)
+
+    # Chevron properly centered on the *visible* portion of the tab
+    chevron_x = rect.x + 20
+    self._draw_chevron(chevron_x, tab_cy, not self._sidebar_expanded, rl.Color(255, 255, 255, 255), size=24, bloom=True)
 
     if self._sidebar_expanded:
       # ── EXPANDED ──
-
-      # Collapse trigger: purple glow orb at the same position as the collapsed indicator
-      # Now with << inside and a 60x60 tap zone centered on the orb
-      self._collapse_btn_rect = rl.Rectangle(rect.x, orb_cy - 30, 60, 60)
-      col_pressed = (
-        gui_app.last_mouse_event.left_down
-        and rl.check_collision_point_rec(gui_app.last_mouse_event.pos, self._collapse_btn_rect)
-      )
-      boost = 1.3 if col_pressed else 1.0
-      accent = rl.Color(139, 92, 246, 255)
-      rings = [
-        (32, 8),
-        (24, 14),
-        (17, 24),
-        (8, 38),
-      ]
-      for radius, base_alpha in rings:
-        a = max(2, min(255, int(base_alpha * boost)))
-        rl.draw_circle(int(orb_cx), int(orb_cy), radius, rl.Color(accent.r, accent.g, accent.b, a))
-
-      # Dark core mask — creates dark interior matching HubTile glow-border pattern
-      rl.draw_circle(int(orb_cx), int(orb_cy), 11, DARK_CORE_COLOR)
-
-      self._draw_chevron(orb_cx, orb_cy, False, accent, size=16, bloom=True)
 
       # Back/Close button - hierarchical navigation
       back_btn_rect = rl.Rectangle(rect.x + (rect.width - CLOSE_BTN_SIZE) / 2, rect.y + 60, CLOSE_BTN_SIZE, CLOSE_BTN_SIZE)
@@ -221,28 +236,6 @@ class SettingsLayout(Widget):
 
         y += NAV_BTN_HEIGHT
 
-    else:
-      # ── COLLAPSED: the orb is purely visual, indicating the swipe gesture zone ──
-      accent = rl.Color(139, 92, 246, 255)
-      rings = [
-        (32, 8),
-        (24, 14),
-        (17, 24),
-        (8, 38),
-      ]
-      for radius, base_alpha in rings:
-        a = max(2, min(255, int(base_alpha * depth_boost)))
-        rl.draw_circle(int(orb_cx), int(orb_cy), radius, rl.Color(accent.r, accent.g, accent.b, a))
-
-      # Dark core mask — visual continuity with expanded state
-      rl.draw_circle(int(orb_cx), int(orb_cy), 11, DARK_CORE_COLOR)
-
-      # Dim > chevron — shares shape language with expanded state, but muted to match passive affordance
-      self._draw_chevron(orb_cx, orb_cy, True, rl.Color(139, 92, 246, 120), size=10, bloom=False)
-
-      # Pull handle: brighter accent-line segment near orb as tap/swipe affordance
-      rl.draw_rectangle_rec(rl.Rectangle(rect.x, orb_cy - 20, 2, 40), rl.Color(139, 92, 246, 100))
-
   def _draw_current_panel(self, rect: rl.Rectangle):
     rl.draw_rectangle_rounded(rl.Rectangle(rect.x + 10, rect.y + 10, rect.width - 20, rect.height - 20), 0.04, 30, PANEL_COLOR)
     content_rect = rl.Rectangle(rect.x + PANEL_MARGIN, rect.y + 10, rect.width - (PANEL_MARGIN * 2), rect.height - 20)
@@ -252,10 +245,10 @@ class SettingsLayout(Widget):
 
   def _handle_mouse_press(self, mouse_pos: MousePos) -> None:
     if not self._sidebar_expanded:
-      # Only record swipe start when touch is within the 10px left margin
-      # (gesture zone — no overlap with panel content which starts at x=10)
+      # Only record swipe/tap start when touch is within the 10px left margin OR directly on the protruding tab
       gesture_zone = rl.Rectangle(self._rect.x, self._rect.y, 10, self._rect.height)
-      if rl.check_collision_point_rec(mouse_pos, gesture_zone):
+      tab_zone = rl.Rectangle(self._rect.x, self._rect.y + 581 - 70, 40, 140)
+      if rl.check_collision_point_rec(mouse_pos, gesture_zone) or rl.check_collision_point_rec(mouse_pos, tab_zone):
         self._swipe_start = mouse_pos
       else:
         self._swipe_start = None
