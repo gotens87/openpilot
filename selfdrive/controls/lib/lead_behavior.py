@@ -9,6 +9,9 @@ VISION_LEAD_TRACK_MIN_DISTANCE = 25.0
 VISION_LEAD_TRACK_BASE_TIME_GAP = 1.75
 VISION_LEAD_TRACK_CLOSING_GAIN = 0.20
 VISION_LEAD_TRACK_CLOSING_CAP = 2.50
+VISION_LEAD_TRACK_EXIT_TIME_GAP = 2.30
+VISION_LEAD_TRACK_EXIT_MAX_LATERAL_OFFSET = 1.6
+VISION_LEAD_TRACK_EXIT_MIN_MODEL_PROB = 0.70
 TRACKED_LEAD_CATCHUP_BIAS_MIN_HEADWAY_MARGIN = 0.40
 TRACKED_LEAD_CATCHUP_BIAS_FULL_HEADWAY_MARGIN = 0.70
 TRACKED_LEAD_CATCHUP_BIAS_MIN_FADE_START_MARGIN = 0.75
@@ -48,6 +51,21 @@ def should_track_lead(lead_status: bool, lead_distance: float, model_length: flo
                                                           VISION_LEAD_TRACK_CLOSING_CAP)
   vision_limit = max(VISION_LEAD_TRACK_MIN_DISTANCE, float(v_ego) * vision_time_gap + tracking_buffer)
   return float(lead_distance) < min(model_limit, vision_limit)
+
+
+def should_hold_tracked_vision_lead(lead_status: bool, lead_distance: float, model_length: float, stop_distance: float,
+                                    v_ego: float, *, model_prob: float,
+                                    y_rel: float, path_y: float = 0.0, radar: bool = False) -> bool:
+  if not lead_status or radar or float(model_prob) < VISION_LEAD_TRACK_EXIT_MIN_MODEL_PROB:
+    return False
+  if abs(float(y_rel) + float(path_y)) > VISION_LEAD_TRACK_EXIT_MAX_LATERAL_OFFSET:
+    return False
+
+  tracking_buffer = max(float(stop_distance), 4.0)
+  model_limit = float(model_length) + tracking_buffer
+  vision_exit_limit = max(VISION_LEAD_TRACK_MIN_DISTANCE,
+                          float(v_ego) * VISION_LEAD_TRACK_EXIT_TIME_GAP + tracking_buffer)
+  return float(lead_distance) < min(model_limit, vision_exit_limit)
 
 
 def is_radarless_matched_follow_window(v_ego: float, lead_distance: float, v_lead: float, t_follow: float, *,

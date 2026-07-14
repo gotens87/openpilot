@@ -1,6 +1,7 @@
 from openpilot.selfdrive.controls.lib.lead_behavior import (
   get_tracked_lead_catchup_bias,
   is_radarless_matched_follow_window,
+  should_hold_tracked_vision_lead,
   should_track_lead,
   should_disable_far_lead_throttle,
 )
@@ -102,6 +103,59 @@ def test_should_track_lead_accepts_closer_vision_only_highway_lead():
 
 def test_should_track_lead_accepts_fast_closing_vision_lead_early():
   assert should_track_lead(True, 90.0, 140.0, 6.0, 20.0, v_lead=0.0, radar=False)
+
+
+def test_should_hold_tracked_vision_lead_keeps_honda_bookmark_case():
+  assert should_hold_tracked_vision_lead(
+    True, 44.5, 174.0, 6.0, 16.8,
+    model_prob=0.99, y_rel=-0.69, radar=False,
+  )
+
+
+def test_should_hold_tracked_vision_lead_does_not_expand_initial_tracking_gate():
+  assert not should_track_lead(True, 44.5, 174.0, 6.0, 16.8, v_lead=16.7, radar=False)
+
+
+def test_should_hold_tracked_vision_lead_releases_offcenter_lead():
+  assert not should_hold_tracked_vision_lead(
+    True, 44.5, 174.0, 6.0, 16.8,
+    model_prob=0.99, y_rel=-1.7, radar=False,
+  )
+
+
+def test_should_hold_tracked_vision_lead_uses_path_relative_offset_on_curve():
+  assert should_hold_tracked_vision_lead(
+    True, 27.8, 174.0, 6.0, 16.0,
+    model_prob=1.0, y_rel=-2.11, path_y=1.32, radar=False,
+  )
+
+
+def test_should_hold_tracked_vision_lead_releases_low_confidence_lead():
+  assert not should_hold_tracked_vision_lead(
+    True, 44.5, 174.0, 6.0, 16.8,
+    model_prob=0.69, y_rel=0.0, radar=False,
+  )
+
+
+def test_should_hold_tracked_vision_lead_does_not_change_radar_tracking():
+  assert not should_hold_tracked_vision_lead(
+    True, 44.5, 174.0, 6.0, 16.8,
+    model_prob=0.99, y_rel=0.0, radar=True,
+  )
+
+
+def test_should_hold_tracked_vision_lead_keeps_braking_lead():
+  assert should_hold_tracked_vision_lead(
+    True, 44.5, 174.0, 6.0, 16.8,
+    model_prob=0.99, y_rel=0.0, radar=False,
+  )
+
+
+def test_should_hold_tracked_vision_lead_releases_beyond_exit_gap():
+  assert not should_hold_tracked_vision_lead(
+    True, 57.0, 174.0, 6.0, 16.8,
+    model_prob=0.99, y_rel=0.0, radar=False,
+  )
 
 
 def test_radarless_matched_follow_window_accepts_pace_matched_highway_follow():
