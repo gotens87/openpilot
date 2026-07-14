@@ -1,5 +1,11 @@
 # I Taught My Comma to Read Speed Limit Signs
 
+<video controls playsinline preload="metadata" poster="assets/speed-limit-vision-demo-poster.jpg" style="width: 100%; max-width: 1280px;">
+  <source src="assets/speed-limit-vision-demo.mp4" type="video/mp4">
+</video>
+
+[Watch the speed-limit vision demo](assets/speed-limit-vision-demo.mp4)
+
 This whole project started because I was lazy.
 
 If you’ve driven an HKG or Toyota vehicle in recent years, you’ve probably seen the dashboard automatically pick up speed limits using the camera. Coming from a car that didn't have this functionality, I was very jealous. Those cars can feed those speed limits directly into openpilot forks speed limit controllers. Mine couldn't.
