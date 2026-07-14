@@ -1005,7 +1005,13 @@ class StarPilotLongitudinalLayout(_SettingsPage):
 
   def _on_priority_clicked(self):
     primary_options = ["Dashboard", "Map Data", "Vision", "Highest", "Lowest"]
+    if not starpilot_state.car_state.hasDashSpeedLimits:
+      primary_options.remove("Dashboard")
+
     current_primary = self._params.get("SLCPriority1", encoding="utf-8") or "Map Data"
+    if current_primary not in primary_options:
+      current_primary = primary_options[0]
+
     current_secondary = self._params.get("SLCPriority2", encoding="utf-8") or "None"
 
     def on_secondary_select(primary, dialog, res):
@@ -1015,6 +1021,8 @@ class StarPilotLongitudinalLayout(_SettingsPage):
 
     def show_secondary_dialog(primary):
       secondary_options = ["None"] + [option for option in ("Dashboard", "Map Data", "Vision") if option != primary]
+      if not starpilot_state.car_state.hasDashSpeedLimits and "Dashboard" in secondary_options:
+        secondary_options.remove("Dashboard")
       selected_secondary = current_secondary if current_secondary in secondary_options else "None"
       secondary_dialog = MultiOptionDialog(tr("SLC Secondary Priority"), secondary_options, selected_secondary,
                                            callback=lambda res: on_secondary_select(primary, secondary_dialog, res))
@@ -1141,6 +1149,15 @@ class StarPilotLongitudinalLayout(_SettingsPage):
     params so they read correctly in the new unit. The first call (no prior
     state) is a no-op so the user's saved values aren't rewritten on boot."""
     current = self._is_metric()
+
+    # Update offset row titles dynamically to reflect correct unit-specific bounds (parity with C++).
+    ranges_metric = ["0-29", "30-49", "50-59", "60-79", "80-99", "100-119", "120-140"]
+    ranges_imperial = ["0-24", "25-34", "35-44", "45-54", "55-64", "65-74", "75-99"]
+    unit = "km/h" if current else "mph"
+    ranges = ranges_metric if current else ranges_imperial
+    for i, row in enumerate(self._slc_offset_rows):
+      row.title = f"Speed Offset ({ranges[i]} {unit})"
+
     last = self._last_is_metric
     self._last_is_metric = current
     if last is None or last == current:
