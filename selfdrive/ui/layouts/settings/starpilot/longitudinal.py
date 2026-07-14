@@ -66,6 +66,18 @@ DECELERATION_PROFILE_OPTIONS = [
   (DECELERATION_PROFILES["SPORT"], "Sport"),
 ]
 
+SLC_FALLBACK_OPTIONS = [
+  (0, "Set Speed"),
+  (1, "Experimental Mode"),
+  (2, "Previous Limit"),
+]
+
+SLC_OVERRIDE_OPTIONS = [
+  (0, "None"),
+  (1, "Set With Gas Pedal"),
+  (2, "Max Set Speed"),
+]
+
 
 # ═══════════════════════════════════════════════════════════════
 # AdaptiveSpeedView — nested panel with two adaptive speed tiles
@@ -692,12 +704,14 @@ class StarPilotLongitudinalLayout(_SettingsPage):
     self._slc_rows = [
       SettingRow("SLCFallback", "value", tr_noop("Fallback Speed"),
                  subtitle="",
-                 get_value=lambda: self._params.get("SLCFallback", encoding="utf-8") or "Set Speed",
-                 on_click=lambda: self._show_string_select("SLCFallback", ["Set Speed", "Experimental Mode", "Previous Limit"])),
+                 get_value=lambda: self._profile_label_for_value(self._params.get_int("SLCFallback"), SLC_FALLBACK_OPTIONS),
+                 on_click=lambda: self._show_labeled_select("Fallback Speed", "SLCFallback", SLC_FALLBACK_OPTIONS,
+                                                            self._params.get_int("SLCFallback"))),
       SettingRow("SLCOverride", "value", tr_noop("Override Speed"),
                  subtitle="",
-                 get_value=lambda: self._params.get("SLCOverride", encoding="utf-8") or "None",
-                 on_click=lambda: self._show_string_select("SLCOverride", ["None", "Set With Gas Pedal", "Max Set Speed"])),
+                 get_value=lambda: self._profile_label_for_value(self._params.get_int("SLCOverride"), SLC_OVERRIDE_OPTIONS),
+                 on_click=lambda: self._show_labeled_select("Override Speed", "SLCOverride", SLC_OVERRIDE_OPTIONS,
+                                                            self._params.get_int("SLCOverride"))),
       SettingRow("SLCPriority", "value", tr_noop("Source Priority"),
                  subtitle="",
                  get_value=self._get_priority_value,
