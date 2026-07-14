@@ -44,9 +44,11 @@ class StarPilotOnroadView(AugmentedRoadView):
     if not ui_state.started:
       return
 
-    self._render_slc()
-    self._render_overlays()
-    self._render_path_features(rect)
+    if self._draw_hud_controls:
+      self._render_slc()
+      self._render_overlays()
+    if self._draw_road_overlays:
+      self._render_path_features(rect)
 
   def _render_slc(self):
     alert_showing, _ = self.alert_renderer.will_render()
