@@ -556,6 +556,19 @@ def test_cancel_button_short_press_can_run_independent_mapping(monkeypatch, tmp_
   assert card.params_memory.get_int("WheelButtonBookmarkCounter") == 1
 
 
+def test_lkas_button_press_creates_bookmark(monkeypatch, tmp_path):
+  monkeypatch.setattr(spc, "Params", FakeParams)
+  monkeypatch.setattr(spc, "is_FrogsGoMoo", lambda: False)
+  monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
+
+  card = spc.StarPilotCard(SimpleNamespace(brand="toyota"), SimpleNamespace(alternativeExperience=0))
+  car_state = make_car_state(button_events=[SimpleNamespace(type=spc.ButtonType.lkas, pressed=True)])
+
+  card.update(car_state, SimpleNamespace(distancePressed=False), make_sm(), make_toggles(bookmark_via_lkas=True))
+
+  assert card.params_memory.get_int("WheelButtonBookmarkCounter") == 1
+
+
 def test_favorite_wheel_action_toggles_hidden_onroad_slot(monkeypatch, tmp_path):
   monkeypatch.setattr(spc, "Params", FakeParams)
   monkeypatch.setattr(spc, "is_FrogsGoMoo", lambda: False)

@@ -11,7 +11,7 @@ from opendbc.car.toyota import toyotacan
 from opendbc.car.toyota.carcontroller import CarController, get_long_tune, get_prius_positive_feedforward_scale, limit_interceptor_pcm_accel, \
                                              limit_interceptor_stopping_accel, limit_no_lead_cruise_sign_flip, \
                                              limit_prius_stopping_accel, update_permit_braking
-from opendbc.car.toyota.carstate import calculate_interceptor_gas_pressed
+from opendbc.car.toyota.carstate import LKAS_BUTTON_CAR, calculate_interceptor_gas_pressed, create_lkas_button_events
 from opendbc.car.toyota.fingerprints import FW_VERSIONS
 from opendbc.car.toyota.interface import CarInterface
 from opendbc.car.toyota.radar_interface import RadarInterface, TSSP_RADAR_EGO_SPEED_SCALE
@@ -610,6 +610,29 @@ class TestToyotaCarController:
 
 
 class TestToyotaCarState:
+  def test_lkas_button_platforms(self):
+    assert CAR.TOYOTA_PRIUS in LKAS_BUTTON_CAR
+    assert TSS2_CAR <= LKAS_BUTTON_CAR
+    assert CAR.TOYOTA_CAMRY not in LKAS_BUTTON_CAR
+    assert CAR.LEXUS_RX not in LKAS_BUTTON_CAR
+
+  @pytest.mark.parametrize("lkas_button,prev_lkas_button,event_count", [
+    (0, 0, 0),
+    (1, 0, 2),
+    (1, 1, 0),
+    (0, 1, 0),
+    (2, 1, 2),
+  ])
+  def test_lkas_button_events(self, lkas_button, prev_lkas_button, event_count):
+    events = create_lkas_button_events(lkas_button, prev_lkas_button)
+
+    assert len(events) == event_count
+    if events:
+      assert [(event.type, event.pressed) for event in events] == [
+        (structs.CarState.ButtonEvent.Type.lkas, True),
+        (structs.CarState.ButtonEvent.Type.lkas, False),
+      ]
+
   def test_interceptor_gas_pressed_threshold(self):
     cp = SimpleNamespace(vl={
       "GAS_SENSOR": {
