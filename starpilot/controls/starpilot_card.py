@@ -40,10 +40,6 @@ class StarPilotCard:
     self.hyundai_preserve_aol_across_reverse = getattr(self.CP, "carFingerprint", None) == HYUNDAI_CAR.HYUNDAI_SONATA_HYBRID
     self.hyundai_aol_needs_engagement = self.CP.brand == "hyundai" and not (hyundai_flags & HyundaiFlags.CANFD) and not kia_forte_non_scc
     self.hyundai_aol_ready = False
-    # Nissan's angle-control EPS can fault if AOL starts while the wheel is at a
-    # large parking angle. Require one normal openpilot engagement before AOL.
-    self.nissan_aol_needs_engagement = self.CP.brand == "nissan"
-    self.nissan_aol_ready = False
     self.prev_active = False
     self.prev_cruise_enabled = False
     self.decel_pressed = False
@@ -130,13 +126,6 @@ class StarPilotCard:
       elif sm["selfdriveState"].active or carState.cruiseState.enabled:
         self.hyundai_aol_ready = True
 
-    if self.nissan_aol_needs_engagement:
-      if carState.gearShifter in NON_DRIVING_GEARS:
-        self.nissan_aol_ready = False
-        self.always_on_lateral_allowed = False
-      elif sm["selfdriveState"].active:
-        self.nissan_aol_ready = True
-
     if button_aol_supported:
       for be, be_type in zip(carState.buttonEvents, button_event_types, strict=False):
         if be_type == ButtonType.lkas and be.pressed and starpilot_toggles.always_on_lateral_lkas:
@@ -178,7 +167,6 @@ class StarPilotCard:
     self.always_on_lateral_enabled = self.always_on_lateral_allowed and self.always_on_lateral_set
     self.always_on_lateral_enabled &= carState.gearShifter not in NON_DRIVING_GEARS
     self.always_on_lateral_enabled &= not self.hyundai_aol_needs_engagement or self.hyundai_aol_ready
-    self.always_on_lateral_enabled &= not self.nissan_aol_needs_engagement or self.nissan_aol_ready
     self.always_on_lateral_enabled &= sm["starpilotPlan"].lateralCheck
     self.always_on_lateral_enabled &= sm["liveCalibration"].calPerc >= 1
     alert_types = sm["selfdriveState"].alertType + sm["starpilotSelfdriveState"].alertType

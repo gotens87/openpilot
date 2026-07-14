@@ -215,7 +215,7 @@ def test_hyundai_aol_does_not_auto_start_from_cruise_availability(monkeypatch, t
   assert ret.alwaysOnLateralEnabled is False
 
 
-def test_nissan_aol_requires_normal_engagement(monkeypatch, tmp_path):
+def test_nissan_main_aol_can_start_before_normal_engagement(monkeypatch, tmp_path):
   monkeypatch.setattr(spc, "Params", FakeParams)
   monkeypatch.setattr(spc, "is_FrogsGoMoo", lambda: False)
   monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
@@ -224,52 +224,12 @@ def test_nissan_aol_requires_normal_engagement(monkeypatch, tmp_path):
     SimpleNamespace(brand="nissan"),
     SimpleNamespace(alternativeExperience=spc.ALTERNATIVE_EXPERIENCE.ALWAYS_ON_LATERAL),
   )
-  assert card.nissan_aol_needs_engagement is True
-  assert card.nissan_aol_ready is False
-  starpilot_car_state = SimpleNamespace(distancePressed=False)
-  sm = make_sm()
-  toggles = make_toggles(always_on_lateral=True, main_cruise_aol_toggle=True, lkas_allowed_for_aol=True)
-  car_state = make_car_state(available=True, button_events=[SimpleNamespace(type=spc.ButtonType.mainCruise, pressed=True)])
 
-  ret = card.update(car_state, starpilot_car_state, sm, toggles)
+  ret = card.update(make_car_state(available=True), SimpleNamespace(distancePressed=False), make_sm(),
+                    make_toggles(always_on_lateral=True, always_on_lateral_main=True))
+
   assert ret.alwaysOnLateralAllowed is True
-  assert ret.alwaysOnLateralEnabled is False
-
-  sm["selfdriveState"].active = True
-  ret = card.update(make_car_state(available=True, enabled=True), starpilot_car_state, sm, toggles)
   assert ret.alwaysOnLateralEnabled is True
-
-  sm["selfdriveState"].active = False
-  ret = card.update(make_car_state(available=True), starpilot_car_state, sm, toggles)
-  assert ret.alwaysOnLateralEnabled is True
-
-
-def test_nissan_aol_engagement_latch_resets_out_of_drive(monkeypatch, tmp_path):
-  monkeypatch.setattr(spc, "Params", FakeParams)
-  monkeypatch.setattr(spc, "is_FrogsGoMoo", lambda: False)
-  monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
-
-  card = spc.StarPilotCard(
-    SimpleNamespace(brand="nissan"),
-    SimpleNamespace(alternativeExperience=spc.ALTERNATIVE_EXPERIENCE.ALWAYS_ON_LATERAL),
-  )
-  starpilot_car_state = SimpleNamespace(distancePressed=False)
-  sm = make_sm()
-  sm["selfdriveState"].active = True
-  toggles = make_toggles(always_on_lateral=True, always_on_lateral_main=True)
-
-  ret = card.update(make_car_state(available=True, enabled=True), starpilot_car_state, sm, toggles)
-  assert ret.alwaysOnLateralEnabled is True
-
-  sm["selfdriveState"].active = False
-  park_state = make_car_state(available=True)
-  park_state.gearShifter = spc.GearShifter.park
-  ret = card.update(park_state, starpilot_car_state, sm, toggles)
-  assert ret.alwaysOnLateralEnabled is False
-  assert card.nissan_aol_ready is False
-
-  ret = card.update(make_car_state(available=True), starpilot_car_state, sm, toggles)
-  assert ret.alwaysOnLateralEnabled is False
 
 
 def test_hyundai_canfd_lkas_button_can_toggle_aol_before_engagement(monkeypatch, tmp_path):
