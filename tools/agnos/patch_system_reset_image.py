@@ -38,6 +38,7 @@ SETUP_WIFI_PATCH_MARKER = "JEEPNY_AVAILABLE = True"
 SETUP_BRANDING_PATCH_MARKER = "STARPILOT_SETUP_BRANDING_V1"
 SETUP_SSH_RESTORE_PATCH_MARKER = "STARPILOT_SETUP_SSH_RESTORE_V1"
 WESTON_BG_PATCH_MARKER = "STARPILOT_WESTON_BG_ORIENTATION_V2"
+COMMA_SH_DISPLAY_WAIT_PATCH_MARKER = "STARPILOT_DISPLAY_READY_WAIT_V1"
 JEEPNY_VERSION = "0.9.0"
 JEEPNY_WHEEL_URL = "https://files.pythonhosted.org/packages/b2/a3/e137168c9c44d18eff0376253da9f1e9234d0239e0ee230d2fee6cea8e55/jeepney-0.9.0-py3-none-any.whl"
 JEEPNY_WHEEL_SHA256 = "97e5714520c16fc0a45695e5365a2e11b81ea79bba796e26f9f1d178cb182683"
@@ -153,6 +154,62 @@ def patched_weston_bg_python() -> str:
 def patched_weston_bg_exec_line() -> str:
   python_cmd = patched_weston_bg_python().replace('"', '\\"')
   return f"ExecStartPre=/bin/bash -c \"/usr/local/venv/bin/python -c '{python_cmd}'\""
+
+
+def patch_comma_sh_display_wait(original: bytes) -> bytes:
+  text = original.decode("utf-8")
+  if COMMA_SH_DISPLAY_WAIT_PATCH_MARKER in text:
+    return original
+
+  old = """echo "waiting for magic"
+for i in {1..200}; do
+  if systemctl is-active --quiet magic && [ -S /tmp/drmfd.sock ]; then
+    break
+  fi
+  sleep 0.1
+done
+
+if systemctl is-active --quiet magic && [ -S /tmp/drmfd.sock ]; then
+  echo "magic ready after ${SECONDS}s"
+else
+  echo "timed out waiting for magic, ${SECONDS}s"
+fi
+"""
+  new = f"""# {COMMA_SH_DISPLAY_WAIT_PATCH_MARKER}
+if systemctl cat magic.service >/dev/null 2>&1; then
+  echo "waiting for magic"
+  for i in {{1..200}}; do
+    if systemctl is-active --quiet magic && [ -S /tmp/drmfd.sock ]; then
+      break
+    fi
+    sleep 0.1
+  done
+
+  if systemctl is-active --quiet magic && [ -S /tmp/drmfd.sock ]; then
+    echo "magic ready after ${{SECONDS}}s"
+  else
+    echo "timed out waiting for magic, ${{SECONDS}}s"
+  fi
+else
+  echo "magic unavailable; waiting for weston"
+  for i in {{1..200}}; do
+    if systemctl is-active --quiet weston-ready && [ -S /var/tmp/weston/wayland-0 ]; then
+      break
+    fi
+    sleep 0.1
+  done
+
+  if systemctl is-active --quiet weston-ready && [ -S /var/tmp/weston/wayland-0 ]; then
+    echo "weston ready after ${{SECONDS}}s"
+  else
+    echo "timed out waiting for weston, ${{SECONDS}}s"
+  fi
+fi
+"""
+
+  if old not in text:
+    raise RuntimeError("Unable to find comma.sh display readiness wait")
+  return text.replace(old, new, 1).encode("utf-8")
 
 
 def patch_weston_service(original: bytes) -> bytes:
@@ -764,6 +821,15 @@ def weston_service_has_expected_content(data: bytes) -> bool:
   )
 
 
+def comma_sh_has_expected_display_wait(data: bytes) -> bool:
+  return (
+    COMMA_SH_DISPLAY_WAIT_PATCH_MARKER.encode("utf-8") in data
+    and b"systemctl cat magic.service" in data
+    and b"systemctl is-active --quiet weston-ready" in data
+    and b"[ -S /var/tmp/weston/wayland-0 ]" in data
+  )
+
+
 def parse_inode(debugfs_output: str) -> int:
   m = re.search(r"Inode:\s+(\d+)", debugfs_output)
   if not m:
@@ -1073,12 +1139,12 @@ def main() -> int:
     MAGIC_PATH_IN_IMAGE: "comma_magic",
     BG_PATH_IN_IMAGE: "comma_bg",
   }
-  preserved_hashes: dict[str, str] = {}
+  expected_hashes: dict[str, str] = {}
   for image_path, label in preserved_paths.items():
     preserved_file = work_dir / f"{label}.preserved"
     print(f"Recording existing {image_path} for preservation", flush=True)
     run_debugfs(debugfs, patched_img, f"dump -p {image_path} {preserved_file}", write=False)
-    preserved_hashes[image_path] = sha256_file(preserved_file)
+    expected_hashes[image_path] = sha256_file(preserved_file)
 
   original_updater = work_dir / "comma_updater.orig"
   patched_updater = work_dir / "comma_updater.patched"
@@ -1086,6 +1152,15 @@ def main() -> int:
   original_weston = work_dir / "weston_service.orig"
   patched_weston = work_dir / "weston_service.patched"
   verify_weston = work_dir / "weston_service.verify"
+  patched_comma_sh = work_dir / "comma_sh.patched"
+
+  original_comma_sh = work_dir / "comma_sh.preserved"
+  comma_sh_patched_data = patch_comma_sh_display_wait(original_comma_sh.read_bytes())
+  patched_comma_sh.write_bytes(comma_sh_patched_data)
+
+  print("Writing patched /usr/comma/comma.sh display readiness wait", flush=True)
+  write_regular_file_to_image(debugfs, patched_img, COMMA_SH_PATH_IN_IMAGE, patched_comma_sh, "100775", 0, 0)
+  expected_hashes[COMMA_SH_PATH_IN_IMAGE] = sha256_file(patched_comma_sh)
 
   print("Extracting weston.service from image", flush=True)
   run_debugfs(debugfs, patched_img, f"dump -p {WESTON_SERVICE_PATH_IN_IMAGE} {original_weston}", write=False)
@@ -1128,8 +1203,10 @@ def main() -> int:
   for image_path, label in preserved_paths.items():
     verify_file = work_dir / f"{label}.verify"
     run_debugfs(debugfs, patched_img, f"dump -p {image_path} {verify_file}", write=False)
-    if sha256_file(verify_file) != preserved_hashes[image_path]:
-      raise RuntimeError(f"{image_path} changed unexpectedly; protected StarPilot payload files must stay byte-identical")
+    if image_path == COMMA_SH_PATH_IN_IMAGE and not comma_sh_has_expected_display_wait(verify_file.read_bytes()):
+      raise RuntimeError("comma.sh display readiness verification failed")
+    if sha256_file(verify_file) != expected_hashes[image_path]:
+      raise RuntimeError(f"{image_path} does not match the expected generated payload")
 
   if args.set_version:
     version_file = work_dir / "VERSION.patched"
