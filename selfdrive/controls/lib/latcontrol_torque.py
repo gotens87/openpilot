@@ -46,6 +46,13 @@ UNWIND_D_DES_THRESHOLD = -1.0
 UNWIND_LAT_ACCEL_NEAR_ZERO = 0.3
 MIN_LATERAL_CONTROL_SPEED = 0.3
 
+# Roll compensation and latAccelOffset are lateral-accel-domain corrections; below
+# walking pace the desired lateral accel is ~0 so an unfaded road-crown term dominates
+# the whole feedforward and actively unwinds a held wheel at pull-away (newturn rlog
+# 18.3-18.7s: ff pinned at -0.5 against a correct right-turn hold at 0.3 m/s).
+FF_ROLL_OFFSET_FADE_BP = [0.5, 2.5]  # m/s
+FF_ROLL_OFFSET_FADE_V = [0.0, 1.0]
+
 class LatControlTorque(LatControl):
   def __init__(self, CP, CI, dt):
     super().__init__(CP, CI, dt)
@@ -55,8 +62,12 @@ class LatControlTorque(LatControl):
     self.pid = PIDController([INTERP_SPEEDS, KP_INTERP], KI, rate=1/self.dt)
     self.update_limits()
     self.steering_angle_deadzone_deg = self.torque_params.steeringAngleDeadzoneDeg
-    self.lat_accel_request_buffer_len = int(LAT_ACCEL_REQUEST_BUFFER_SECONDS / self.dt)
-    self.lat_accel_request_buffer = deque([0.] * self.lat_accel_request_buffer_len, maxlen=self.lat_accel_request_buffer_len)
+    self.request_buffer_len = int(LAT_ACCEL_REQUEST_BUFFER_SECONDS / self.dt)
+    # Stores requested CURVATURE, scaled by the current v^2 on read. Storing lateral
+    # accel directly makes the delayed request lag the measurement whenever speed is
+    # changing (both scale with v^2 but the buffered value used the old speed), which
+    # at creep-speed gains reads as a phantom unwind error during every pull-away.
+    self.curvature_request_buffer = deque([0.] * self.request_buffer_len, maxlen=self.request_buffer_len)
     self.lookahead_frames = int(JERK_LOOKAHEAD_SECONDS / self.dt)
     self.jerk_filter = FirstOrderFilter(0.0, 1 / (2 * np.pi * LP_FILTER_CUTOFF_HZ), self.dt)
     self.ioniq_6_directional_taper_filter = FirstOrderFilter(1.0, IONIQ_6_DIRECTIONAL_TAPER_FILTER_RC, self.dt)
@@ -163,28 +174,36 @@ class LatControlTorque(LatControl):
                               getattr(starpilot_toggles, "flm_active_profile_id", ""))
     set_flm_runtime_overrides(getattr(starpilot_toggles, "flm_active_overrides", None) if flm_profile_active else None)
     flm_surface_active = flm_profile_active and flm_runtime_overrides_active()
+    measured_curvature = -VM.calc_curvature(math.radians(CS.steeringAngleDeg - params.angleOffsetDeg), CS.vEgo, params.roll)
+    measurement = measured_curvature * CS.vEgo ** 2
+    future_desired_lateral_accel = desired_curvature * CS.vEgo ** 2
     if not active:
       output_torque = 0.0
       pid_log.active = False
       self.pid.reset()
-      self.previous_measurement = 0.0
+      # Keep the request buffer and rate state primed with the live command (which tracks
+      # the measured curvature while inactive) instead of zeroing them. Re-engaging with a
+      # wound wheel against a zeroed buffer puts the setpoint ~lat_delay behind the
+      # measurement, and the low-speed gains turn that lag into a hard unwind shove
+      # (turnn rlog 38.75s: +0.8 torque against a held right turn on pull-away).
+      self.curvature_request_buffer.append(desired_curvature)
+      self.previous_measurement = measurement
       self.measurement_rate_filter.x = 0.0
-      self.lat_accel_request_buffer = deque([0.] * self.lat_accel_request_buffer_len, maxlen=self.lat_accel_request_buffer_len)
-      self.prev_desired_lateral_accel = 0.0
+      self.jerk_filter.x = 0.0
+      self.prev_desired_lateral_accel = future_desired_lateral_accel
       self.ioniq_6_directional_taper_filter.x = 1.0
     else:
       if self.prev_steering_pressed and not CS.steeringPressed:
         self.pid.i *= self.steer_release_i_decay
 
-      measured_curvature = -VM.calc_curvature(math.radians(CS.steeringAngleDeg - params.angleOffsetDeg), CS.vEgo, params.roll)
-      roll_compensation = params.roll * ACCELERATION_DUE_TO_GRAVITY
+      roll_offset_fade = np.interp(CS.vEgo, FF_ROLL_OFFSET_FADE_BP, FF_ROLL_OFFSET_FADE_V)
+      roll_compensation = params.roll * ACCELERATION_DUE_TO_GRAVITY * roll_offset_fade
       curvature_deadzone = abs(VM.calc_curvature(math.radians(self.steering_angle_deadzone_deg), CS.vEgo, 0.0))
       lateral_accel_deadzone = curvature_deadzone * CS.vEgo ** 2
 
-      delay_frames = int(np.clip(lat_delay / self.dt, 1, self.lat_accel_request_buffer_len))
-      expected_lateral_accel = self.lat_accel_request_buffer[-delay_frames]
-      future_desired_lateral_accel = desired_curvature * CS.vEgo ** 2
-      self.lat_accel_request_buffer.append(future_desired_lateral_accel)
+      delay_frames = int(np.clip(lat_delay / self.dt, 1, self.request_buffer_len))
+      expected_lateral_accel = self.curvature_request_buffer[-delay_frames] * CS.vEgo ** 2
+      self.curvature_request_buffer.append(desired_curvature)
       raw_lateral_jerk = (future_desired_lateral_accel - expected_lateral_accel) / max(lat_delay, self.dt)
       raw_lateral_jerk = np.clip(raw_lateral_jerk, -MAX_LAT_JERK_UP, MAX_LAT_JERK_UP)
       desired_lateral_jerk = np.clip(self.jerk_filter.update(raw_lateral_jerk), -MAX_LAT_JERK_UP, MAX_LAT_JERK_UP)
@@ -195,7 +214,6 @@ class LatControlTorque(LatControl):
                          abs(setpoint) < UNWIND_LAT_ACCEL_NEAR_ZERO)
       self.prev_desired_lateral_accel = setpoint
 
-      measurement = measured_curvature * CS.vEgo ** 2
       measurement_rate = self.measurement_rate_filter.update((measurement - self.previous_measurement) / self.dt)
       measurement_rate = np.clip(measurement_rate, -MAX_LAT_JERK_UP, MAX_LAT_JERK_UP)
       self.previous_measurement = measurement
@@ -209,7 +227,7 @@ class LatControlTorque(LatControl):
       pid_log.error = float(error_with_lsf)
       ff = gravity_adjusted_future_lateral_accel
       # latAccelOffset corrects roll compensation bias from device roll misalignment relative to car roll
-      ff -= self.torque_params.latAccelOffset
+      ff -= self.torque_params.latAccelOffset * roll_offset_fade
       ff_scale = 1.0
       if self.use_bolt_ff_scaling:
         ff_scale = np.interp(ff, [-FF_SCALE_BLEND_LAT_ACCEL, 0.0, FF_SCALE_BLEND_LAT_ACCEL],

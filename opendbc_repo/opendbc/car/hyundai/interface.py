@@ -154,6 +154,13 @@ class CarInterface(CarInterfaceBase):
         ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CANFD_ANGLE_STEERING.value
         if candidate == CAR.KIA_EV9:
           ret.steerAtStandstill = True
+      if candidate == CAR.HYUNDAI_IONIQ_6:
+        # Keep lateral active through stops: zeroing torque at standstill dropped the
+        # stop-turn hold and forced a rate-limit re-ramp from zero on every pull-away
+        # (turn1/turn2 rlogs 2026-07-14). Torque steering has no standstill gate in the
+        # panda safety or the carcontroller; the MDPS tolerating held torque at 0 speed
+        # is being validated on-road.
+        ret.steerAtStandstill = True
       if ret.flags & HyundaiFlags.CCNC and not ret.flags & HyundaiFlags.CANFD_LKA_STEERING:
         ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CCNC.value
 
