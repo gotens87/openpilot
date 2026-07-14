@@ -536,6 +536,8 @@ MAPS_CANCEL_DOWNLOAD_PARAM = "CancelDownloadMaps"
 
 
 def _get_galaxy_dir():
+  if override := os.getenv("SP_GALAXY_DIR"):
+    return Path(override)
   return Path(Paths.comma_home()) / "starpilot" / "data" / "galaxy" if PC else Path("/data/galaxy")
 
 
@@ -7237,14 +7239,17 @@ def main():
   threading.Thread(target=_testing_ground_custom_reserved_worker, daemon=True).start()
 
   # Desktop-only debug mode. On-device must stay on 8082 to match Galaxy FRP routing.
-  debug = not _is_comma_device_runtime()
-  port = 8083 if debug else 8082
+  on_device = _is_comma_device_runtime()
+  debug = False if on_device else os.getenv("SP_GALAXY_DEBUG", "1").lower() in {"1", "true", "yes", "on"}
+  port = 8082 if on_device else int(os.getenv("SP_GALAXY_PORT", "8083"))
+  host = "0.0.0.0" if on_device else os.getenv("SP_GALAXY_HOST", "0.0.0.0")
+  use_reloader = False if on_device else os.getenv("SP_GALAXY_RELOAD", "0" if not debug else "1").lower() in {"1", "true", "yes", "on"}
 
   if debug:
     print("\"The Galaxy\" is not running on a comma device, enabling debug mode")
 
   app.secret_key = secrets.token_hex(32)
-  app.run(host="0.0.0.0", port=port, debug=debug)
+  app.run(host=host, port=port, debug=debug, use_reloader=use_reloader)
 
 if __name__ == "__main__":
   main()

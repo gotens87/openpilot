@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 import json
+import subprocess
 
 from pathlib import Path
 
-from openpilot.starpilot.navigation.mapd_wrapper import CorruptTileMonitor, quarantine_offline_tile
+from openpilot.starpilot.navigation.mapd_wrapper import CorruptTileMonitor, quarantine_offline_tile, terminate_child
 
 
 def _loading_line(filename: str) -> str:
@@ -57,3 +58,30 @@ def test_quarantine_offline_tile_renames_backing_archive(tmp_path, monkeypatch):
   assert not archive.exists()
   assert Path(quarantined).exists()
   assert Path(quarantined).name.startswith(f"{archive.name}.corrupt.")
+
+
+def test_terminate_child_tolerates_wedged_process():
+  class WedgedProcess:
+    pid = 123
+
+    def __init__(self):
+      self.terminated = False
+      self.killed = False
+
+    def poll(self):
+      return None
+
+    def terminate(self):
+      self.terminated = True
+
+    def kill(self):
+      self.killed = True
+
+    def wait(self, timeout):
+      raise subprocess.TimeoutExpired("mapd", timeout)
+
+  proc = WedgedProcess()
+  terminate_child(proc)
+
+  assert proc.terminated
+  assert proc.killed

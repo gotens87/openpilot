@@ -107,7 +107,10 @@ def terminate_child(proc: subprocess.Popen[str]) -> None:
     proc.wait(timeout=2)
   except subprocess.TimeoutExpired:
     proc.kill()
-    proc.wait(timeout=2)
+    try:
+      proc.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+      cloudlog.error(f"mapd_wrapper child did not exit after kill: pid={proc.pid}")
 
 
 def run_mapd_once() -> int:
