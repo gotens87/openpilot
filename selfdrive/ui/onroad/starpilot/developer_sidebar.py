@@ -144,7 +144,7 @@ class DeveloperSidebar:
     # ---- PC REPLAY FALLBACK (remove the next line when replay gets toggle bridge) ----
     # self._visible = ui_state.starpilot_toggles.get("developer_sidebar", False)
     # ---- replace the line below with the one above ---->
-    self._visible = self._params.get("DeveloperSidebar") or False or ui_state.starpilot_toggles.get("developer_sidebar", False)
+    self._visible = self._params.get_bool("DeveloperSidebar") or ui_state.starpilot_toggles.get("developer_sidebar", False)
     if not self._visible:
       return
 

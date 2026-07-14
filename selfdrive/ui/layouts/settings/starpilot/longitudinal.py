@@ -1292,7 +1292,7 @@ class StarPilotLongitudinalLayout(_SettingsPage):
 
           def on_key(res, text):
             if res == DialogResult.CONFIRM:
-              self._params.put("WeatherAPIKey", text)
+              self._params.put("WeatherToken", text)
 
           self._keyboard.reset(min_text_size=1)
           self._keyboard.set_title(tr_noop("Weather API Key"), "")
@@ -1303,7 +1303,7 @@ class StarPilotLongitudinalLayout(_SettingsPage):
 
           def on_confirm(res):
             if res == DialogResult.CONFIRM:
-              self._params.remove("WeatherAPIKey")
+              self._params.remove("WeatherToken")
 
           gui_app.push_widget(ConfirmDialog(tr_noop("Remove API Key?"), tr_noop("Confirm"), callback=on_confirm))
 

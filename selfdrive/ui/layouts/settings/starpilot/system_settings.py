@@ -1,6 +1,5 @@
 from __future__ import annotations
 from dataclasses import replace
-import json
 import os
 import re
 import shutil
@@ -260,8 +259,8 @@ class SystemSettingsManagerView(PanelManagerView):
       {
         "title": tr("Show FPS"),
         "subtitle": "",
-        "get_state": lambda: self._controller._params.get_bool("ShowFPS"),
-        "set_state": lambda v: self._controller._params.put_bool("ShowFPS", v),
+        "get_state": lambda: self._controller._params.get_bool("FPSCounter"),
+        "set_state": lambda v: self._controller._params.put_bool("FPSCounter", v),
       },
       {
         "title": tr("Disable Uploads"),
@@ -1226,7 +1225,7 @@ class StarPilotSystemLayout(_SettingsPage):
       def on_discord(res2, username):
         if res2 == DialogResult.CONFIRM and username:
           self._params.put("DiscordUsername", username)
-          report = json.dumps({"DiscordUser": username, "Issue": dialog.selection})
+          report = {"DiscordUser": username, "Issue": dialog.selection}
           self._params_memory.put("IssueReported", report)
           gui_app.push_widget(alert_dialog(tr("Issue reported. Thank you!")))
       self._keyboard.reset(min_text_size=1)

@@ -247,7 +247,7 @@ class StarPilotOnroadView(AugmentedRoadView):
     super()._handle_mouse_press(mouse_pos)
 
   def _render_developer_metrics(self):
-    if not self._params.get_bool("ShowFPS"):
+    if not self._params.get_bool("FPSCounter"):
       return
 
     # Track FPS
@@ -417,4 +417,3 @@ class StarPilotOnroadView(AugmentedRoadView):
 
     from openpilot.selfdrive.ui.onroad.starpilot.pedal_icons import render_pedal_icons
     render_pedal_icons(start_x, start_y, self._font_bold)
-

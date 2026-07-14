@@ -473,7 +473,7 @@ class StarPilotAppearanceLayout(_SettingsPage):
         self._dev_rows = [
             SettingRow("DeveloperSidebar", "toggle", tr_noop("Developer Sidebar"),
                        subtitle=tr_noop("Driving metrics panel on the right"),
-                       get_state=lambda: bool(self._params.get("DeveloperSidebar") or False),
+                       get_state=lambda: self._params.get_bool("DeveloperSidebar"),
                        set_state=lambda s: self._set_developer_sidebar(s)),
             SettingRow("LeadDetectionThreshold", "value", tr_noop("Lead Detection Threshold"),
                        subtitle="",
