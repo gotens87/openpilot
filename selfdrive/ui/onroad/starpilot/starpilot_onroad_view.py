@@ -255,9 +255,13 @@ class StarPilotOnroadView(AugmentedRoadView):
     ) or debug_mode
 
     def metric_enabled(toggle_key: str, param_key: str, debug_override: bool = False) -> bool:
-      if toggle_key in toggles:
+      if debug_mode and debug_override:
+        return True
+      if developer_metrics and toggle_key in toggles:
         return bool(toggles.get(toggle_key))
-      return (developer_metrics and self._params.get_bool(param_key)) or (debug_mode and debug_override)
+      if developer_metrics:
+        return self._params.get_bool(param_key)
+      return False
 
     show_fps = metric_enabled("show_fps", "FPSCounter", debug_override=True)
     show_cpu = metric_enabled("cpu_metrics", "ShowCPU", debug_override=True)
