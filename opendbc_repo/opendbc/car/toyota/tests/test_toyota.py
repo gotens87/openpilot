@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+import pytest
 from hypothesis import given, settings, strategies as st
 
 from opendbc.car import Bus, structs
@@ -13,6 +14,7 @@ from opendbc.car.toyota.carcontroller import CarController, get_prius_positive_f
 from opendbc.car.toyota.carstate import calculate_interceptor_gas_pressed
 from opendbc.car.toyota.fingerprints import FW_VERSIONS
 from opendbc.car.toyota.interface import CarInterface
+from opendbc.car.toyota.radar_interface import RadarInterface, TSSP_RADAR_EGO_SPEED_SCALE
 from opendbc.car.toyota.values import CAR, DBC, TSS2_CAR, ANGLE_CONTROL_CAR, RADAR_ACC_CAR, SECOC_CAR, \
                                                   FW_QUERY_CONFIG, PLATFORM_CODE_ECUS, FUZZY_EXCLUDED_PLATFORMS, \
                                                   ToyotaFlags, ToyotaSafetyFlags, get_platform_codes
@@ -79,6 +81,63 @@ class TestToyotaInterfaces:
     assert abs(car_params.longitudinalActuatorDelay - 0.05) < 1e-6
     assert abs(car_params.vEgoStopping - 0.25) < 1e-6
     assert abs(car_params.vEgoStarting - 0.25) < 1e-6
+
+  def test_camry_continental_radar_keeps_standard_longitudinal_tune(self):
+    fingerprint = {bus: ({0x2FF: 8} if bus == 0 else {}) for bus in range(8)}
+    hybrid_fw = [CarParams.CarFw(ecu=Ecu.hybrid, address=0x7D2, fwVersion=b"test")]
+    car_params = CarInterface.get_params(
+      CAR.TOYOTA_CAMRY,
+      fingerprint,
+      hybrid_fw,
+      alpha_long=True,
+      is_release=False,
+      docs=False,
+      starpilot_toggles=SimpleNamespace(),
+    )
+
+    assert car_params.openpilotLongitudinalControl
+    assert not car_params.radarUnavailable
+    assert abs(car_params.radarTimeStepDEPRECATED - 0.1) < 1e-6
+    assert abs(car_params.longitudinalActuatorDelay - 0.15) < 1e-6
+    assert abs(car_params.vEgoStopping - 0.5) < 1e-6
+    assert abs(car_params.vEgoStarting - 0.5) < 1e-6
+    assert abs(car_params.stoppingDecelRate - 0.8) < 1e-6
+    assert not car_params.flags & ToyotaFlags.NO_STOP_TIMER.value
+
+    radar_interface = RadarInterface(car_params)
+    assert radar_interface.radar_acc_tssp
+    assert radar_interface.rcp is not None
+    assert radar_interface.pt_cp is not None
+
+  def test_camry_continental_radar_converts_absolute_target_speed(self):
+    radar_interface = RadarInterface.__new__(RadarInterface)
+    radar_interface.CP = SimpleNamespace(wheelSpeedFactor=1.0)
+    radar_interface.pts = {}
+    radar_interface.track_id = 0
+    radar_interface.RADAR_MSGS = [0x680]
+    radar_interface.pt_cp = SimpleNamespace(vl={
+      "WHEEL_SPEEDS": {
+        "WHEEL_SPEED_FL": 36.0,
+        "WHEEL_SPEED_FR": 36.0,
+        "WHEEL_SPEED_RL": 36.0,
+        "WHEEL_SPEED_RR": 36.0,
+      },
+    })
+    radar_interface.rcp = SimpleNamespace(can_valid=True, vl={
+      0x680: {
+        "ID": 7,
+        "LONG_DIST": 40.0,
+        "LAT_DIST": -0.2,
+        "SPEED": 11.0,
+        "LAT_SPEED": 0.1,
+      },
+    })
+
+    radar_data = radar_interface._update_tssp({0x680})
+
+    assert len(radar_data.points) == 1
+    assert radar_data.points[0].dRel == 40.0
+    assert radar_data.points[0].vRel == pytest.approx(11.0 - 10.0 * TSSP_RADAR_EGO_SPEED_SCALE)
 
   def test_essential_ecus(self, subtests):
     # Asserts standard ECUs exist for each platform

@@ -30,6 +30,10 @@ ALLOW_THROTTLE_HYSTERESIS = 0.05
 ALLOW_THROTTLE_ENABLE_THRESHOLD = ALLOW_THROTTLE_THRESHOLD + ALLOW_THROTTLE_HYSTERESIS
 ALLOW_THROTTLE_DISABLE_THRESHOLD = ALLOW_THROTTLE_THRESHOLD - ALLOW_THROTTLE_HYSTERESIS
 MIN_ALLOW_THROTTLE_SPEED = 5.0
+MODEL_LAUNCH_DISARM_SPEED = 2.0
+MODEL_LAUNCH_COMMIT_TIME = 3.5
+MODEL_LAUNCH_MOVING_SPEED = 1.2
+MODEL_LAUNCH_MAX_ACCEL = 1.5
 RAW_LEAD_SAFETY_MIN_CLOSING_SPEED = 0.5
 RAW_LEAD_SAFETY_TTC = 7.0
 RAW_LEAD_SAFETY_DISTANCE = 40.0
@@ -572,6 +576,8 @@ class LongitudinalPlanner:
     self.v_model_error = 0.0
     self.output_a_target = 0.0
     self.output_should_stop = False
+    self.model_launch_armed = False
+    self.model_launch_stop_seen = False
     self.confident_lead_depart_elapsed = 0.0
     self.slow_creep_lead_depart_elapsed = 0.0
 
@@ -662,6 +668,31 @@ class LongitudinalPlanner:
     else:
       throttle_prob = 1.0
     return x, v, a, j, throttle_prob
+
+  @staticmethod
+  def get_model_launch_accel(model_v, model_a, action_t, v_ego):
+    if len(model_v) != len(T_IDXS_MPC) or len(model_a) != len(T_IDXS_MPC):
+      return None
+    if float(np.interp(MODEL_LAUNCH_COMMIT_TIME, T_IDXS_MPC, model_v)) <= MODEL_LAUNCH_DISARM_SPEED:
+      return None
+
+    moving_idxs = np.flatnonzero(np.asarray(model_v) > MODEL_LAUNCH_MOVING_SPEED)
+    if len(moving_idxs) == 0:
+      return None
+
+    t_cut = min(float(T_IDXS_MPC[int(moving_idxs[0])]), MODEL_LAUNCH_COMMIT_TIME)
+    shifted_t = T_IDXS_MPC + t_cut
+    shifted_v = np.interp(shifted_t, T_IDXS_MPC, model_v)
+    shifted_a = np.interp(shifted_t, T_IDXS_MPC, model_a)
+    safe_action_t = max(float(action_t), 1e-3)
+    v_target = float(np.interp(safe_action_t, T_IDXS_MPC, shifted_v))
+    a_launch = 2.0 * (v_target - float(shifted_v[0])) / safe_action_t - float(shifted_a[0])
+    accel_cap = float(np.interp(
+      float(v_ego),
+      [MODEL_LAUNCH_MOVING_SPEED, MODEL_LAUNCH_DISARM_SPEED],
+      [MODEL_LAUNCH_MAX_ACCEL, 0.0],
+    ))
+    return float(np.clip(a_launch, 0.0, accel_cap))
 
   def get_close_lead_brake_cap(self, lead, v_ego, accel_min):
     if lead is None or not lead.status:
@@ -2308,6 +2339,18 @@ class LongitudinalPlanner:
     # Compute model v_ego error
     self.v_model_error = self.get_model_speed_error(sm['modelV2'], v_ego)
     x, v, a, j, throttle_prob = self.parse_model(sm['modelV2'], self.v_model_error, v_ego, starpilot_toggles)
+    if bool(sm['carState'].standstill):
+      self.model_launch_armed = True
+      self.model_launch_stop_seen |= bool(
+        sm['modelV2'].action.shouldStop or
+        getattr(sm['starpilotPlan'], 'redLight', False) or
+        getattr(sm['starpilotPlan'], 'forcingStop', False)
+      )
+    elif scene_v_ego > MODEL_LAUNCH_DISARM_SPEED:
+      self.model_launch_armed = False
+      self.model_launch_stop_seen = False
+    model_launch_v = np.array(v, copy=True)
+    model_launch_a = np.array(a, copy=True)
     # Don't clip at low speeds since throttle_prob doesn't account for creep. Use
     # hysteresis here because raw gasPressProb noise can chatter the throttle gate.
     if v_ego <= MIN_ALLOW_THROTTLE_SPEED:
@@ -2577,6 +2620,9 @@ class LongitudinalPlanner:
     experimental_mlsim = bool(tinygrad_model and self.mlsim and self.mode != 'acc')
     action_t = self.CP.longitudinalActuatorDelay + DT_MDL
     prev_output_a_target = float(self.output_a_target)
+    model_launch_accel = None
+    if self.model_launch_armed and not bool(sm['modelV2'].action.shouldStop):
+      model_launch_accel = self.get_model_launch_accel(model_launch_v, model_launch_a, action_t, scene_v_ego)
 
     if classic_model:
       output_a_target, output_should_stop = get_accel_from_plan_classic(
@@ -2794,6 +2840,24 @@ class LongitudinalPlanner:
     if lead_control_active and lead_depart_ready and not depart_safety_veto and not output_should_stop and float(sm['carState'].vEgo) <= STANDSTILL_LEAD_DEPART_MAX_EGO_SPEED:
       output_a_target = max(output_a_target, STANDSTILL_LEAD_DEPART_MIN_ACCEL)
       self.post_departure_follow_settle_until = now_t + POST_DEPARTURE_FOLLOW_SETTLE_LATCH_TIME
+
+    lead_present = any(bool(getattr(lead, "status", False)) for lead in (self.lead_one, self.lead_two))
+    confirmed_lead_release = bool(confident_depart_ready or lead_depart_ready or slow_creep_depart_ready)
+    model_launch_allowed = bool(
+      model_launch_accel is not None and
+      not output_should_stop and
+      not vision_low_speed_stop_active and
+      not bool(getattr(sm['carState'], 'brakePressed', False)) and
+      not bool(getattr(sm['starpilotPlan'], 'forcingStop', False)) and
+      not bool(getattr(sm['starpilotPlan'], 'redLight', False)) and
+      not depart_safety_veto and
+      (
+        (lead_present and lead_control_active and confirmed_lead_release) or
+        (not lead_present and (self.mode != 'acc' or self.model_launch_stop_seen))
+      )
+    )
+    if model_launch_allowed:
+      output_a_target = max(output_a_target, model_launch_accel)
 
     if depart_safety_veto or output_should_stop or bool(getattr(sm['starpilotPlan'], 'forcingStop', False)) or bool(getattr(sm['starpilotPlan'], 'redLight', False)):
       self.lead_depart_accel_hold_until = 0.0

@@ -11,6 +11,10 @@ import shutil
 from collections import Counter
 from pathlib import Path
 
+import cv2
+
+from starpilot.system.speed_limit_vision import DETECTOR_CLASSIFIER_EXPANSIONS
+
 
 SPEED_VALUES = frozenset((15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75))
 
@@ -22,9 +26,18 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--output", type=Path, required=True)
   parser.add_argument("--train-ratio", type=float, default=0.85)
   parser.add_argument("--min-growth", type=float, default=1.10)
+  parser.add_argument("--max-growth", type=float, default=float("inf"))
   parser.add_argument("--min-exact-confidence", type=float, default=0.80)
   parser.add_argument("--min-detector-confidence", type=float, default=0.30)
+  parser.add_argument("--min-tracking-confidence", type=float, default=1.01)
   parser.add_argument("--max-track-rank", type=int, default=3)
+  parser.add_argument("--hard-example-repeat", type=int, default=1, help="Train repeats for rejected or low-confidence track crops.")
+  parser.add_argument("--hard-example-min-confidence", type=float, default=0.90)
+  parser.add_argument(
+    "--runtime-expansions",
+    action="store_true",
+    help="Build crops from each source frame using the live detector/classifier expansion geometry.",
+  )
   return parser.parse_args()
 
 
@@ -52,23 +65,78 @@ def remove_appledouble_files(root: Path) -> int:
   return removed
 
 
+def parse_bbox(value: str) -> tuple[int, int, int, int] | None:
+  try:
+    bbox = tuple(int(round(float(part.strip()))) for part in value.split(","))
+  except ValueError:
+    return None
+  if len(bbox) != 4:
+    return None
+  x1, y1, x2, y2 = bbox
+  return (x1, y1, x2, y2) if x2 > x1 and y2 > y1 else None
+
+
+def stage_runtime_expansions(row: dict[str, str], destination_dir: Path, repeat_count: int) -> int:
+  frame_path = Path(row.get("frame_path", "")).expanduser().resolve()
+  bbox = parse_bbox(row.get("bbox", ""))
+  if not frame_path.is_file() or bbox is None:
+    return 0
+  frame = cv2.imread(str(frame_path))
+  if frame is None:
+    return 0
+
+  frame_height, frame_width = frame.shape[:2]
+  x1, y1, x2, y2 = bbox
+  box_width = x2 - x1
+  box_height = y2 - y1
+  destination_dir.mkdir(parents=True, exist_ok=True)
+  staged = 0
+  track_key = row.get("track_key", "")
+  rank = row.get("rank", "")
+  for repeat_index in range(repeat_count):
+    repeat_suffix = f"_r{repeat_index:02d}" if repeat_count > 1 else ""
+    for expansion_index, (left, top, right, bottom, _weight) in enumerate(DETECTOR_CLASSIFIER_EXPANSIONS):
+      crop_x1 = max(int(x1 - box_width * left), 0)
+      crop_y1 = max(int(y1 - box_height * top), 0)
+      crop_x2 = min(int(x2 + box_width * right), frame_width)
+      crop_y2 = min(int(y2 + box_height * bottom), frame_height)
+      crop = frame[crop_y1:crop_y2, crop_x1:crop_x2]
+      if crop.size == 0:
+        continue
+      destination = destination_dir / f"track_{track_key}_{rank}_e{expansion_index:02d}{repeat_suffix}.jpg"
+      if destination.exists() or cv2.imwrite(str(destination), crop, (cv2.IMWRITE_JPEG_QUALITY, 95)):
+        staged += 1
+  return staged
+
+
 def trusted_track_row(row: dict[str, str], args: argparse.Namespace) -> bool:
   try:
     expected = int(row.get("expected_speed_limit_mph", ""))
     predicted = int(row.get("predicted_speed_limit_mph", "") or 0)
     read_confidence = float(row.get("read_confidence", "") or 0.0)
     detector_confidence = float(row.get("detector_confidence", "") or 0.0)
+    tracking_confidence = float(row.get("tracking_confidence", "") or 0.0)
     growth = float(row.get("area_ratio_to_anchor", "") or 0.0)
     rank = int(row.get("rank", "") or 999)
   except ValueError:
     return False
   exact = predicted == expected and read_confidence >= args.min_exact_confidence
   detector_snap = detector_confidence >= args.min_detector_confidence
-  return expected in SPEED_VALUES and growth >= args.min_growth and rank <= args.max_track_rank and (exact or detector_snap)
+  optical_flow_track = tracking_confidence >= args.min_tracking_confidence
+  return (
+    expected in SPEED_VALUES and
+    args.min_growth <= growth <= args.max_growth and
+    rank <= args.max_track_rank and
+    (exact or detector_snap or optical_flow_track)
+  )
 
 
 def main() -> int:
   args = parse_args()
+  if args.hard_example_repeat < 1:
+    raise ValueError("--hard-example-repeat must be at least 1")
+  if args.max_growth < args.min_growth:
+    raise ValueError("--max-growth must be at least --min-growth")
   base = args.base.expanduser().resolve()
   output = args.output.expanduser().resolve()
   counts: Counter[str] = Counter()
@@ -96,10 +164,26 @@ def main() -> int:
       split = split_for_key(row.get("route") or row.get("track_key", ""), args.train_ratio)
       if split == "val" and row.get("route"):
         validation_routes.add(row["route"])
-      name = f"track_{row.get('track_key', '')}_{row.get('rank', '')}{source.suffix.lower()}"
-      link_or_copy(source, output / split / str(speed) / name)
-      counts[f"track_{split}"] += 1
-      counts[f"speed_{speed}"] += 1
+      predicted = int(row.get("predicted_speed_limit_mph", "") or 0)
+      read_confidence = float(row.get("read_confidence", "") or 0.0)
+      hard_example = predicted != speed or read_confidence < args.hard_example_min_confidence
+      repeat_count = args.hard_example_repeat if split == "train" and hard_example else 1
+      if args.runtime_expansions:
+        staged = stage_runtime_expansions(row, output / split / str(speed), repeat_count)
+      else:
+        staged = 0
+        for repeat_index in range(repeat_count):
+          repeat_suffix = f"_r{repeat_index:02d}" if repeat_count > 1 else ""
+          name = f"track_{row.get('track_key', '')}_{row.get('rank', '')}{repeat_suffix}{source.suffix.lower()}"
+          link_or_copy(source, output / split / str(speed) / name)
+          staged += 1
+      if staged == 0:
+        counts["track_rejected"] += 1
+        continue
+      if hard_example:
+        counts[f"hard_track_{split}"] += staged
+      counts[f"track_{split}"] += staged
+      counts[f"speed_{speed}"] += staged
 
   counts["appledouble_removed"] = remove_appledouble_files(output)
   (output / "track_validation_routes.txt").write_text("\n".join(sorted(validation_routes)) + "\n", encoding="ascii")

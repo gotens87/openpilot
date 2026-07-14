@@ -269,6 +269,59 @@ def test_update_releases_stopping_on_small_sustained_positive_target():
   assert lc.long_control_state == LongCtrlState.starting
 
 
+def test_update_releases_stopping_immediately_after_confirmed_lead_departure():
+  CP = car.CarParams.new_message(startingState=True, vEgoStarting=0.5)
+  CP.longitudinalTuning.kpBP = [0.0]
+  CP.longitudinalTuning.kpV = [0.1]
+  CP.longitudinalTuning.kiBP = [0.0]
+  CP.longitudinalTuning.kiV = [0.03]
+
+  lc = LongControl(CP)
+  lc.long_control_state = LongCtrlState.stopping
+  CS = car.CarState.new_message(vEgo=0.0, aEgo=0.0, brakePressed=False)
+  CS.cruiseState.standstill = True
+
+  output_accel = lc.update(
+    active=True,
+    CS=CS,
+    a_target=0.16,
+    should_stop=False,
+    accel_limits=(-3.0, 2.0),
+    starpilot_toggles=make_toggles(startAccel=1.5),
+    has_lead=True,
+  )
+
+  assert lc.long_control_state == LongCtrlState.starting
+  assert output_accel > 0.0
+
+
+@pytest.mark.parametrize(("should_stop", "brake_pressed"), [(True, False), (False, True)])
+def test_confirmed_lead_departure_does_not_override_stop_or_driver_brake(should_stop, brake_pressed):
+  CP = car.CarParams.new_message(startingState=True, vEgoStarting=0.5)
+  CP.longitudinalTuning.kpBP = [0.0]
+  CP.longitudinalTuning.kpV = [0.1]
+  CP.longitudinalTuning.kiBP = [0.0]
+  CP.longitudinalTuning.kiV = [0.03]
+
+  lc = LongControl(CP)
+  lc.long_control_state = LongCtrlState.stopping
+  CS = car.CarState.new_message(vEgo=0.0, aEgo=0.0, brakePressed=brake_pressed)
+  CS.cruiseState.standstill = True
+
+  output_accel = lc.update(
+    active=True,
+    CS=CS,
+    a_target=0.5,
+    should_stop=should_stop,
+    accel_limits=(-3.0, 2.0),
+    starpilot_toggles=make_toggles(startAccel=1.5),
+    has_lead=True,
+  )
+
+  assert lc.long_control_state == LongCtrlState.stopping
+  assert output_accel <= 0.0
+
+
 def test_update_releases_stopping_with_cruise_standstill_latched():
   CP = car.CarParams.new_message(vEgoStarting=0.5)
   CP.longitudinalTuning.kpBP = [0.0]

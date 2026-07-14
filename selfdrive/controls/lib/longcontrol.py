@@ -229,7 +229,7 @@ class LongControl:
     if not preserve_stop_release:
       self.stop_release_counter = 0
 
-  def _stop_release_ready(self, CS, a_target, should_stop, starpilot_toggles):
+  def _stop_release_ready(self, CS, a_target, should_stop, has_lead, starpilot_toggles):
     if self.long_control_state != LongCtrlState.stopping:
       self.stop_release_counter = 0
       return True
@@ -239,6 +239,10 @@ class LongControl:
       return False
 
     if CS.vEgo > starpilot_toggles.vEgoStarting:
+      self.stop_release_counter = int(round(STOPPING_RELEASE_HYSTERESIS / DT_CTRL))
+      return True
+
+    if has_lead and a_target > STOPPING_RELEASE_MIN_ACCEL:
       self.stop_release_counter = int(round(STOPPING_RELEASE_HYSTERESIS / DT_CTRL))
       return True
 
@@ -392,12 +396,12 @@ class LongControl:
     )
     return a_target * effective_gain
 
-  def update(self, active, CS, a_target, should_stop, accel_limits, starpilot_toggles):
+  def update(self, active, CS, a_target, should_stop, accel_limits, starpilot_toggles, has_lead=False):
     """Update longitudinal control. This updates the state machine and runs a PID loop"""
     self.pid.neg_limit = accel_limits[0]
     self.pid.pos_limit = accel_limits[1]
 
-    allow_stopping_release = self._stop_release_ready(CS, a_target, should_stop, starpilot_toggles)
+    allow_stopping_release = self._stop_release_ready(CS, a_target, should_stop, has_lead, starpilot_toggles)
     self.long_control_state = long_control_state_trans(self.CP, active, self.long_control_state, CS.vEgo,
                                                        should_stop, CS.brakePressed,
                                                        CS.cruiseState.standstill, starpilot_toggles,
