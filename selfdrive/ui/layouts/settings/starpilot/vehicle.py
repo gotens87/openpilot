@@ -131,20 +131,25 @@ class VehicleSettingsManagerView(PanelManagerView):
                  on_click=lambda: self._controller._on_select("ClusterOffset")))
     return rows
 
+  def _combo_value(self, keys: tuple[str, ...]) -> str:
+    return "  |  ".join(self._controller._get_action_name(k) for k in keys)
+
   def _build_steering_rows(self) -> list[SettingRow]:
     cs = starpilot_state.car_state
     rows = []
 
+    dist_keys = ("DistanceButtonControl", "LongDistanceButtonControl", "VeryLongDistanceButtonControl")
     rows.append(SettingRow(
       "combo:distance", "value", tr_noop("Distance Button"),
-      get_value=lambda: self._controller._get_action_name("DistanceButtonControl"),
+      get_value=lambda k=dist_keys: self._combo_value(k),
       on_click=lambda: self._controller._on_select("combo:distance"),
     ))
 
     if cs.isBolt and cs.hasPedal and self._controller._params.get_bool("RemapCancelToDistance"):
+      cancel_keys = ("CancelButtonControl", "LongCancelButtonControl", "VeryLongCancelButtonControl")
       rows.append(SettingRow(
         "combo:cancel", "value", tr_noop("Cancel Button"),
-        get_value=lambda: self._controller._get_action_name("CancelButtonControl"),
+        get_value=lambda k=cancel_keys: self._combo_value(k),
         on_click=lambda: self._controller._on_select("combo:cancel"),
       ))
 
@@ -158,14 +163,16 @@ class VehicleSettingsManagerView(PanelManagerView):
                  on_click=lambda: self._controller._on_select("MainCruiseButtonControl")))
 
     if cs.hasModeStarButtons:
+      mode_keys = ("ModeButtonControl", "LongModeButtonControl", "VeryLongModeButtonControl")
+      star_keys = ("StarButtonControl", "LongStarButtonControl", "VeryLongStarButtonControl")
       rows.append(SettingRow(
         "combo:mode", "value", tr_noop("Mode Button"),
-        get_value=lambda: self._controller._get_action_name("ModeButtonControl"),
+        get_value=lambda k=mode_keys: self._combo_value(k),
         on_click=lambda: self._controller._on_select("combo:mode"),
       ))
       rows.append(SettingRow(
         "combo:star", "value", tr_noop("Star Button"),
-        get_value=lambda: self._controller._get_action_name("StarButtonControl"),
+        get_value=lambda k=star_keys: self._combo_value(k),
         on_click=lambda: self._controller._on_select("combo:star"),
       ))
 
@@ -183,6 +190,43 @@ class VehicleSettingsManagerView(PanelManagerView):
       subtitle = ""
     else:
       title_size = 49
+
+    if row.id.startswith("combo:"):
+      bg = rl.Color(255, 255, 255, 4)
+      if pressed:
+        bg = rl.Color(255, 255, 255, 12)
+      elif hovered:
+        bg = rl.Color(255, 255, 255, 8)
+      draw_rounded_fill(rect, bg, radius_px=6)
+      draw_rounded_stroke(rect, rl.Color(255, 255, 255, 6), radius_px=6)
+      if not is_last:
+        sep_y = int(rect.y + rect.height - 1)
+        rl.draw_line(int(rect.x + 22), sep_y, int(rect.x + rect.width - 22), sep_y, rl.Color(255, 255, 255, 16))
+
+      font_m = gui_app.font(FontWeight.MEDIUM)
+      rl.draw_text_ex(font_m, tr(row.title),
+                      rl.Vector2(rect.x + 24, rect.y + 20), title_size, 0, PANEL_STYLE.title_color)
+
+      value_text = row.get_value() if row.get_value else ""
+      if value_text:
+        title_w = measure_text_cached(font_m, tr(row.title), title_size).x
+        value_fs = max(24, int(44 * row_h / 100)) if row_h < 100 else 44
+        value_right = int(rect.x + rect.width - 90 - 16)
+        value_left = int(rect.x + 24 + int(title_w) + 24)
+        avail = value_right - value_left
+        tw = measure_text_cached(font_m, value_text, value_fs).x
+        if tw <= avail:
+          x = value_right - tw
+          rl.draw_text_ex(font_m, value_text, rl.Vector2(x, rect.y + 20), value_fs, 0, PANEL_STYLE.title_color)
+        else:
+          draw_text_fit_common(font_m, value_text, rl.Vector2(value_left, rect.y + 20),
+                               avail, value_fs, color=PANEL_STYLE.title_color)
+
+      chevron_r = rl.Rectangle(rect.x + rect.width - 90, rect.y + 18, 26, 26)
+      rl.draw_text_ex(font_m, ">",
+                      rl.Vector2(chevron_r.x, chevron_r.y),
+                      26, 0, PANEL_STYLE.muted_color)
+      return
 
     if row.type == "value":
       value_size = max(24, int(44 * row_h / 100)) if row_h < 100 else 44
