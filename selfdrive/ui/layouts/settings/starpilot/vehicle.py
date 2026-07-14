@@ -57,7 +57,6 @@ ACTION_OPTIONS = [
   {"id": 13, "name": tr_noop("Favorite #3")},
 ]
 ACTION_NAMES = [o["name"] for o in ACTION_OPTIONS]
-ACTION_IDS = {o["name"]: o["id"] for o in ACTION_OPTIONS}
 ACTION_NAME_BY_ID = {o["id"]: o["name"] for o in ACTION_OPTIONS}
 
 
@@ -446,16 +445,6 @@ class StarPilotVehicleSettingsLayout(_SettingsPage):
     idx = self._params.get_int(key)
     return tr(ACTION_NAME_BY_ID.get(idx, ACTION_NAMES[0]))
 
-  def _get_available_actions(self, key: str | None = None) -> list[str]:
-    cs = starpilot_state.car_state
-    if key == "MainCruiseButtonControl":
-      allowed_ids = {0, 9, 10, 11, 12, 13}
-      return [tr(o["name"]) for o in ACTION_OPTIONS if o["id"] in allowed_ids]
-    allowed_ids = set(range(9)) | {11, 12, 13}
-    if key == "LKASButtonControl":
-      allowed_ids.add(9)
-    return [tr(o["name"]) for o in ACTION_OPTIONS
-            if o["id"] in allowed_ids and (cs.hasOpenpilotLongitudinal or not o.get("requires_longitudinal", False))]
 
   def _on_toggle(self, param_key: str):
     if param_key == "DisableOpenpilotLongitudinal":
@@ -572,16 +561,29 @@ class StarPilotVehicleSettingsLayout(_SettingsPage):
     gui_app.push_widget(dialog)
 
   def _show_action_picker(self, key: str):
-    actions = self._get_available_actions(key)
-    current = self._get_action_name(key)
-    if current not in actions:
-      current = actions[0]
+    cs = starpilot_state.car_state
+    if key == "MainCruiseButtonControl":
+      allowed_ids = {0, 9, 10, 11, 12, 13}
+      options = [o for o in ACTION_OPTIONS if o["id"] in allowed_ids]
+    else:
+      allowed_ids = set(range(9)) | {11, 12, 13}
+      if key == "LKASButtonControl":
+        allowed_ids.add(9)
+      options = [o for o in ACTION_OPTIONS
+                 if o["id"] in allowed_ids and (cs.hasOpenpilotLongitudinal or not o.get("requires_longitudinal", False))]
+
+    option_labels = [tr(o["name"]) for o in options]
+    option_ids = [o["id"] for o in options]
+
+    current_id = self._params.get_int(key)
+    current = next((tr(o["name"]) for o in options if o["id"] == current_id), option_labels[0])
 
     def on_select(res):
-      if res == DialogResult.CONFIRM and dialog.selection:
-        self._params.put_int(key, ACTION_IDS.get(dialog.selection, 0))
+      if res == DialogResult.CONFIRM and dialog.selection in option_labels:
+        idx = option_labels.index(dialog.selection)
+        self._params.put_int(key, option_ids[idx])
 
-    dialog = MultiOptionDialog(tr(key), actions, current, callback=on_select)
+    dialog = MultiOptionDialog(tr(self._action_title(key)), option_labels, current, callback=on_select)
     gui_app.push_widget(dialog)
 
   def _show_lock_timer_selector(self):
