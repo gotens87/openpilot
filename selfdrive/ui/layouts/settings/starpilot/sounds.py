@@ -433,4 +433,4 @@ while True:
     try:
       self._sound_player_process.stdin.write(f"{sound_path}|{volume}\n".encode())
       self._sound_player_process.stdin.flush()
-    except: pass
+    except (BrokenPipeError, OSError): pass

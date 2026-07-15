@@ -17,12 +17,8 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.scribble import draw_cust
 
 GEOMETRY_OFFSET = 10
 PLATE_TAU = 0.060
-TILE_RADIUS = 0.08
-TILE_SEGMENTS = 12
 SLIDER_BUTTON_SIZE = 87
-TILE_INSET = 1.0
 TILE_RADIUS_PX = 18.0
-TILE_SIGNAL_WIDTH = 1
 MIN_TILE_WIDTH = 300
 TOGGLE_ROW_HEIGHT = 128
 TOGGLE_MIN_HEIGHT = 80
@@ -82,9 +78,6 @@ class SPACING:
   tile_gap: int = 16
   tile_content: int = 16
   line_gap: int = 8
-  section_gap: int = 24
-  tab_height: int = 96
-  tab_panel_gap: int = 16
 
 
 def hex_to_color(hex_str: str) -> rl.Color:
@@ -144,19 +137,6 @@ def mix_colors(base, accent, weight: float, alpha: int | None = None) -> rl.Colo
     ba if alpha is None else alpha,
   )
 
-
-def _tone_step(color, delta: int, alpha: int | None = None) -> rl.Color:
-  r, g, b, a = _get_rgba(color)
-  return rl.Color(
-    max(0, min(255, r + delta)),
-    max(0, min(255, g + delta)),
-    max(0, min(255, b + delta)),
-    a if alpha is None else alpha,
-  )
-
-
-def _default_substrate_for(color) -> rl.Color:
-  return mix_colors(rl.Color(14, 17, 23, 255), color, 0.14)
 
 
 def _snap(value: float) -> float:
@@ -1422,37 +1402,6 @@ def draw_soft_card(rect: rl.Rectangle, fill: rl.Color, border: rl.Color, radius:
   draw_rounded_stroke(rect, border, radius_px=radius_px, segments=segments)
 
 
-def draw_status_badges(
-  start_x: float,
-  y: float,
-  items: list[str],
-  style: PanelStyle,
-  *,
-  height: float = 64.0,
-  font_size: int = 40,
-  gap: float = 12.0,
-  padding_x: float = 26.0,
-  text_color: rl.Color = AetherListColors.HEADER,
-):
-  badge_x = start_x
-  font = gui_app.font(FontWeight.BOLD)
-  for item in items:
-    text_size = measure_text_cached(font, item, font_size)
-    badge_w = text_size.x + padding_x
-    badge_rect = rl.Rectangle(badge_x, y, badge_w, height)
-
-    fill_color = with_alpha(style.accent, 24)
-    border_color = with_alpha(style.accent, 80)
-    draw_rounded_fill(badge_rect, fill_color, radius_px=12)
-    draw_rounded_stroke(badge_rect, border_color, radius_px=12)
-
-    text_x = badge_rect.x + (badge_rect.width - text_size.x) / 2
-    text_y = badge_rect.y + (badge_rect.height - text_size.y) / 2
-    rl.draw_text_ex(font, item, rl.Vector2(round(text_x), round(text_y)), font_size, 0, text_color)
-
-    badge_x += badge_w + gap
-
-
 def draw_list_row_shell(
   rect: rl.Rectangle,
   *,
@@ -2152,6 +2101,40 @@ def draw_settings_list_row(
     )
 
 
+def draw_selectable_chip(rect: rl.Rectangle, text: str, *,
+                          current: bool, pressed: bool,
+                          color: rl.Color,
+                          font: rl.Font | None = None,
+                          font_size: int = 28,
+                          radius_px: float = 16,
+                          text_color_active: rl.Color = AetherListColors.HEADER,
+                          text_color_normal: rl.Color = AetherListColors.SUBTEXT,
+                          padding_x: int = 10):
+  fill = rl.Color(255, 255, 255, 5)
+  border = rl.Color(255, 255, 255, 14)
+  text_color = text_color_normal
+  if current:
+    fill = mix_colors(rl.Color(18, 22, 28, 255), color, 0.22, alpha=255)
+    border = with_alpha(color, 72)
+    text_color = text_color_active
+  elif pressed:
+    fill = rl.Color(255, 255, 255, 10)
+    border = rl.Color(255, 255, 255, 22)
+
+  resolved_font = font or gui_app.font(FontWeight.MEDIUM)
+  draw_rounded_fill(rect, fill, radius_px=radius_px)
+  draw_rounded_stroke(rect, border, radius_px=radius_px)
+  draw_text_fit_common(
+    resolved_font,
+    text,
+    rl.Vector2(rect.x + padding_x, rect.y + (rect.height - font_size) / 2),
+    max(1.0, rect.width - padding_x * 2),
+    font_size,
+    align_center=True,
+    color=text_color,
+  )
+
+
 def format_adjustor_value(value: float, *, step: float = 1.0, unit: str = "", labels: dict[float, str] | None = None) -> str:
   label_map = labels or {}
   tolerance = max(abs(step) * 0.5, 1e-4) if step != 0 else 1e-4
@@ -2479,7 +2462,7 @@ class AetherAdjustorRow(Widget):
     self._set_active = set_active
     self._style = style
     self._color = color or style.accent
-    valid_icons = {"sound", "steering", "navigate", "system", "display", "vehicle", "road", "aicar", "first_aid", "alert_critical", "alert_state", "alert_info"}
+    valid_icons = {"sound", "steering", "navigate", "system", "display", "vehicle", "road", "aicar", "first_aid"}
     self._icon_key = icon_key if icon_key in valid_icons else None
     self._presets = presets or []
     self._preset_applied = False
@@ -2593,7 +2576,7 @@ class AetherAdjustorRow(Widget):
         self._set_active_state(not active)
 
   def _handle_mouse_event(self, mouse_event: MouseEvent):
-    del mouse_event
+    pass
 
   def _render_preset_chip(self, rect: rl.Rectangle, text: str, *, current: bool, pressed: bool):
     fill = rl.Color(255, 255, 255, 5)
@@ -3074,11 +3057,6 @@ class AetherSettingsView(PanelManagerView):
     self._has_header = bool(header_title) or parent_toggle is not None
     self._tab_defs = tab_defs
     self._active_tab_key = tab_defs[0]["id"] if tab_defs else ""
-    self._scroll_panel = GuiScrollPanel2(horizontal=False)
-    self._scrollbar = AetherScrollbar()
-    self._content_height = 0.0
-    self._scroll_offset = 0.0
-    self._scroll_rect = rl.Rectangle(0, 0, 0, 0)
 
   def _find_row(self, target_id: str) -> SettingRow | None:
     for section in self._active_sections():
@@ -3438,8 +3416,6 @@ class AetherCategoryDrawer(AetherSettingsView):
     self._rows = rows
     self._slide_progress = 0.0
     self._back_btn_rect = None
-    self._scroll_panel = GuiScrollPanel2(horizontal=False)
-    self._scrollbar = AetherScrollbar()
     
     # Read driving side dynamically for ergonomic layout (LHD vs RHD)
     try:
@@ -3677,7 +3653,7 @@ class AetherTransitionManager:
 
 
 class AetherTile(Widget):
-  def __init__(self, surface_color: rl.Color | str | None = None, substrate_color: rl.Color | str | None = None, on_click: Callable | None = None):
+  def __init__(self, surface_color: rl.Color | str | None = None, on_click: Callable | None = None):
     super().__init__()
     if isinstance(surface_color, str):
       self.surface_color = hex_to_color(surface_color)
@@ -3685,18 +3661,11 @@ class AetherTile(Widget):
       self.surface_color = surface_color
     else:
       self.surface_color = AetherListColors.PRIMARY
-    if isinstance(substrate_color, str):
-      self.substrate_color = hex_to_color(substrate_color)
-    else:
-      self.substrate_color = substrate_color or _default_substrate_for(self.surface_color)
     self.on_click = on_click
     self._plate_offset: float = 0.0
     self._plate_target: float = 0.0
     self._is_pressed: bool = False
     self._squish: float = 1.0
-
-  def _surface_rect(self, rect: rl.Rectangle) -> rl.Rectangle:
-    return _inset_rect(snap_rect(rect), TILE_INSET)
 
   @property
   def _hit_rect(self) -> rl.Rectangle:
@@ -3750,25 +3719,6 @@ class AetherTile(Widget):
   def _update_state(self):
     self._update_squish()
 
-  def _render_layers(self, rect: rl.Rectangle, radius: float = TILE_RADIUS, segments: int = TILE_SEGMENTS):
-    self._animate_plate(rl.get_frame_time())
-    snapped_rect = snap_rect(rect)
-    self.set_rect(snapped_rect)
-
-    surface_rect = self._surface_rect(snapped_rect)
-    base_color = mix_colors(self.substrate_color, self.surface_color, 0.10)
-    surface_color = mix_colors(AetherListColors.PANEL_BG, self.surface_color, 0.16 if self.enabled else 0.08)
-    if self._is_pressed:
-      surface_color = _tone_step(surface_color, -8)
-    border_color = mix_colors(AetherListColors.PANEL_BORDER, self.surface_color, 0.38, alpha=84 if self.enabled else 42)
-
-    draw_rounded_fill(snapped_rect, base_color)
-    draw_rounded_fill(surface_rect, surface_color)
-    draw_rounded_stroke(surface_rect, border_color)
-    rl.draw_rectangle_rec(rl.Rectangle(surface_rect.x, surface_rect.y + surface_rect.height - 1, surface_rect.width, 1), with_alpha(border_color, 48))
-
-    return surface_rect
-
   def _render_luxury_grid_layout(
     self,
     rect: rl.Rectangle,
@@ -3807,7 +3757,7 @@ class AetherTile(Widget):
     font = getattr(self, "_font", gui_app.font(FontWeight.BOLD))
     font_desc = getattr(self, "_font_desc", gui_app.font(FontWeight.MEDIUM))
 
-    self._draw_text_fit(font, title_text, rl.Vector2(rx + content_pad, title_y), max_text_width, title_size, color=title_color)
+    draw_text_fit_common(font, title_text, rl.Vector2(rx + content_pad, title_y), max_text_width, title_size, color=title_color)
     
     if not enabled and getattr(self, "_disabled_label", ""):
       display_status = tr(self._disabled_label) if self._disabled_label else tr("LOCKED")
@@ -3817,208 +3767,13 @@ class AetherTile(Widget):
       status_color = status_color_override if status_color_override is not None else accent
       
     if display_status:
-      self._draw_text_fit(font_desc, display_status, rl.Vector2(rx + content_pad, status_y), max_text_width, status_size, color=status_color)
+      draw_text_fit_common(font_desc, display_status, rl.Vector2(rx + content_pad, status_y), max_text_width, status_size, color=status_color)
 
     if right_renderer:
       right_renderer(rx, ry, rw, rh, content_pad, accent)
 
-  def _draw_text_fit(
-    self,
-    font: rl.Font,
-    text: str,
-    pos: rl.Vector2,
-    max_width: float,
-    font_size: float,
-    align_center: bool = False,
-    align_right: bool = False,
-    letter_spacing: float = 0,
-    uppercase: bool = False,
-    color: rl.Color = rl.WHITE,
-    shadow_alpha: int = 0,
-  ):
-    draw_text_fit_common(
-      font,
-      text,
-      pos,
-      max_width,
-      font_size,
-      align_center=align_center,
-      align_right=align_right,
-      letter_spacing=letter_spacing,
-      uppercase=uppercase,
-      color=color,
-      shadow_alpha=shadow_alpha,
-    )
-
-  def _centered_content(
-    self, face: rl.Rectangle, icon: rl.Texture2D | None, icon_scale: float, title_font_size: float, text_lines: int, line_heights: list[float]
-  ):
-    line_spacing = SPACING.line_gap
-    total_h = sum(line_heights) + line_spacing * (text_lines - 1)
-    icon_w = icon.width * icon_scale if icon else 0
-    icon_h = icon.height * icon_scale if icon else 0
-    if icon:
-      total_h += icon_h + line_spacing
-    group_top = face.y + (face.height - total_h) / 2
-    if icon:
-      ix = face.x + (face.width - icon_w) / 2
-      rl.draw_texture_pro(icon, rl.Rectangle(0, 0, icon.width, icon.height), rl.Rectangle(ix, group_top, icon_w, icon_h), rl.Vector2(0, 0), 0, rl.WHITE)
-      ty = group_top + icon_h + line_spacing
-    else:
-      ty = group_top
-    return face, ty
-
-  def _wrap_text(self, font: rl.Font, text: str, max_width: float, font_size: float, max_lines: int = 2) -> list[str]:
-    return wrap_text(font, text, max_width, font_size, max_lines)
-
-  def _draw_signal_edge(self, face: rl.Rectangle, color: rl.Color, width: int = 2, alpha: int = 58):
-    snapped_face = snap_rect(face)
-    signal_width = max(1, int(width))
-    glow_color = with_alpha(color, max(4, alpha // 3))
-    core_color = with_alpha(color, alpha)
-    rl.draw_rectangle_rec(rl.Rectangle(snapped_face.x, snapped_face.y, signal_width, snapped_face.height), glow_color)
-    inner_x = snapped_face.x + max(1, signal_width - 2)
-    inner_w = max(1, signal_width - 1)
-    rl.draw_rectangle_rec(rl.Rectangle(inner_x, snapped_face.y, inner_w, snapped_face.height), core_color)
-
-  def _measure_tile_stack(
-    self,
-    face: rl.Rectangle,
-    *,
-    icon_height: float,
-    title_lines: int,
-    title_size: int,
-    primary_size: int,
-    desc_lines: int,
-    desc_size: int,
-  ) -> dict[str, float]:
-    title_block = title_lines * title_size + max(0, title_lines - 1) * SPACING.line_gap
-    icon_gap = SPACING.line_gap if icon_height > 0 else 0
-    primary_gap = SPACING.line_gap if title_block > 0 else 0
-    desc_gap = SPACING.sm if desc_lines > 0 else 0
-    desc_block = desc_lines * desc_size + max(0, desc_lines - 1) * SPACING.xs
-    total_height = icon_height + icon_gap + title_block + primary_gap + primary_size + desc_gap + desc_block
-    available_height = face.height
-    if total_height > available_height:
-      overflow = total_height - available_height
-      reduce_icon = min(icon_height * 0.35, overflow)
-      icon_height -= reduce_icon
-      total_height -= reduce_icon
-      if total_height > available_height and desc_block > 0:
-        reduce_desc = min(desc_block * 0.5, total_height - available_height)
-        desc_block -= reduce_desc
-        total_height -= reduce_desc
-      if total_height > available_height:
-        title_block = max(title_size, title_block - (total_height - available_height))
-        total_height = icon_height + icon_gap + title_block + primary_gap + primary_size + desc_gap + desc_block
-    top = max(face.y, face.y + (available_height - total_height) / 2)
-    title_y = top + icon_height + icon_gap
-    primary_y = title_y + title_block + primary_gap
-    desc_y = primary_y + primary_size + desc_gap
-    return {
-      "top": top,
-      "title_y": title_y,
-      "primary_y": primary_y,
-      "desc_y": desc_y,
-      "desc_bottom": desc_y + desc_block,
-    }
-
   def _draw_custom_icon(self, key: str, x: float, y: float, s: float, color: rl.Color):
     draw_custom_icon(key, x, y, s, color)
-
-  def _render_tile_stack(
-    self,
-    face: rl.Rectangle,
-    *,
-    icon: rl.Texture2D | None = None,
-    title: str,
-    primary: str,
-    desc: str,
-    title_font: rl.Font,
-    primary_font: rl.Font,
-    desc_font: rl.Font,
-    title_size: int,
-    primary_size: int,
-    desc_size: int = 18,
-    custom_icon_key: str | None = None,
-  ):
-    content_pad = SPACING.tile_content
-    max_w = face.width - (content_pad * 2)
-    scale = max(0.82, min(1.12, min(face.width / 360.0, face.height / 205.0)))
-    title_size = max(22, int(round(title_size * scale)))
-    primary_size = max(18, int(round(primary_size * scale)))
-    desc_size = max(16, int(round(desc_size * scale)))
-    title_lines = self._wrap_text(title_font, title, max_w, title_size, max_lines=2)
-    has_icon = (icon is not None) or (custom_icon_key is not None)
-    icon_scale = min(0.80, max(0.56, scale * 0.72)) if has_icon else 0.0
-    if custom_icon_key:
-      icon_height = CUSTOM_ICON_BASE_SIZE * CUSTOM_ICON_SCALE_MULT * icon_scale
-    elif icon:
-      icon_height = icon.height * icon_scale
-    else:
-      icon_height = 0.0
-    desc_lines = self._wrap_text(desc_font, desc, max_w, desc_size, max_lines=3) if desc else []
-    layout = self._measure_tile_stack(
-      face,
-      icon_height=icon_height,
-      title_lines=len(title_lines),
-      title_size=title_size,
-      primary_size=primary_size,
-      desc_lines=len(desc_lines),
-      desc_size=desc_size,
-    )
-
-    if custom_icon_key:
-      icon_width = CUSTOM_ICON_BASE_SIZE * CUSTOM_ICON_SCALE_MULT * icon_scale
-      icon_x = face.x + (face.width - icon_width) / 2
-      s = icon_scale * (CUSTOM_ICON_BASE_SIZE / CUSTOM_ICON_CANVAS_SIZE) * CUSTOM_ICON_SCALE_MULT
-      self._draw_custom_icon(custom_icon_key, icon_x, layout["top"], s, mix_colors(rl.Color(255, 255, 255, 255), self.surface_color, 0.08))
-    elif icon:
-      icon_width = icon.width * icon_scale
-      icon_x = face.x + (face.width - icon_width) / 2
-      rl.draw_texture_pro(
-        icon,
-        rl.Rectangle(0, 0, icon.width, icon.height),
-        rl.Rectangle(icon_x, layout["top"], icon_width, icon_height),
-        rl.Vector2(0, 0),
-        0,
-        rl.WHITE,
-      )
-
-    for i, line in enumerate(title_lines):
-      self._draw_text_fit(
-        title_font,
-        line,
-        rl.Vector2(face.x + content_pad, layout["title_y"] + i * (title_size + SPACING.line_gap)),
-        max_w,
-        title_size,
-        align_center=True,
-        color=AetherListColors.HEADER,
-      )
-
-    self._draw_text_fit(
-      primary_font,
-      primary,
-      rl.Vector2(face.x + content_pad, layout["primary_y"]),
-      max_w,
-      primary_size,
-      align_center=True,
-      color=AetherListColors.SUBTEXT if desc else AetherListColors.HEADER,
-    )
-
-    if desc_lines:
-      for i, line in enumerate(desc_lines):
-        self._draw_text_fit(
-          desc_font,
-          line,
-          rl.Vector2(face.x + content_pad, layout["desc_y"] + i * (desc_size + SPACING.xs)),
-          max_w,
-          desc_size,
-          align_center=True,
-          color=AetherListColors.MUTED,
-        )
-
-    return layout
 
   def _constellation_seed(self) -> str:
     title = getattr(self, 'title', None)
@@ -4122,14 +3877,14 @@ class HubTile(AetherTile):
       self._draw_custom_icon(self.custom_icon_key, icon_x, content_top, s, mix_colors(rl.Color(255, 255, 255, 255), accent, 0.08))
       content_top += icon_h + gap
 
-    self._draw_text_fit(self._font_title, title_text,
+    draw_text_fit_common(self._font_title, title_text,
                         rl.Vector2(rx + content_pad, content_top),
                         max_w, title_size, align_center=True, color=rl.WHITE)
     content_top += title_size
 
     if desc_to_render:
       content_top += gap
-      self._draw_text_fit(self._font_desc, desc_to_render,
+      draw_text_fit_common(self._font_desc, desc_to_render,
                           rl.Vector2(rx + content_pad, content_top),
                           max_w, desc_size, align_center=True, color=AetherListColors.SUBTEXT)
 
@@ -4157,7 +3912,6 @@ class ToggleTile(AetherTile):
     desc: str = "",
     is_enabled: Callable[[], bool] | None = None,
     disabled_label: str = "",
-    show_led: bool = True,
   ):
     if bg_color:
       super().__init__(surface_color=bg_color)
@@ -4174,7 +3928,6 @@ class ToggleTile(AetherTile):
     self._inactive_color = rl.Color(120, 120, 120, 255)
     self._disabled_color = rl.Color(75, 75, 75, 255)
     self._disabled_label = disabled_label
-    self._show_led = show_led
     self._glow: float = 1.0 if (self.get_state() and (is_enabled or True)) else 0.0
 
   def _update_state(self):
@@ -4199,20 +3952,6 @@ class ToggleTile(AetherTile):
       self._plate_offset = 0.0
       self._plate_target = 0.0
 
-    if not self._show_led:
-      self.surface_color = self._disabled_color if not enabled else (self._active_color if active else self._inactive_color)
-      state_text = tr(self._disabled_label) if not enabled and self._disabled_label else (tr("LOCKED") if not enabled else (tr("ON") if active else tr("OFF")))
-      signal_color = self._active_color if (enabled and active) else self.surface_color
-      alpha = 62 if (enabled and active) else 28
-
-      face = self._render_layers(rect)
-      self._draw_signal_edge(face, signal_color, width=TILE_SIGNAL_WIDTH, alpha=alpha)
-      self._render_tile_stack(face, title=self.title, primary=state_text, desc=self.desc,
-                              title_font=self._font, primary_font=self._font, desc_font=self._font_desc,
-                              title_size=41, primary_size=30)
-      return
-
-    # --- HUD toggle path (show_led) ---
     if not enabled:
       face, accent = self._render_hud_background(rect, self._disabled_color, 0.0, bg_color=_HUD_BG_DISABLED, const_connected=False)
     else:
@@ -4235,11 +3974,11 @@ class ToggleTile(AetherTile):
 
       curr_y = start_y
       for line in title_lines:
-        self._draw_text_fit(self._font, line, rl.Vector2(rx + content_pad, curr_y), max_w, title_size, align_center=True, color=_HUD_TEXT_DIM)
+        draw_text_fit_common(self._font, line, rl.Vector2(rx + content_pad, curr_y), max_w, title_size, align_center=True, color=_HUD_TEXT_DIM)
         curr_y += title_size + 4
       curr_y += 6
       for line in desc_lines:
-        self._draw_text_fit(self._font_desc, line, rl.Vector2(rx + content_pad, curr_y), max_w, desc_size, align_center=True, color=_HUD_TEXT_DIM)
+        draw_text_fit_common(self._font_desc, line, rl.Vector2(rx + content_pad, curr_y), max_w, desc_size, align_center=True, color=_HUD_TEXT_DIM)
         curr_y += desc_size + 2
     else:
       title_color = rl.WHITE if active else _HUD_TEXT_DIM
@@ -4255,13 +3994,13 @@ class ToggleTile(AetherTile):
 
         curr_y = title_y
         for line in title_lines:
-          self._draw_text_fit(self._font, line, rl.Vector2(rx + content_pad, curr_y), max_w, title_size, align_center=True, color=title_color)
+          draw_text_fit_common(self._font, line, rl.Vector2(rx + content_pad, curr_y), max_w, title_size, align_center=True, color=title_color)
           curr_y += title_size + 4
 
         desc_y = title_y + len(title_lines) * (title_size + 4) + 6
         curr_y = desc_y
         for line in desc_lines:
-          self._draw_text_fit(self._font_desc, line, rl.Vector2(rx + content_pad, curr_y), max_w, desc_size, align_center=True, color=rl.Color(255, 255, 255, 140))
+          draw_text_fit_common(self._font_desc, line, rl.Vector2(rx + content_pad, curr_y), max_w, desc_size, align_center=True, color=rl.Color(255, 255, 255, 140))
           curr_y += desc_size + 2
 
         led_cx = rx + rw // 2
@@ -4274,7 +4013,7 @@ class ToggleTile(AetherTile):
 
         curr_y = title_y
         for line in title_lines:
-          self._draw_text_fit(self._font, line, rl.Vector2(rx + content_pad, curr_y), max_w, title_size, align_center=True, color=title_color)
+          draw_text_fit_common(self._font, line, rl.Vector2(rx + content_pad, curr_y), max_w, title_size, align_center=True, color=title_color)
           curr_y += title_size + 4
 
         led_cx = rx + rw // 2
@@ -4305,7 +4044,6 @@ class RowToggleTile(ToggleTile):
       desc=desc,
       is_enabled=is_enabled,
       disabled_label=disabled_label,
-      show_led=True,
     )
 
   def _render(self, rect: rl.Rectangle):
@@ -4369,7 +4107,7 @@ class ValueTile(AetherTile):
 
     # Title
     title_size = max(26, int(round(32 * text_scale)))
-    self._draw_text_fit(self._font, self.title,
+    draw_text_fit_common(self._font, self.title,
                         rl.Vector2(rx + content_pad, ry + int(rh * 0.35)),
                         max_w, title_size, align_center=True, color=_HUD_TEXT_DIM)
 
@@ -4377,39 +4115,9 @@ class ValueTile(AetherTile):
     val_text = self.get_value()
     val_size = max(26, int(round(35 * text_scale)))
     val_color = accent if enabled else _HUD_TEXT_DIM
-    self._draw_text_fit(self._font, val_text,
+    draw_text_fit_common(self._font, val_text,
                         rl.Vector2(rx + content_pad, ry + int(rh * 0.58)),
                         max_w, val_size, align_center=True, color=val_color)
-
-
-class RowPanelTile(ValueTile):
-  def __init__(
-    self,
-    title: str,
-    on_click: Callable | None = None,
-    bg_color: rl.Color | str | None = None,
-    desc: str = "",
-    get_status: Callable[[], str] | None = None,
-  ):
-    super().__init__(
-      title=title,
-      get_value=get_status or (lambda: ""),
-      on_click=on_click,
-      bg_color=bg_color,
-      desc=desc,
-    )
-
-  def _render(self, rect: rl.Rectangle):
-    status_text = self.get_value()
-    
-    def draw_chevron(rx, ry, rw, rh, content_pad, accent):
-      chev_size = int(rh * 0.16)
-      cx = rx + rw - content_pad - chev_size / 2
-      cy = ry + rh / 2
-      chev_rect = rl.Rectangle(cx - chev_size, cy - chev_size, chev_size * 2, chev_size * 2)
-      draw_chevron_icon(chev_rect, rl.Color(160, 160, 175, 255), thickness=3.0, direction="right")
-      
-    self._render_luxury_grid_layout(rect, self.title, status_text, True, None, draw_chevron)
 
 
 class SliderTile(AetherTile):
@@ -4537,7 +4245,7 @@ class SliderTile(AetherTile):
 
         # Title
         title_size = max(26, int(round(32 * text_scale)))
-        self._draw_text_fit(self._font, self.title,
+        draw_text_fit_common(self._font, self.title,
                             rl.Vector2(rx + content_pad, ry + int(rh * 0.30)),
                             max_w, title_size, align_center=True, color=_HUD_TEXT_DIM)
 
@@ -4545,7 +4253,7 @@ class SliderTile(AetherTile):
         val_str = self.labels.get(current_val, f"{int(current_val)}{self.unit}")
         val_size = max(26, int(round(35 * text_scale)))
         val_color = accent if enabled else _HUD_TEXT_DIM
-        self._draw_text_fit(self._font, val_str,
+        draw_text_fit_common(self._font, val_str,
                             rl.Vector2(rx + content_pad, ry + int(rh * 0.52)),
                             max_w, val_size, align_center=True, color=val_color)
 
@@ -4948,28 +4656,10 @@ class AetherSliderDialog(Widget):
       self._update_val_from_mouse(mouse_event.pos)
 
   def _render_preset_chip(self, rect: rl.Rectangle, text: str, *, current: bool, pressed: bool):
-    fill = rl.Color(255, 255, 255, 5)
-    border = rl.Color(255, 255, 255, 14)
-    text_color = AetherListColors.SUBTEXT
-    if current:
-      fill = mix_colors(rl.Color(18, 22, 28, 255), self._color, 0.22, alpha=255)
-      border = with_alpha(self._color, 72)
-      text_color = AetherListColors.HEADER
-    elif pressed:
-      fill = rl.Color(255, 255, 255, 10)
-      border = rl.Color(255, 255, 255, 22)
-
-    draw_rounded_fill(rect, fill, radius_px=16)
-    draw_rounded_stroke(rect, border, radius_px=16)
-    draw_text_fit_common(
-      gui_app.font(FontWeight.MEDIUM),
-      text,
-      rl.Vector2(rect.x + 14, rect.y + (rect.height - 41) / 2),
-      max(1.0, rect.width - 28),
-      41,
-      align_center=True,
-      color=text_color,
-    )
+    draw_selectable_chip(rect, text,
+                         current=current, pressed=pressed,
+                         color=self._color,
+                         font_size=41, radius_px=16, padding_x=14)
 
   def _render(self, rect: rl.Rectangle):
     dt = rl.get_frame_time()
@@ -5252,28 +4942,10 @@ class AetherMultiSelectDialog(Widget):
     pass
 
   def _render_chip(self, rect: rl.Rectangle, text: str, *, current: bool, pressed: bool):
-    fill = rl.Color(255, 255, 255, 5)
-    border = rl.Color(255, 255, 255, 14)
-    text_color = AetherListColors.SUBTEXT
-    if current:
-      fill = mix_colors(rl.Color(18, 22, 28, 255), self._color, 0.22, alpha=255)
-      border = with_alpha(self._color, 72)
-      text_color = AetherListColors.HEADER
-    elif pressed:
-      fill = rl.Color(255, 255, 255, 10)
-      border = rl.Color(255, 255, 255, 22)
-
-    draw_rounded_fill(rect, fill, radius_px=16)
-    draw_rounded_stroke(rect, border, radius_px=16)
-    draw_text_fit_common(
-      self._font_chip,
-      text,
-      rl.Vector2(rect.x + 10, rect.y + (rect.height - 28) / 2),
-      max(1.0, rect.width - 20),
-      28,
-      align_center=True,
-      color=text_color,
-    )
+    draw_selectable_chip(rect, text,
+                         current=current, pressed=pressed,
+                         color=self._color, font=self._font_chip,
+                         font_size=28, radius_px=16, padding_x=10)
 
   def _render(self, rect: rl.Rectangle):
     dt = rl.get_frame_time()
@@ -5402,7 +5074,7 @@ class AetherMultiSelectTile(AetherTile):
     text_scale = min(rw / 360.0, rh / 205.0)
 
     title_size = max(18, int(round(22 * text_scale)))
-    self._draw_text_fit(self._font, self.title,
+    draw_text_fit_common(self._font, self.title,
                         rl.Vector2(rx + content_pad, ry + int(rh * 0.15)),
                         max_w, title_size, align_center=True, color=_HUD_TEXT_DIM)
 
@@ -5428,7 +5100,7 @@ class AetherMultiSelectTile(AetherTile):
         rl.draw_circle(int(led_cx), int(led_cy), 5, rl.Color(14, 16, 22, 255))
         rl.draw_ring(rl.Vector2(led_cx, led_cy), 3, 4, 0, 360, 24, rl.Color(70, 78, 95, 140))
       
-      self._draw_text_fit(self._font_desc, name,
+      draw_text_fit_common(self._font_desc, name,
                           rl.Vector2(rx + content_pad + 26, y),
                           max_w - 26, val_size, align_center=False, color=val_color)
 

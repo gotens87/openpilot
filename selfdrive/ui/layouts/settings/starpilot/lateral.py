@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import pyray as rl
 
 from openpilot.system.hardware import HARDWARE

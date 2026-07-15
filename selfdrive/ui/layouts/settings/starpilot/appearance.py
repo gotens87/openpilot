@@ -2,11 +2,9 @@ from __future__ import annotations
 import re
 import math
 
-from openpilot.system.ui.lib.application import gui_app, FontWeight, MousePos
+from openpilot.system.ui.lib.application import gui_app, FontWeight
 from openpilot.system.ui.lib.multilang import tr, tr_noop
-from openpilot.system.ui.lib.scroll_panel2 import GuiScrollPanel2
-from openpilot.system.ui.lib.text_measure import measure_text_cached
-from openpilot.system.ui.widgets import DialogResult, Widget
+from openpilot.system.ui.widgets import DialogResult
 from openpilot.system.ui.widgets.option_dialog import MultiOptionDialog
 
 from openpilot.selfdrive.ui.lib.starpilot_state import starpilot_state
@@ -19,12 +17,9 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
     SettingRow,
     SettingSection,
     AetherSettingsView,
-    AetherCategoryDrawer,
     TileGrid,
     HubTile,
     draw_list_group_shell,
-    hex_to_color,
-    PLATE_TAU,
     AetherListColors,
 )
 from openpilot.selfdrive.ui.layouts.settings.starpilot.simple_download_manager import SimpleDownloadManager

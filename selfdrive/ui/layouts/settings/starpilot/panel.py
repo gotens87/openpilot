@@ -6,6 +6,7 @@ from enum import IntEnum
 import pyray as rl
 
 from openpilot.common.params import Params
+from openpilot.starpilot.common.starpilot_variables import update_starpilot_toggles
 from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.widgets import DialogResult, Widget
@@ -55,35 +56,29 @@ class FrameCachedParams:
       self._cache[cache_key] = self._params.get_float(key, **kwargs)
     return self._cache[cache_key]
 
+  def _notify_changed(self):
+    self._cache.clear()
+    update_starpilot_toggles()
+
   def put(self, key, val, **kwargs):
     self._params.put(key, val, **kwargs)
-    self._cache.clear()
-    from openpilot.starpilot.common.starpilot_variables import update_starpilot_toggles
-    update_starpilot_toggles()
+    self._notify_changed()
 
   def put_bool(self, key, val, **kwargs):
     self._params.put_bool(key, val, **kwargs)
-    self._cache.clear()
-    from openpilot.starpilot.common.starpilot_variables import update_starpilot_toggles
-    update_starpilot_toggles()
+    self._notify_changed()
 
   def put_int(self, key, val, **kwargs):
     self._params.put_int(key, val, **kwargs)
-    self._cache.clear()
-    from openpilot.starpilot.common.starpilot_variables import update_starpilot_toggles
-    update_starpilot_toggles()
+    self._notify_changed()
 
   def put_float(self, key, val, **kwargs):
     self._params.put_float(key, val, **kwargs)
-    self._cache.clear()
-    from openpilot.starpilot.common.starpilot_variables import update_starpilot_toggles
-    update_starpilot_toggles()
+    self._notify_changed()
 
   def remove(self, key):
     self._params.remove(key)
-    self._cache.clear()
-    from openpilot.starpilot.common.starpilot_variables import update_starpilot_toggles
-    update_starpilot_toggles()
+    self._notify_changed()
 
   def __getattr__(self, name):
     return getattr(self._params, name)
