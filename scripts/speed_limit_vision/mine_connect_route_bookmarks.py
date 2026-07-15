@@ -16,7 +16,7 @@ import starpilot.system.speed_limit_vision as slv
 if __package__ in (None, ""):
   import sys
   sys.path.insert(0, str(Path(__file__).resolve().parent))
-  from common import ensure_dir, preferred_clip_root, resolve_workspace  # type: ignore
+  from common import ensure_dir, preferred_clip_root, resolve_workspace  # type: ignore  # noqa: TID251
   from evaluate_bookmark_leadins import BookmarkWindow  # type: ignore
   from import_bookmark_leadins import extract_window_frames, write_contact_sheet  # type: ignore
   from localize_bookmark_signs import configure_models, iter_context_frames, score_frame  # type: ignore
@@ -126,6 +126,8 @@ def write_localized_manifest(path: Path, rows: list[dict]) -> None:
       "route",
       "segment",
       "relative_time_s",
+      "source_segment",
+      "source_time_s",
       "source_video_path",
       "score",
       "proposal_confidence",
@@ -221,7 +223,7 @@ def main() -> int:
         write_contact_sheet(contact_sheet_path, contact_sheet_frames, contact_sheet_labels, args.overwrite)
 
       ranked = []
-      for relative_time_s, source_video_path, _, frame_bgr in iter_context_frames(
+      for relative_time_s, source_video_path, source_time_s, frame_bgr in iter_context_frames(
         clip_root,
         window,
         args.search_before,
@@ -231,10 +233,12 @@ def main() -> int:
         scored = score_frame(daemon, frame_bgr, use_ocr=not args.model_only)
         if scored is None:
           continue
-        ranked.append((scored["score"], relative_time_s, source_video_path, frame_bgr, scored))
+        ranked.append((scored["score"], relative_time_s, source_video_path, source_time_s, frame_bgr, scored))
 
       ranked.sort(key=lambda item: item[0], reverse=True)
-      for rank_index, (_, relative_time_s, source_video_path, frame_bgr, scored) in enumerate(ranked[:max(args.top_k, 1)], start=1):
+      for rank_index, (_, relative_time_s, source_video_path, source_time_s, frame_bgr, scored) in enumerate(
+        ranked[:max(args.top_k, 1)], start=1,
+      ):
         x1, y1, x2, y2 = scored["box"]
         crop = frame_bgr[y1:y2, x1:x2]
         frame_name = f"{session_id}_bookmark_{bookmark_number:03d}_rank_{rank_index:02d}.jpg"
@@ -253,6 +257,8 @@ def main() -> int:
           "route": log_id,
           "segment": window.segment,
           "relative_time_s": f"{relative_time_s:.3f}",
+          "source_segment": window.segment - int(relative_time_s < 0.0),
+          "source_time_s": f"{source_time_s:.3f}",
           "source_video_path": str(source_video_path),
           "score": f"{scored['score']:.4f}",
           "proposal_confidence": f"{scored['proposal_confidence']:.4f}",

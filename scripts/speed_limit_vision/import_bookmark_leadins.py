@@ -14,12 +14,13 @@ import numpy as np
 if __package__ in (None, ""):
   import sys
   sys.path.insert(0, str(Path(__file__).resolve().parent))
-  from common import (  # type: ignore
+  from common import (  # type: ignore  # noqa: TID251
     BOOKMARK_LEADIN_MANIFEST_FIELDS,
     DEFAULT_WORKSPACE,
     ensure_dir,
     preferred_clip_root,
     resolve_workspace,
+    source_video_fps,
     write_csv_header,
   )
 else:
@@ -29,6 +30,7 @@ else:
     ensure_dir,
     preferred_clip_root,
     resolve_workspace,
+    source_video_fps,
     write_csv_header,
   )
 
@@ -64,7 +66,7 @@ def load_existing_rows(manifest_path: Path) -> dict[str, dict[str, str]]:
 
 def read_frames_at(video_path: Path, target_times_s: list[float]):
   capture = cv2.VideoCapture(str(video_path))
-  fps = capture.get(cv2.CAP_PROP_FPS) or 20.0
+  fps = source_video_fps(video_path, capture.get(cv2.CAP_PROP_FPS))
   targets = sorted((max(int(round(target_time_s * fps)), 0), target_time_s) for target_time_s in target_times_s)
   results = {}
   frame_index = 0

@@ -16,9 +16,11 @@ import starpilot.system.speed_limit_vision as slv
 if __package__ in (None, ""):
   import sys
   sys.path.insert(0, str(Path(__file__).resolve().parent))
+  from common import source_video_fps  # type: ignore  # noqa: TID251
   from import_manual_review_queue import merged_review_rows, parse_speed  # type: ignore
   from replay_route_runtime import RouteReplayDaemon, configure_models  # type: ignore
 else:
+  from .common import source_video_fps
   from .import_manual_review_queue import merged_review_rows, parse_speed
   from .replay_route_runtime import RouteReplayDaemon, configure_models
 
@@ -164,7 +166,7 @@ def replay_video_cases(cases: list[ReviewedCase], args: argparse.Namespace) -> d
     daemon.published_speed_limit_mph = args.initial_speed_limit
     daemon.last_published_support_at = 0.0
   capture = cv2.VideoCapture(str(cases[0].source_video_path))
-  fps = capture.get(cv2.CAP_PROP_FPS) or 20.0
+  fps = source_video_fps(cases[0].source_video_path, capture.get(cv2.CAP_PROP_FPS))
   frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
   duration_s = frame_count / fps if frame_count > 0 else 60.0
   windows = {
