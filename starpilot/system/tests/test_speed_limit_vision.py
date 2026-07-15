@@ -7,11 +7,49 @@ import starpilot.system.speed_limit_vision as slv
 from starpilot.system.speed_limit_vision import DetectorProposal, HistoryEntry, ProposalTrack, SpeedLimitVisionDaemon
 
 
+class MemoryParams:
+  def __init__(self):
+    self.values = {}
+
+  def put_float(self, key, value):
+    self.values[key] = value
+
+
 def daemon_with_history(current_speed, entries):
   daemon = SpeedLimitVisionDaemon.__new__(SpeedLimitVisionDaemon)
   daemon.published_speed_limit_mph = current_speed
   daemon.history = deque(HistoryEntry(speed, confidence, float(index)) for index, (speed, confidence) in enumerate(entries))
   return daemon
+
+
+def publishing_daemon(is_metric):
+  daemon = SpeedLimitVisionDaemon.__new__(SpeedLimitVisionDaemon)
+  daemon.is_metric = is_metric
+  daemon.published_speed_limit_mph = 0
+  daemon.published_confidence = 0.0
+  daemon.previous_published_speed_limit_mph = 0
+  daemon.last_publish_change_at = 0.0
+  daemon.last_published_support_at = 0.0
+  daemon.current_frame_bgr = None
+  daemon.params_memory = MemoryParams()
+  daemon.history = deque()
+  daemon._write_debug_event = lambda *_args, **_kwargs: None
+  daemon._schedule_auto_bookmark = lambda *_args, **_kwargs: None
+  daemon._publish_status = lambda status, **_kwargs: setattr(daemon, "published_status", status)
+  return daemon
+
+
+def test_published_sign_value_uses_configured_units():
+  imperial_daemon = publishing_daemon(False)
+  metric_daemon = publishing_daemon(True)
+
+  imperial_daemon._publish_detection(50, 0.95, "Vision")
+  metric_daemon._publish_detection(50, 0.95, "Vision")
+
+  assert imperial_daemon.params_memory.values["VisionSpeedLimit"] == pytest.approx(22.352)
+  assert imperial_daemon.published_status == "Vision 50 mph (95%)"
+  assert metric_daemon.params_memory.values["VisionSpeedLimit"] == pytest.approx(50 / 3.6)
+  assert metric_daemon.published_status == "Vision 50 km/h (95%)"
 
 
 def test_speed_change_requires_two_matching_reads_below_single_read_threshold():
