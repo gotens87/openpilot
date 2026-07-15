@@ -17,9 +17,11 @@ from openpilot.selfdrive.ui.lib.starpilot_status import (
     get_screen_edge_color, ENGAGED_COLOR,
     EXPERIMENTAL_COLOR, TRAFFIC_COLOR,
 )
+from cereal import log
 from openpilot.system.ui.lib.application import MousePos, gui_app, FontWeight
 from openpilot.system.ui.lib.text_measure import measure_text_cached
 
+AlertSize = log.SelfdriveState.AlertSize
 
 class StarPilotOnroadView(AugmentedRoadView):
   def __init__(self, stream_type: VisionStreamType = VisionStreamType.VISION_STREAM_ROAD):
@@ -53,7 +55,7 @@ class StarPilotOnroadView(AugmentedRoadView):
 
   def _render_slc(self):
     alert_showing, _ = self.alert_renderer.will_render()
-    if alert_showing is not None:
+    if alert_showing is not None and alert_showing.size == AlertSize.full:
       return
 
     rl.begin_scissor_mode(
