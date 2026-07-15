@@ -45,6 +45,7 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--search-after", type=float, default=1.0, help="Seconds after each bookmark to scan for the most sign-like frame.")
   parser.add_argument("--localize-sample-every", type=float, default=0.25, help="Seconds between frames while searching for the best sign candidate.")
   parser.add_argument("--top-k", type=int, default=1, help="Number of localized candidates to keep per bookmark.")
+  parser.add_argument("--model-only", action="store_true", help="Match the production detector/classifier path without crop OCR.")
   parser.add_argument("--overwrite", action="store_true", help="Overwrite any existing outputs.")
   return parser.parse_args()
 
@@ -227,7 +228,7 @@ def main() -> int:
         args.search_after,
         args.localize_sample_every,
       ):
-        scored = score_frame(daemon, frame_bgr)
+        scored = score_frame(daemon, frame_bgr, use_ocr=not args.model_only)
         if scored is None:
           continue
         ranked.append((scored["score"], relative_time_s, source_video_path, frame_bgr, scored))
