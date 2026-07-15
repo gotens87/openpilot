@@ -3,6 +3,8 @@ import datetime
 import pytest
 
 from openpilot.common.constants import CV
+from openpilot.common.realtime import DT_MDL
+from openpilot.starpilot.controls.lib.curve_speed_controller import CSC_MAX_DECEL_RATE, CurveSpeedController
 from openpilot.starpilot.controls.lib.starpilot_vcruise import (
   StarPilotVCruise,
   get_active_slc_control_target,
@@ -146,6 +148,41 @@ def test_curve_speed_controller_releases_immediately_when_disabled():
   result = update_vcruise(vcruise, sm, toggles, now=20.1, v_ego=20.0)
   assert result == pytest.approx(20.0)
   assert not vcruise.csc_controlling_speed
+
+
+def test_curve_speed_controller_ramps_toward_curve_speed_at_bounded_rate():
+  planner = SimpleNamespace(
+    params=FakeParams(),
+    road_curvature=0.004,
+    time_to_curve=2.0,
+    starpilot_weather=SimpleNamespace(weather_id=0, reduce_lateral_acceleration=0.0),
+  )
+  controller = CurveSpeedController(SimpleNamespace(starpilot_planner=planner))
+  controller.lateral_acceleration = 2.0
+  controller.target_set = True
+  controller.target = 30.0
+
+  controller.update_target(30.0)
+
+  assert controller.target == pytest.approx(30.0 - CSC_MAX_DECEL_RATE * DT_MDL)
+  assert controller.target > (controller.lateral_acceleration / planner.road_curvature) ** 0.5
+
+
+def test_curve_speed_controller_does_not_slow_for_curve_speed_above_ego():
+  planner = SimpleNamespace(
+    params=FakeParams(),
+    road_curvature=0.001,
+    time_to_curve=2.0,
+    starpilot_weather=SimpleNamespace(weather_id=0, reduce_lateral_acceleration=0.0),
+  )
+  controller = CurveSpeedController(SimpleNamespace(starpilot_planner=planner))
+  controller.lateral_acceleration = 2.0
+  controller.target_set = True
+  controller.target = 28.0
+
+  controller.update_target(30.0)
+
+  assert controller.target == pytest.approx(30.0)
 
 
 def test_active_slc_control_target_applies_offset_and_cluster_diff():

@@ -44,6 +44,7 @@ FLM_STATUS_MAX_AGE_SECONDS = 3600.0
 FLM_ANALYZER_ROUTE_LIMIT = 8
 FLM_ANALYZER_PROCESS = None
 FLM_ANALYZER_LOCK = threading.Lock()
+FLM_PROGRESS_FILENAME = "progress.json"
 
 TRIAL_PARAM_SPECS = {
   "AdvancedLateralTune": "bool",
@@ -275,6 +276,56 @@ def _write_json(path: Path, payload) -> None:
   tmp_path = path.with_suffix(path.suffix + ".tmp")
   tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
   tmp_path.replace(path)
+
+
+def _progress_path() -> Path:
+  return get_flm_workspace_root() / FLM_PROGRESS_FILENAME
+
+
+def _record_cleanup_progress(car_fingerprint: str, source_report_id: str = "") -> None:
+  fingerprint = str(car_fingerprint or "").strip()
+  if not fingerprint:
+    return
+
+  progress = _read_json(_progress_path(), {})
+  if not isinstance(progress, dict):
+    progress = {}
+  vehicles = progress.get("vehicles", {})
+  if not isinstance(vehicles, dict):
+    vehicles = {}
+  vehicles[fingerprint] = {
+    "minimumPathKey": "cleanup_pass",
+    "sourceReportId": str(source_report_id or ""),
+    "updatedAt": time.time(),
+  }
+  _write_json(_progress_path(), {"version": 1, "vehicles": vehicles})
+
+
+def _cleanup_progress_locked(car_fingerprint: str) -> bool:
+  fingerprint = str(car_fingerprint or "").strip()
+  if not fingerprint:
+    return False
+
+  progress = _read_json(_progress_path(), {})
+  vehicle_progress = progress.get("vehicles", {}).get(fingerprint, {}) if isinstance(progress, dict) else {}
+  if isinstance(vehicle_progress, dict) and vehicle_progress.get("minimumPathKey") == "cleanup_pass":
+    return True
+
+  # Bootstrap workspaces created before progression tracking was added.
+  for path in _workspace_paths()["reports"].glob("*.json"):
+    report = _read_json(path, {})
+    if not isinstance(report, dict):
+      continue
+    car_info = report.get("car", {})
+    if (
+      isinstance(car_info, dict)
+      and str(car_info.get("carFingerprint", "")) == fingerprint
+      and car_info.get("controlPath") == "torque"
+      and report.get("primaryPathKey") == "cleanup_pass"
+    ):
+      _record_cleanup_progress(fingerprint, str(report.get("reportId", path.stem)))
+      return True
+  return False
 
 
 def _worker_env(repo_root: Path) -> dict[str, str]:
@@ -1592,7 +1643,7 @@ def _bucket_tuning_family(bucket: str) -> str:
   return "other"
 
 
-def select_primary_tuning_path(summaries: list[dict[str, Any]], summary_stats: dict[str, Any]) -> dict[str, Any]:
+def _select_primary_tuning_path_unlocked(summaries: list[dict[str, Any]], summary_stats: dict[str, Any]) -> dict[str, Any]:
   actionable = [
     summary for summary in summaries
     if summary.get("bucket") not in ("model_limited", "angle_control_diagnostic")
@@ -1669,6 +1720,34 @@ def select_primary_tuning_path(summaries: list[dict[str, Any]], summary_stats: d
   }
 
 
+def select_primary_tuning_path(summaries: list[dict[str, Any]], summary_stats: dict[str, Any],
+                               cleanup_progress_locked: bool = False) -> dict[str, Any]:
+  decision = _select_primary_tuning_path_unlocked(summaries, summary_stats)
+  if not cleanup_progress_locked:
+    return decision
+
+  raw_primary_path = decision["primaryPathKey"]
+  if raw_primary_path == "baseline_fix":
+    return {
+      **decision,
+      "primaryPathKey": "cleanup_pass",
+      "alternatePathKey": "baseline_fix",
+      "reason": (
+        "This vehicle already progressed to Cleanup Pass. This route contains broader misses, but FLM will not automatically "
+        "reset a tune that already reached fine adjustment. Review Baseline Fix manually if the regression is real and repeatable."
+      ),
+      "rawPrimaryPathKey": raw_primary_path,
+      "automaticBaselineDemotionBlocked": True,
+      "cleanupProgressLocked": True,
+    }
+
+  return {
+    **decision,
+    "rawPrimaryPathKey": raw_primary_path,
+    "cleanupProgressLocked": True,
+  }
+
+
 def build_trial_profiles(report_id: str, suggestions: list[dict[str, Any]], feedback: dict[str, Any], capabilities: dict[str, Any],
                          path_key: str = "cleanup_pass", path_label: str = "Cleanup Pass") -> list[dict[str, Any]]:
   ignored = set(str(item) for item in feedback.get("ignoredDimensions", []))
@@ -1738,8 +1817,8 @@ def _add_parameters_start_here(capabilities: dict[str, Any], suggestions: list[d
 
 def build_recommendation_paths(report_id: str, summaries: list[dict[str, Any]], summary_stats: dict[str, Any],
                                capabilities: dict[str, Any], current: dict[str, Any],
-                               feedback: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-  decision = select_primary_tuning_path(summaries, summary_stats)
+                               feedback: dict[str, Any], cleanup_progress_locked: bool = False) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+  decision = select_primary_tuning_path(summaries, summary_stats, cleanup_progress_locked)
   all_suggestions = {
     "baseline_fix": build_suggestions(summaries, capabilities, current, strategy="baseline"),
     "cleanup_pass": build_suggestions(summaries, capabilities, current, strategy="cleanup"),
@@ -1930,11 +2009,21 @@ def analyze_routes(route_names: list[str], footage_paths: list[str], feedback: d
   capabilities["nonlinearTorqueMap"] = _nonlinear_torque_map(car_params)
   current_params = _current_param_state(car_params, params)
   stock_params = _stock_param_state(car_params, capabilities)
+  car_fingerprint = str(car_params.carFingerprint)
 
   if torque_control:
     raw_summaries, summary_stats = classify_torque_samples(all_samples)
     summaries = _resolve_conflicting_actionable_suggestions(raw_summaries)
-    paths_payload, path_decision = build_recommendation_paths(report_id, summaries, summary_stats, capabilities, current_params, feedback)
+    cleanup_progress_locked = _cleanup_progress_locked(car_fingerprint)
+    paths_payload, path_decision = build_recommendation_paths(
+      report_id,
+      summaries,
+      summary_stats,
+      capabilities,
+      current_params,
+      feedback,
+      cleanup_progress_locked=cleanup_progress_locked,
+    )
     primary_path = next((path for path in paths_payload if path.get("isPrimary")), paths_payload[0] if paths_payload else {})
     suggestions = list(primary_path.get("suggestions", []))
     profiles = [profile for path in paths_payload for profile in path.get("profiles", [])]
@@ -1991,7 +2080,7 @@ def analyze_routes(route_names: list[str], footage_paths: list[str], feedback: d
     "warnings": warnings,
     "feedback": feedback,
     "car": {
-      "carFingerprint": str(car_params.carFingerprint),
+      "carFingerprint": car_fingerprint,
       "brand": str(getattr(car_params, "brand", "") or ""),
       "controlPath": "torque" if torque_control else "angle",
       "gitBranch": init_data.get("gitBranch", ""),
@@ -2025,6 +2114,8 @@ def analyze_routes(route_names: list[str], footage_paths: list[str], feedback: d
   (paths["reports"] / f"{report_id}.html").write_text(html, encoding="utf-8")
   _write_json(paths["reports"] / f"{report_id}.json", report)
   _write_json(paths["profiles"] / f"{report_id}.json", profiles)
+  if torque_control and path_decision["primaryPathKey"] == "cleanup_pass":
+    _record_cleanup_progress(car_fingerprint, report_id)
   _write_flm_status({
     "pid": os.getpid(),
     "startedAt": time.time(),
@@ -2068,6 +2159,8 @@ def select_report_path(report_id: str, path_key: str) -> dict[str, Any]:
   report.pop("html", None)
   (paths["reports"] / f"{report_id}.html").write_text(_render_report_html(report), encoding="utf-8")
   _write_json(paths["reports"] / f"{report_id}.json", report)
+  if path_key == "cleanup_pass" and report.get("car", {}).get("controlPath") == "torque":
+    _record_cleanup_progress(str(report.get("car", {}).get("carFingerprint", "")), report_id)
   return {
     "message": f"Using {selected_path.get('title', path_key)} for this report.",
     "report": load_report(report_id),
@@ -2207,6 +2300,11 @@ def clear_workspace() -> dict[str, Any]:
       if path.is_file():
         path.unlink()
         removed.append(str(path))
+
+  progress_path = _progress_path()
+  if progress_path.is_file():
+    progress_path.unlink()
+    removed.append(str(progress_path))
 
   _clear_persistent_trial_baseline(params)
   _clear_flm_status()
@@ -2453,6 +2551,9 @@ def apply_trial_profile(report_id: str, profile_id: str) -> dict[str, Any]:
   )
   bundle["FLMTrialApplied"] = True
   _apply_param_bundle(params, bundle)
+  if profile.get("pathKey") == "cleanup_pass":
+    report = _read_json(paths["reports"] / f"{report_id}.json", {})
+    _record_cleanup_progress(str(report.get("car", {}).get("carFingerprint", "")), report_id)
   return {
     "message": f"Applied {profile.get('label', 'FLM')} profile.",
     "profile": profile,

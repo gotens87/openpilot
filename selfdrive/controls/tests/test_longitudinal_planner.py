@@ -382,6 +382,62 @@ def test_vision_untracked_slow_lead_cap_keeps_low_confidence_floor_for_less_thre
   assert planner.get_vision_untracked_slow_lead_cap(less_threatening_lead, v_ego, -1.0) is None
 
 
+def test_vision_untracked_approach_lift_eases_throttle_without_braking():
+  v_ego = 30.0
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=110.0, v_lead=27.0, radar=False, model_prob=0.98)
+
+  aggressive_cap = planner.get_vision_untracked_approach_lift_cap(lead, v_ego, 1.2)
+  standard_cap = planner.get_vision_untracked_approach_lift_cap(lead, v_ego, 1.4)
+
+  assert aggressive_cap is not None
+  assert standard_cap is not None
+  assert 0.0 <= standard_cap <= aggressive_cap < 0.22
+
+
+@pytest.mark.parametrize("lead", [
+  make_lead(status=True, d_rel=110.0, v_lead=27.0, radar=True, model_prob=0.98),
+  make_lead(status=True, d_rel=110.0, v_lead=27.0, radar=False, model_prob=0.90),
+  make_lead(status=True, d_rel=110.0, v_lead=27.0, radar=False, model_prob=0.98, y_rel=1.5),
+  make_lead(status=True, d_rel=110.0, v_lead=30.0, radar=False, model_prob=0.98),
+])
+def test_vision_untracked_approach_lift_ignores_unqualified_leads(lead):
+  v_ego = 30.0
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+
+  assert planner.get_vision_untracked_approach_lift_cap(lead, v_ego, 1.4) is None
+
+
+def test_far_opening_radar_brake_guard_removes_only_harmless_pulse():
+  v_ego = 28.9
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  opening_lead = make_lead(status=True, d_rel=96.5, v_lead=32.0, a_lead=-0.15, radar=True, model_prob=0.93)
+
+  guard_target = planner.get_far_opening_radar_brake_guard_target(
+    opening_lead, v_ego, 1.25, 0.0, -0.41, 29.0, 0.0, "cruise", True,
+  )
+
+  assert guard_target == 0.0
+
+
+def test_far_opening_radar_brake_guard_preserves_close_or_requested_braking():
+  v_ego = 28.9
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  close_slower_lead = make_lead(status=True, d_rel=36.9, v_lead=20.9, a_lead=-0.18, radar=True, model_prob=0.99)
+  far_opening_lead = make_lead(status=True, d_rel=96.5, v_lead=32.0, a_lead=-0.15, radar=True, model_prob=0.93)
+
+  assert planner.get_far_opening_radar_brake_guard_target(
+    close_slower_lead, v_ego, 1.25, 0.0, -3.5, 29.0, 0.0, "lead0", True,
+  ) is None
+  assert planner.get_far_opening_radar_brake_guard_target(
+    far_opening_lead, v_ego, 1.25, 0.0, -0.41, 27.0, 0.0, "cruise", True,
+  ) is None
+
+
 def test_vision_slow_stopped_lead_cap_brakes_earlier_for_confident_stop():
   v_ego = 13.207
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)

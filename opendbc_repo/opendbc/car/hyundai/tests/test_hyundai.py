@@ -90,6 +90,8 @@ CCNC_NON_HDA2_CARS = (
   CAR.HYUNDAI_SANTA_CRUZ_2025,
   CAR.KIA_K4_2025,
   CAR.KIA_K5_2025,
+  CAR.KIA_CARNIVAL_2025,
+  CAR.KIA_CARNIVAL_HEV_4TH_GEN,
   CAR.KIA_SPORTAGE_2026,
   CAR.KIA_SORENTO_2024,
 )
@@ -332,16 +334,23 @@ class TestHyundaiFingerprint:
     assert ev9_cp.steerAtStandstill
     assert not sportage_cp.steerAtStandstill
 
-  def test_ccnc_hda2_lka_layout_does_not_set_ccnc_safety_param(self):
+  @pytest.mark.parametrize("candidate", (CAR.KIA_K4_2025, CAR.KIA_CARNIVAL_2025, CAR.KIA_CARNIVAL_HEV_4TH_GEN))
+  def test_ccnc_hda2_lka_layout_does_not_set_ccnc_safety_param(self, candidate):
     fingerprint = gen_empty_fingerprint()
     cam_can = CanBus(None, fingerprint).CAM
     fingerprint[cam_can] = {0x50: 16}
 
-    CP = CarInterface.get_params(CAR.KIA_K4_2025, fingerprint, [], False, False, False, None)
+    CP = CarInterface.get_params(candidate, fingerprint, [], False, False, False, None)
 
     assert CP.flags & HyundaiFlags.CCNC
     assert CP.flags & HyundaiFlags.CANFD_LKA_STEERING
     assert not (CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CCNC)
+
+  def test_carnival_hev_sets_hybrid_gas_safety(self):
+    CP = CarInterface.get_params(CAR.KIA_CARNIVAL_HEV_4TH_GEN, gen_empty_fingerprint(), [], False, False, False, None)
+
+    assert CP.flags & HyundaiFlags.HYBRID
+    assert CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.HYBRID_GAS
 
   def test_ioniq_6_hda1_layout_stays_non_lka(self):
     fingerprint = gen_empty_fingerprint()

@@ -465,6 +465,38 @@ def test_select_primary_tuning_path_prefers_baseline_for_broad_mismatch(tmp_path
   assert decision["alternatePathKey"] == "cleanup_pass"
 
 
+def test_select_primary_tuning_path_does_not_automatically_demote_cleanup_progress(tmp_path):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  summaries = [
+    {"bucket": "understeer", "severity": 1.0},
+    {"bucket": "center_chatter", "severity": 0.9},
+    {"bucket": "unwind_too_slow", "severity": 0.85},
+    {"bucket": "saturation_limited", "severity": 0.8},
+  ]
+
+  decision = module.select_primary_tuning_path(summaries, {"meanErrorAbs": 0.16}, cleanup_progress_locked=True)
+
+  assert decision["primaryPathKey"] == "cleanup_pass"
+  assert decision["alternatePathKey"] == "baseline_fix"
+  assert decision["rawPrimaryPathKey"] == "baseline_fix"
+  assert decision["automaticBaselineDemotionBlocked"] is True
+
+
+def test_cleanup_progress_bootstraps_from_existing_vehicle_report(tmp_path):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  workspace = module.ensure_flm_workspace()
+  report = {
+    "reportId": "existing-cleanup",
+    "primaryPathKey": "cleanup_pass",
+    "car": {"carFingerprint": "TEST_TRUCK", "controlPath": "torque"},
+  }
+  (workspace["reports"] / "existing-cleanup.json").write_text(json.dumps(report), encoding="utf-8")
+
+  assert module._cleanup_progress_locked("TEST_TRUCK") is True
+  progress = json.loads((workspace["root"] / module.FLM_PROGRESS_FILENAME).read_text(encoding="utf-8"))
+  assert progress["vehicles"]["TEST_TRUCK"]["minimumPathKey"] == "cleanup_pass"
+
+
 def test_select_primary_tuning_path_prefers_cleanup_for_localized_issue(tmp_path):
   module, _ = _load_flm_workspace_module(tmp_path)
   summaries = [

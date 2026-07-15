@@ -167,6 +167,16 @@ VISION_UNTRACKED_SLOW_LEAD_CONFIRM_TIME = 0.30
 VISION_UNTRACKED_SLOW_LEAD_IMMEDIATE_DECEL = 0.55
 VISION_UNTRACKED_SLOW_LEAD_IMMEDIATE_DISTANCE = 45.0
 VISION_UNTRACKED_SLOW_LEAD_IMMEDIATE_LEAD_BRAKE = 0.10
+VISION_UNTRACKED_APPROACH_LIFT_MIN_EGO_SPEED = 18.0
+VISION_UNTRACKED_APPROACH_LIFT_MIN_MODEL_PROB = 0.95
+VISION_UNTRACKED_APPROACH_LIFT_MAX_LATERAL_OFFSET = 1.2
+VISION_UNTRACKED_APPROACH_LIFT_MIN_CLOSING_SPEED = 0.75
+VISION_UNTRACKED_APPROACH_LIFT_MAX_DISTANCE = 130.0
+VISION_UNTRACKED_APPROACH_LIFT_MIN_GAP_EXCESS = 6.0
+VISION_UNTRACKED_APPROACH_LIFT_TRIGGER_TIME = 20.0
+VISION_UNTRACKED_APPROACH_LIFT_FULL_TIME = 6.0
+VISION_UNTRACKED_APPROACH_LIFT_MAX_ACCEL = 0.22
+VISION_UNTRACKED_APPROACH_LIFT_CONFIRM_TIME = 0.30
 VISION_SLOW_LEAD_MAX_SPEED = 5.0
 VISION_SLOW_LEAD_MIN_CLOSING_SPEED = 1.5
 VISION_SLOW_LEAD_TRIGGER_TTC = 4.5
@@ -368,6 +378,16 @@ MILD_FOLLOW_ZERO_CROSS_GUARD_FULL_HEADWAY_MARGIN = 0.85
 MILD_FOLLOW_ZERO_CROSS_GUARD_MIN_DELTA_A = 0.08
 MILD_FOLLOW_ZERO_CROSS_GUARD_MIN_DEADBAND = 0.04
 MILD_FOLLOW_ZERO_CROSS_GUARD_MAX_DEADBAND = 0.08
+FAR_OPENING_RADAR_BRAKE_GUARD_MIN_SPEED = 20.0
+FAR_OPENING_RADAR_BRAKE_GUARD_MIN_DISTANCE = 80.0
+FAR_OPENING_RADAR_BRAKE_GUARD_MIN_MODEL_PROB = 0.85
+FAR_OPENING_RADAR_BRAKE_GUARD_MIN_LEAD_DELTA = 1.0
+FAR_OPENING_RADAR_BRAKE_GUARD_MIN_HEADWAY_MARGIN = 0.75
+FAR_OPENING_RADAR_BRAKE_GUARD_MAX_LEAD_BRAKE = 0.25
+FAR_OPENING_RADAR_BRAKE_GUARD_MIN_PREV_TARGET = -0.08
+FAR_OPENING_RADAR_BRAKE_GUARD_MAX_NEW_TARGET = -0.15
+FAR_OPENING_RADAR_BRAKE_GUARD_MAX_CRUISE_DEFICIT = 0.25
+FAR_OPENING_RADAR_BRAKE_GUARD_MIN_MODEL_ACCEL = -0.50
 NEAR_DUPLICATE_LEAD_TRANSITION_MIN_SPEED = 20.0
 NEAR_DUPLICATE_LEAD_TRANSITION_MIN_MODEL_PROB = 0.95
 NEAR_DUPLICATE_LEAD_TRANSITION_MAX_LEAD_BRAKE = 0.35
@@ -605,6 +625,7 @@ class LongitudinalPlanner:
     self.vision_low_speed_stop_hold_until = 0.0
     self.vision_lead_approach_confirm_t = 0.0
     self.untracked_slow_lead_confirm_t = 0.0
+    self.untracked_vision_approach_lift_confirm_t = 0.0
     self.manual_stop_resume_override_until = 0.0
     self.lead_depart_accel_hold_until = 0.0
     self.lead_depart_accel_hold_floor = None
@@ -881,6 +902,43 @@ class LongitudinalPlanner:
       return None
 
     return max(accel_min, -approach_decel)
+
+  @staticmethod
+  def get_vision_untracked_approach_lift_cap(lead, v_ego, t_follow):
+    """Trim throttle before a confident vision lead reaches the tracking window."""
+    if lead is None or not lead.status or bool(getattr(lead, "radar", False)):
+      return None
+    if float(v_ego) < VISION_UNTRACKED_APPROACH_LIFT_MIN_EGO_SPEED:
+      return None
+
+    lead_prob = float(getattr(lead, "modelProb", 0.0))
+    if lead_prob < VISION_UNTRACKED_APPROACH_LIFT_MIN_MODEL_PROB:
+      return None
+    if abs(float(getattr(lead, "yRel", 0.0))) > VISION_UNTRACKED_APPROACH_LIFT_MAX_LATERAL_OFFSET:
+      return None
+    if float(lead.dRel) > VISION_UNTRACKED_APPROACH_LIFT_MAX_DISTANCE:
+      return None
+
+    closing_speed = float(v_ego) - float(lead.vLead)
+    if closing_speed < VISION_UNTRACKED_APPROACH_LIFT_MIN_CLOSING_SPEED:
+      return None
+
+    desired_gap = float(desired_follow_distance(v_ego, lead.vLead, t_follow))
+    gap_excess = float(lead.dRel) - desired_gap
+    if gap_excess < VISION_UNTRACKED_APPROACH_LIFT_MIN_GAP_EXCESS:
+      return 0.0
+
+    time_to_desired_gap = gap_excess / max(closing_speed, 0.1)
+    if time_to_desired_gap > VISION_UNTRACKED_APPROACH_LIFT_TRIGGER_TIME:
+      return None
+
+    # This path only removes positive acceleration. Braking remains exclusively
+    # owned by lead tracking and the existing close-lead safety caps.
+    return float(np.interp(
+      time_to_desired_gap,
+      [VISION_UNTRACKED_APPROACH_LIFT_FULL_TIME, VISION_UNTRACKED_APPROACH_LIFT_TRIGGER_TIME],
+      [0.0, VISION_UNTRACKED_APPROACH_LIFT_MAX_ACCEL],
+    ))
 
   def get_vision_slow_stopped_lead_cap(self, lead, v_ego, accel_min, t_follow):
     if lead is None or not lead.status or bool(getattr(lead, "radar", False)):
@@ -2116,6 +2174,46 @@ class LongitudinalPlanner:
 
     return None
 
+  @staticmethod
+  def get_far_opening_radar_brake_guard_target(lead, v_ego, base_t_follow,
+                                               prev_output_a_target, output_a_target,
+                                               v_cruise, model_desired_accel,
+                                               current_source, tracking_lead_active):
+    if lead is None or not lead.status or not bool(getattr(lead, "radar", False)):
+      return None
+    if current_source != "cruise" or not tracking_lead_active:
+      return None
+    if float(v_ego) < FAR_OPENING_RADAR_BRAKE_GUARD_MIN_SPEED:
+      return None
+    if float(lead.dRel) < FAR_OPENING_RADAR_BRAKE_GUARD_MIN_DISTANCE:
+      return None
+
+    lead_prob = float(getattr(lead, "modelProb", 1.0))
+    lead_delta = float(lead.vLead) - float(v_ego)
+    lead_brake = max(0.0, -float(getattr(lead, "aLeadK", 0.0)))
+    actual_headway = float(lead.dRel) / max(float(v_ego), 1e-3)
+    headway_margin = actual_headway - float(base_t_follow)
+    if (
+      lead_prob < FAR_OPENING_RADAR_BRAKE_GUARD_MIN_MODEL_PROB or
+      lead_delta < FAR_OPENING_RADAR_BRAKE_GUARD_MIN_LEAD_DELTA or
+      lead_brake > FAR_OPENING_RADAR_BRAKE_GUARD_MAX_LEAD_BRAKE or
+      headway_margin < FAR_OPENING_RADAR_BRAKE_GUARD_MIN_HEADWAY_MARGIN
+    ):
+      return None
+
+    if float(prev_output_a_target) < FAR_OPENING_RADAR_BRAKE_GUARD_MIN_PREV_TARGET:
+      return None
+    if float(output_a_target) > FAR_OPENING_RADAR_BRAKE_GUARD_MAX_NEW_TARGET:
+      return None
+    if float(v_cruise) < float(v_ego) - FAR_OPENING_RADAR_BRAKE_GUARD_MAX_CRUISE_DEFICIT:
+      return None
+    if float(model_desired_accel) < FAR_OPENING_RADAR_BRAKE_GUARD_MIN_MODEL_ACCEL:
+      return None
+
+    # A far lead that is pulling away cannot justify a one-frame braking pulse.
+    # Preserve real speed-target, model, and closing-lead deceleration above.
+    return 0.0
+
   def get_duplicate_slow_lead_brake_hold_target(self, lead, v_ego, base_t_follow,
                                                 prev_output_a_target, output_a_target,
                                                 current_source, tracking_lead_active):
@@ -2651,6 +2749,24 @@ class LongitudinalPlanner:
     model_desired_accel = float(sm['modelV2'].action.desiredAcceleration)
 
     if not tracking_lead:
+      approach_lift_caps = [
+        cap for cap in (
+          self.get_vision_untracked_approach_lift_cap(self.lead_one, v_ego, effective_t_follow),
+          self.get_vision_untracked_approach_lift_cap(self.lead_two, v_ego, effective_t_follow),
+        ) if cap is not None
+      ]
+      if approach_lift_caps:
+        self.untracked_vision_approach_lift_confirm_t = min(
+          self.untracked_vision_approach_lift_confirm_t + self.dt,
+          VISION_UNTRACKED_APPROACH_LIFT_CONFIRM_TIME,
+        )
+        if self.untracked_vision_approach_lift_confirm_t >= VISION_UNTRACKED_APPROACH_LIFT_CONFIRM_TIME:
+          approach_lift_cap = min(approach_lift_caps)
+          self.a_desired = min(self.a_desired, approach_lift_cap)
+          output_a_target = min(output_a_target, approach_lift_cap)
+      else:
+        self.untracked_vision_approach_lift_confirm_t = 0.0
+
       pretracking_vision_caps = []
       for lead in (self.lead_one, self.lead_two):
         if lead.status and not bool(getattr(lead, "radar", False)):
@@ -2682,6 +2798,7 @@ class LongitudinalPlanner:
       else:
         self.untracked_slow_lead_confirm_t = 0.0
     else:
+      self.untracked_vision_approach_lift_confirm_t = 0.0
       self.untracked_slow_lead_confirm_t = 0.0
 
     close_lead_caps = []
@@ -3127,6 +3244,21 @@ class LongitudinalPlanner:
       )
       if mild_follow_zero_cross_guard_target is not None:
         output_a_target = mild_follow_zero_cross_guard_target
+
+      far_opening_radar_brake_guard_target = self.get_far_opening_radar_brake_guard_target(
+        comfort_follow_lead,
+        scene_v_ego,
+        effective_t_follow,
+        prev_output_a_target,
+        output_a_target,
+        v_cruise,
+        model_desired_accel,
+        self.mpc.source,
+        tracking_lead,
+      )
+      if far_opening_radar_brake_guard_target is not None:
+        self.a_desired = max(self.a_desired, far_opening_radar_brake_guard_target)
+        output_a_target = max(output_a_target, far_opening_radar_brake_guard_target)
 
     output_accel_max = no_throttle_output_max if not self.allow_throttle else accel_limits_turns[1]
     output_a_target = float(np.clip(output_a_target, output_accel_min, output_accel_max))
