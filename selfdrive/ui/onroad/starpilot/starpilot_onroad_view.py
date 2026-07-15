@@ -47,6 +47,7 @@ class StarPilotOnroadView(AugmentedRoadView):
     if self._draw_hud_controls:
       self._render_slc()
       self._render_overlays()
+      self._render_road_name()
     if self._draw_road_overlays:
       self._render_path_features(rect)
 
@@ -338,11 +339,13 @@ class StarPilotOnroadView(AugmentedRoadView):
         draw_text_with_outline(line, x - sz.x, y + i * line_height, rl.WHITE)
 
     # 2. Render bottom-center detailed FPS tracker string (min/max/avg)
+    #    inside the bottom border strip to keep the content area clear.
     if show_fps:
       fps_str = f"FPS: {round(fps)} | Min: {round(self._min_fps)} | Max: {round(self._max_fps)} | Avg: {round(self._avg_fps)}"
       sz = measure_text_cached(font, fps_str, font_size)
       bx = self._content_rect.x + (self._content_rect.width - sz.x) / 2
-      by = self._content_rect.y + self._content_rect.height - sz.y - 10
+      border_width = self._get_border_width()
+      by = self._content_rect.y + self._content_rect.height + (border_width - sz.y) // 2
       draw_text_with_outline(fps_str, bx, by, rl.WHITE)
 
 
@@ -448,3 +451,33 @@ class StarPilotOnroadView(AugmentedRoadView):
 
     from openpilot.selfdrive.ui.onroad.starpilot.pedal_icons import render_pedal_icons
     render_pedal_icons(start_x, start_y, self._font_bold)
+
+  def _render_road_name(self):
+    toggles = ui_state.starpilot_toggles
+    road_name_on = bool(toggles.get("road_name_ui", self._params.get_bool("RoadNameUI")))
+    if not road_name_on:
+      return
+
+    mapd = ui_state.sm["mapdOut"] if ui_state.sm.valid.get("mapdOut", False) else None
+    if mapd is None:
+      return
+    road_name = str(mapd.roadName or "")
+    if not road_name:
+      return
+
+    font = self._font_bold
+    font_size = 32
+    sz = measure_text_cached(font, road_name, font_size)
+
+    pad_x = 24
+    pad_y = 8
+    pill_w = sz.x + pad_x * 2
+    pill_h = font_size + pad_y * 2
+
+    cx = self._content_rect.x + self._content_rect.width / 2
+    by = self._content_rect.y + self._content_rect.height - pill_h - 20
+
+    pill = rl.Rectangle(cx - pill_w / 2, by, pill_w, pill_h)
+    rl.draw_rectangle_rounded(pill, 0.4, 8, rl.Color(0, 0, 0, 166))
+    rl.draw_rectangle_rounded_lines_ex(pill, 0.4, 8, 1, rl.Color(255, 255, 255, 60))
+    rl.draw_text_ex(font, road_name, rl.Vector2(cx - sz.x / 2, by + pad_y), font_size, 0, rl.WHITE)
