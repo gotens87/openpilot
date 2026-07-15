@@ -474,17 +474,22 @@ def draw_hud_background(rect: rl.Rectangle, accent: rl.Color, glow: float = 1.0,
   off_border = _HUD_BORDER_OFF
 
   for i in range(4, 0, -1):
-    off = i * 2.5 * glow
+    if glow < 0.1 and i == 4:
+      off = 6.0
+      a = 6
+    else:
+      off = i * 2.5 * glow
+      a = int(25 * (1.0 - i / 5) * glow)
     gr = rl.Rectangle(rx - off, ry - off, rw + off * 2, rh + off * 2)
-    a = int(25 * (1.0 - i / 5) * glow)
     draw_rounded_fill(gr, rl.Color(accent.r, accent.g, accent.b, max(0, min(255, a))), radius_px=radius_px)
 
   draw_rounded_fill(face, bg_color if bg_color is not None else _HUD_BG_ON, radius_px=radius_px)
 
+  gl = max(glow, 0.18)
   bc = rl.Color(
-    max(0, min(255, int(off_border.r + (accent.r - off_border.r) * glow))),
-    max(0, min(255, int(off_border.g + (accent.g - off_border.g) * glow))),
-    max(0, min(255, int(off_border.b + (accent.b - off_border.b) * glow))),
+    max(0, min(255, int(off_border.r + (accent.r - off_border.r) * gl))),
+    max(0, min(255, int(off_border.g + (accent.g - off_border.g) * gl))),
+    max(0, min(255, int(off_border.b + (accent.b - off_border.b) * gl))),
     255)
   draw_rounded_stroke(face, bc, radius_px=radius_px)
 
@@ -1677,7 +1682,6 @@ def draw_toggle_switch(
   knob_progress: float | None = None,
   is_enabled: bool = True,
   track_color: rl.Color = AetherListColors.PRIMARY,
-  off_track_color: rl.Color = rl.Color(255, 255, 255, 24),
   knob_color: rl.Color = rl.WHITE,
   width: int = AETHER_LIST_METRICS.toggle_width,
   height: int = AETHER_LIST_METRICS.toggle_height,
@@ -4268,8 +4272,7 @@ class ToggleTile(AetherTile):
         rl.draw_circle(int(led_cx), int(led_cy), 16, rl.Color(accent.r, accent.g, accent.b, 24))
         rl.draw_circle(int(led_cx), int(led_cy), 9, accent)
       else:
-        rl.draw_circle(int(led_cx), int(led_cy), 10, rl.Color(14, 16, 22, 255))
-        rl.draw_ring(rl.Vector2(led_cx, led_cy), 7, 9, 0, 360, 24, rl.Color(70, 78, 95, 140))
+        rl.draw_ring(rl.Vector2(led_cx, led_cy), 6, 10, 0, 360, 24, rl.Color(accent.r, accent.g, accent.b, 22))
 
 
 class RowToggleTile(ToggleTile):
@@ -4311,8 +4314,7 @@ class RowToggleTile(ToggleTile):
         rl.draw_circle(int(led_cx), int(led_cy), led_radius_outer, rl.Color(accent.r, accent.g, accent.b, 40))
         rl.draw_circle(int(led_cx), int(led_cy), led_radius_inner, accent)
       else:
-        rl.draw_circle(int(led_cx), int(led_cy), led_radius_inner + 1, rl.Color(14, 16, 22, 255))
-        rl.draw_ring(rl.Vector2(led_cx, led_cy), led_radius_inner - 1, led_radius_inner + 1, 0, 360, 24, rl.Color(70, 78, 95, 140))
+        rl.draw_ring(rl.Vector2(led_cx, led_cy), led_radius_inner - 2, led_radius_inner + 1, 0, 360, 24, rl.Color(accent.r, accent.g, accent.b, 22))
 
     self._render_luxury_grid_layout(rect, self.title, status_text, active, status_color_override, draw_led)
 
