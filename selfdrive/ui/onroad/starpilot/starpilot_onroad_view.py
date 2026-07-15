@@ -308,21 +308,8 @@ class StarPilotOnroadView(AugmentedRoadView):
       mem_val = int(device_state.memoryUsagePercent)
       mem_gb = 8.0 * mem_val / 100.0
 
-    # Format text lines for top-right developer metrics overlay.
-    text_lines = []
-    if show_cpu:
-      text_lines.append(f"CPU: {cpu_val}%")
-    if show_gpu:
-      text_lines.append(f"GPU: {gpu_val}%")
-    if show_temp:
-      text_lines.append(f"TEMP: {temp_val}°C")
-    if show_memory:
-      text_lines.append(f"RAM: {mem_gb:.1f} GB ({mem_val}%)")
-
-    # Helper function for outlined text drawing
     font = self._font_medium
     font_size = 24
-    line_height = font_size + 4
 
     def draw_text_with_outline(text, pos_x, pos_y, color):
       pos = rl.Vector2(pos_x, pos_y)
@@ -332,23 +319,25 @@ class StarPilotOnroadView(AugmentedRoadView):
       rl.draw_text_ex(font, text, rl.Vector2(pos.x + 1, pos.y + 1), font_size, 0, rl.BLACK)
       rl.draw_text_ex(font, text, pos, font_size, 0, color)
 
-    # 1. Render top-right developer metrics block
-    if text_lines:
-      x = self._content_rect.x + self._content_rect.width - 30
-      y = self._content_rect.y + 40
-      for i, line in enumerate(text_lines):
-        sz = measure_text_cached(font, line, font_size)
-        draw_text_with_outline(line, x - sz.x, y + i * line_height, rl.WHITE)
-
-    # 2. Render bottom-center detailed FPS tracker string (min/max/avg)
-    #    inside the bottom border strip to keep the content area clear.
+    parts = []
+    if show_cpu:
+      parts.append(f"CPU: {cpu_val}%")
+    if show_gpu:
+      parts.append(f"GPU: {gpu_val}%")
+    if show_temp:
+      parts.append(f"TEMP: {temp_val}°C")
+    if show_memory:
+      parts.append(f"RAM: {mem_gb:.1f} GB ({mem_val}%)")
     if show_fps:
-      fps_str = f"FPS: {round(fps)} | Min: {round(self._min_fps)} | Max: {round(self._max_fps)} | Avg: {round(self._avg_fps)}"
-      sz = measure_text_cached(font, fps_str, font_size)
-      bx = self._content_rect.x + (self._content_rect.width - sz.x) / 2
-      border_width = self._get_border_width()
-      by = self._content_rect.y + self._content_rect.height + (border_width - sz.y) // 2
-      draw_text_with_outline(fps_str, bx, by, rl.WHITE)
+      parts += [f"FPS: {round(fps)}", f"Min: {round(self._min_fps)}",
+                f"Max: {round(self._max_fps)}", f"Avg: {round(self._avg_fps)}"]
+
+    line = " | ".join(parts)
+    sz = measure_text_cached(font, line, font_size)
+    bx = self._content_rect.x + (self._content_rect.width - sz.x) / 2
+    border_width = self._get_border_width()
+    by = self._content_rect.y + self._content_rect.height + (border_width - sz.y) // 2
+    draw_text_with_outline(line, bx, by, rl.WHITE)
 
 
   def _render_bottom_row_widgets(self):
