@@ -250,16 +250,20 @@ class TestManager:
 
   def test_cleanup_removed_starpilot_params(self, tmp_path):
     params = FileBackedFakeParams(tmp_path / "params", {
+      "CoastUpToLeads": True,
       "HumanFollowing": True,
     })
     params_cache = FileBackedFakeParams(tmp_path / "cache", {
       "HumanFollowing": False,
+      "PrioritizeSmoothFollowing": True,
     })
 
     manager.cleanup_removed_starpilot_params(params, params_cache)
 
+    assert not Path(params.get_param_path("CoastUpToLeads")).exists()
     assert not Path(params.get_param_path("HumanFollowing")).exists()
     assert not Path(params_cache.get_param_path("HumanFollowing")).exists()
+    assert not Path(params_cache.get_param_path("PrioritizeSmoothFollowing")).exists()
 
   def test_migrate_legacy_starpilot_params_cache_copies_marker_sources(self, tmp_path, monkeypatch):
     monkeypatch.setattr(manager, "STARPILOT_PARAMS_CACHE_MIGRATION_FLAG", tmp_path / "starpilot_params_cache_v1")
@@ -338,43 +342,6 @@ class TestManager:
 
     assert params.get("ClusterOffset") == "1.02"
     assert params_cache.get("ClusterOffset") is None
-
-  def test_migrate_prioritize_smooth_following_default_seeds_disabled(self, tmp_path, monkeypatch):
-    monkeypatch.setattr(manager, "STARPILOT_PRIORITIZE_SMOOTH_FOLLOWING_MIGRATION_FLAG", tmp_path / "starpilot_prioritize_smooth_following_v1")
-
-    params = FileBackedFakeParams(tmp_path / "params", {})
-    params_cache = FileBackedFakeParams(tmp_path / "cache", {})
-
-    manager.migrate_prioritize_smooth_following_default(params, params_cache)
-
-    assert not params.get_bool("PrioritizeSmoothFollowing")
-    assert not params_cache.get_bool("PrioritizeSmoothFollowing")
-
-  def test_migrate_prioritize_smooth_following_default_inverts_legacy_coast_toggle(self, tmp_path, monkeypatch):
-    monkeypatch.setattr(manager, "STARPILOT_PRIORITIZE_SMOOTH_FOLLOWING_MIGRATION_FLAG", tmp_path / "starpilot_prioritize_smooth_following_v1")
-
-    params = FileBackedFakeParams(tmp_path / "params", {
-      "CoastUpToLeads": False,
-    })
-    params_cache = FileBackedFakeParams(tmp_path / "cache", {})
-
-    manager.migrate_prioritize_smooth_following_default(params, params_cache)
-
-    assert params.get_bool("PrioritizeSmoothFollowing")
-    assert params_cache.get_bool("PrioritizeSmoothFollowing")
-
-  def test_migrate_prioritize_smooth_following_default_preserves_existing_values(self, tmp_path, monkeypatch):
-    monkeypatch.setattr(manager, "STARPILOT_PRIORITIZE_SMOOTH_FOLLOWING_MIGRATION_FLAG", tmp_path / "starpilot_prioritize_smooth_following_v1")
-
-    params = FileBackedFakeParams(tmp_path / "params", {
-      "PrioritizeSmoothFollowing": True,
-      "CoastUpToLeads": True,
-    })
-    params_cache = FileBackedFakeParams(tmp_path / "cache", {})
-
-    manager.migrate_prioritize_smooth_following_default(params, params_cache)
-
-    assert params.get_bool("PrioritizeSmoothFollowing")
 
   def test_cleanup_inaccessible_msgq_files_removes_only_blocked_files(self, tmp_path, monkeypatch):
     healthy = tmp_path / "msgq_deviceState"

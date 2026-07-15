@@ -79,6 +79,7 @@ def get_test_starpilot_toggles() -> SimpleNamespace:
     sng_hack=False,
     subaru_sng=False,
     subaru_sng_manual_parking_brake=False,
+    tesla_cooperative_steering=False,
     unlock_doors=False,
     vEgoStopping=0.5,
     volt_sng=False,

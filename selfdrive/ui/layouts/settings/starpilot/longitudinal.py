@@ -138,7 +138,7 @@ class LongitudinalManagerView(AetherSettingsView):
     hero_data = [
       {
         "title": tr("Longitudinal Tuning"),
-        "desc": tr("Configure acceleration profiles, smooth following, lane changes, and route speed control."),
+        "desc": tr("Configure acceleration profiles, lane changes, and route speed control."),
         "icon": "steering",
         "color": "#8B5CF6",
         "on_click": lambda: self._controller._navigate_to("tune")
@@ -619,11 +619,6 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                  get_value=self._get_deceleration_profile_label,
                  on_click=self._show_deceleration_profile_selector,
                  visible=self._longitudinal_enabled),
-      SettingRow("PrioritizeSmoothFollowing", "toggle", tr_noop("Prioritize Smooth Following"),
-                 subtitle=tr_noop("Disables the newer far-lead follow logic on cars that show lead-follow stutter. Tradeoff: it may react later in some edge-case lead approaches."),
-                 get_state=lambda: self._params.get_bool("PrioritizeSmoothFollowing"),
-                 set_state=lambda s: self._params.put_bool("PrioritizeSmoothFollowing", s),
-                 visible=self._longitudinal_enabled),
       SettingRow("HumanLaneChanges", "toggle", tr_noop("Human-Like Lane Changes"),
                  subtitle=tr_noop("Radar-informed behavior during lane changes."),
                  get_state=lambda: self._params.get_bool("HumanLaneChanges"),
@@ -958,7 +953,7 @@ class StarPilotLongitudinalLayout(_SettingsPage):
       self,
       [SettingSection(title="", rows=self._tune_rows)],
       header_title=tr_noop("Longitudinal Tuning"),
-      header_subtitle=tr_noop("Configure acceleration profiles, smooth following, lane changes, and route speed control."),
+      header_subtitle=tr_noop("Configure acceleration profiles, lane changes, and route speed control."),
       parent_toggle=pt_tune,
       panel_style=PANEL_STYLE,
     )

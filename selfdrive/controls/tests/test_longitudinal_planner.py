@@ -122,7 +122,7 @@ def make_sm(v_ego: float, desired_accel: float, min_accel: float, *, experimenta
   }
 
 
-def make_toggles(model_version: str = "v11", radar_takeoffs: bool = False, prioritize_smooth_following: bool = False):
+def make_toggles(model_version: str = "v11", radar_takeoffs: bool = False):
   return SimpleNamespace(
     taco_tune=False,
     classic_model=False,
@@ -131,7 +131,6 @@ def make_toggles(model_version: str = "v11", radar_takeoffs: bool = False, prior
     stop_distance=6.0,
     vEgoStopping=0.5,
     radar_takeoffs=radar_takeoffs,
-    prioritize_smooth_following=prioritize_smooth_following,
   )
 
 
@@ -408,6 +407,41 @@ def test_vision_untracked_approach_lift_ignores_unqualified_leads(lead):
   planner = LongitudinalPlanner(CP, init_v=v_ego)
 
   assert planner.get_vision_untracked_approach_lift_cap(lead, v_ego, 1.4) is None
+
+
+def test_vision_untracked_approach_lift_is_rate_limited_and_held():
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=25.0, init_a=0.5)
+  now = 0.0
+
+  cap = None
+  for _ in range(6):
+    now += planner.dt
+    cap = planner.update_vision_untracked_approach_lift_cap(0.0, 0.5, 0.5, now, True)
+
+  assert cap is not None
+  assert 0.45 < cap < 0.5
+
+  held_cap = planner.update_vision_untracked_approach_lift_cap(None, 0.5, 0.5, now + planner.dt, True)
+  assert held_cap is not None
+  assert held_cap < cap
+
+
+def test_vision_untracked_approach_lift_releases_after_hold_or_tracking():
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=25.0, init_a=0.5)
+  now = 0.0
+
+  for _ in range(6):
+    now += planner.dt
+    planner.update_vision_untracked_approach_lift_cap(0.0, 0.5, 0.5, now, True)
+
+  previous_cap = planner.untracked_vision_approach_lift_cap
+  now += planner.dt
+  releasing_cap = planner.update_vision_untracked_approach_lift_cap(None, 0.5, 0.5, now, False)
+
+  assert releasing_cap is not None
+  assert releasing_cap > previous_cap
 
 
 def test_far_opening_radar_brake_guard_removes_only_harmless_pulse():
@@ -3193,44 +3227,39 @@ def test_mild_follow_zero_cross_guard_skips_urgent_close_follow():
   assert guarded is None
 
 
-def test_prioritize_smooth_following_skips_post_097_follow_nudges():
+def test_post_097_follow_logic_is_always_active():
   v_ego = 16.2
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
   lead = make_lead(status=True, d_rel=33.4, v_lead=16.0, a_lead=0.0, radar=False, model_prob=0.99, y_rel=0.12)
 
-  def run_once(prioritize_smooth_following: bool) -> list[str]:
-    planner = LongitudinalPlanner(CP, init_v=v_ego)
-    sm = make_sm(
-      v_ego,
-      desired_accel=0.8,
-      min_accel=-0.5,
-      experimental_mode=False,
-      tracking_lead=True,
-      lead_one=lead,
-    )
-    sm["starpilotPlan"].vCruise = v_ego + 8.0
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  sm = make_sm(
+    v_ego,
+    desired_accel=0.8,
+    min_accel=-0.5,
+    experimental_mode=False,
+    tracking_lead=True,
+    lead_one=lead,
+  )
+  sm["starpilotPlan"].vCruise = v_ego + 8.0
 
-    calls = []
+  calls = []
 
-    def record(name, return_value=None):
-      def _inner(self, *args, **kwargs):
-        calls.append(name)
-        return return_value
-      return types.MethodType(_inner, planner)
+  def record(name, return_value=None):
+    def _inner(self, *args, **kwargs):
+      calls.append(name)
+      return return_value
+    return types.MethodType(_inner, planner)
 
-    planner.get_follow_control_lead = record("get_follow_control_lead", lead)
-    planner.get_lead_catchup_accel_cap = record("get_lead_catchup_accel_cap", None)
-    planner.get_tracked_vision_model_brake_floor = record("get_tracked_vision_model_brake_floor", None)
-    planner.get_low_speed_follow_transition_brake_cap = record("get_low_speed_follow_transition_brake_cap", None)
-    planner.get_tracked_vision_model_brake_cap = record("get_tracked_vision_model_brake_cap", None)
-    planner.get_cruise_tracking_lead_accel_cap = record("get_cruise_tracking_lead_accel_cap", None)
-    planner.get_cruise_tracking_lead_accel_transition_target = record("get_cruise_tracking_lead_accel_transition_target", None)
+  planner.get_follow_control_lead = record("get_follow_control_lead", lead)
+  planner.get_lead_catchup_accel_cap = record("get_lead_catchup_accel_cap", None)
+  planner.get_tracked_vision_model_brake_floor = record("get_tracked_vision_model_brake_floor", None)
+  planner.get_low_speed_follow_transition_brake_cap = record("get_low_speed_follow_transition_brake_cap", None)
+  planner.get_tracked_vision_model_brake_cap = record("get_tracked_vision_model_brake_cap", None)
+  planner.get_cruise_tracking_lead_accel_cap = record("get_cruise_tracking_lead_accel_cap", None)
+  planner.get_cruise_tracking_lead_accel_transition_target = record("get_cruise_tracking_lead_accel_transition_target", None)
 
-    planner.update(sm, make_toggles(prioritize_smooth_following=prioritize_smooth_following))
-    return calls
-
-  calls_default = run_once(False)
-  calls_smooth = run_once(True)
+  planner.update(sm, make_toggles())
 
   expected_calls = {
     "get_lead_catchup_accel_cap",
@@ -3242,8 +3271,7 @@ def test_prioritize_smooth_following_skips_post_097_follow_nudges():
     "get_cruise_tracking_lead_accel_transition_target",
   }
 
-  assert expected_calls.issubset(set(calls_default))
-  assert not expected_calls.intersection(set(calls_smooth))
+  assert expected_calls.issubset(set(calls))
 
 
 def test_near_duplicate_lead_source_hysteresis_prefers_previous_source():

@@ -368,6 +368,13 @@ class TestHyundaiFingerprint:
     assert palisade_2023.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CAN_CANFD_BLENDED
     assert palisade_2023.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CANCEL_BTN_ENABLE
 
+  @pytest.mark.parametrize("candidate", (CAR.HYUNDAI_ELANTRA_2024, CAR.HYUNDAI_ELANTRA_HEV_2024))
+  def test_hyundai_can_refresh_platforms_use_refresh_dbc_and_safety_param(self, candidate):
+    CP = CarInterface.get_params(candidate, gen_empty_fingerprint(), [], False, False, False, None)
+
+    assert DBC[CP.carFingerprint][Bus.pt] == "hyundai_can_refresh_generated"
+    assert CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CAN_REFRESH_MSGS
+
   def test_hyundai_lkas_button_sets_starpilot_safety_flag(self):
     fingerprint = gen_empty_fingerprint()
     fingerprint[0][0x391] = 8

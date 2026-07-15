@@ -73,16 +73,14 @@ def load_route_bookmarks(clip_root: Path, log_id: str) -> list[dict]:
   route_start_monotime = None
   raw_events: list[tuple[float, str]] = []
   for segment_dir in segment_dirs:
-    rlog_path = segment_dir / "rlog.zst"
-    if not rlog_path.exists():
-      rlog_path = segment_dir / "rlog.bz2"
-    if not rlog_path.exists():
+    log_path = next((segment_dir / name for name in ("rlog.zst", "rlog.bz2", "qlog.zst", "qlog.bz2") if (segment_dir / name).exists()), None)
+    if log_path is None:
       continue
 
     try:
-      events = list(log.Event.read_multiple_bytes(read_log_bytes(rlog_path)))
+      events = list(log.Event.read_multiple_bytes(read_log_bytes(log_path)))
     except Exception as exc:
-      print(f"{segment_dir.name}: skipping unreadable rlog {rlog_path.name}: {exc}")
+      print(f"{segment_dir.name}: skipping unreadable log {log_path.name}: {exc}")
       continue
     if not events:
       continue

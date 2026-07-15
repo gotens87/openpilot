@@ -177,6 +177,9 @@ VISION_UNTRACKED_APPROACH_LIFT_TRIGGER_TIME = 20.0
 VISION_UNTRACKED_APPROACH_LIFT_FULL_TIME = 6.0
 VISION_UNTRACKED_APPROACH_LIFT_MAX_ACCEL = 0.22
 VISION_UNTRACKED_APPROACH_LIFT_CONFIRM_TIME = 0.30
+VISION_UNTRACKED_APPROACH_LIFT_HOLD_TIME = 0.75
+VISION_UNTRACKED_APPROACH_LIFT_RATE_DOWN = 0.35
+VISION_UNTRACKED_APPROACH_LIFT_RATE_UP = 0.25
 VISION_SLOW_LEAD_MAX_SPEED = 5.0
 VISION_SLOW_LEAD_MIN_CLOSING_SPEED = 1.5
 VISION_SLOW_LEAD_TRIGGER_TTC = 4.5
@@ -626,6 +629,9 @@ class LongitudinalPlanner:
     self.vision_lead_approach_confirm_t = 0.0
     self.untracked_slow_lead_confirm_t = 0.0
     self.untracked_vision_approach_lift_confirm_t = 0.0
+    self.untracked_vision_approach_lift_cap = None
+    self.untracked_vision_approach_lift_target = None
+    self.untracked_vision_approach_lift_hold_until = 0.0
     self.manual_stop_resume_override_until = 0.0
     self.lead_depart_accel_hold_until = 0.0
     self.lead_depart_accel_hold_floor = None
@@ -939,6 +945,45 @@ class LongitudinalPlanner:
       [VISION_UNTRACKED_APPROACH_LIFT_FULL_TIME, VISION_UNTRACKED_APPROACH_LIFT_TRIGGER_TIME],
       [0.0, VISION_UNTRACKED_APPROACH_LIFT_MAX_ACCEL],
     ))
+
+  def update_vision_untracked_approach_lift_cap(self, raw_cap, output_a_target, prev_output_a_target,
+                                                now_t, untracked):
+    if untracked and raw_cap is not None:
+      if self.untracked_vision_approach_lift_cap is None:
+        self.untracked_vision_approach_lift_confirm_t = min(
+          self.untracked_vision_approach_lift_confirm_t + self.dt,
+          VISION_UNTRACKED_APPROACH_LIFT_CONFIRM_TIME,
+        )
+        if self.untracked_vision_approach_lift_confirm_t >= VISION_UNTRACKED_APPROACH_LIFT_CONFIRM_TIME:
+          self.untracked_vision_approach_lift_cap = float(prev_output_a_target)
+      if self.untracked_vision_approach_lift_cap is not None:
+        self.untracked_vision_approach_lift_target = float(raw_cap)
+        self.untracked_vision_approach_lift_hold_until = now_t + VISION_UNTRACKED_APPROACH_LIFT_HOLD_TIME
+    elif self.untracked_vision_approach_lift_cap is None:
+      self.untracked_vision_approach_lift_confirm_t = 0.0
+
+    active_cap = self.untracked_vision_approach_lift_cap
+    if active_cap is None:
+      return None
+
+    holding = untracked and now_t < self.untracked_vision_approach_lift_hold_until
+    target = self.untracked_vision_approach_lift_target if holding else float(output_a_target)
+    if target is None:
+      target = float(output_a_target)
+
+    lower = active_cap - VISION_UNTRACKED_APPROACH_LIFT_RATE_DOWN * self.dt
+    upper = active_cap + VISION_UNTRACKED_APPROACH_LIFT_RATE_UP * self.dt
+    active_cap = float(np.clip(target, lower, upper))
+    self.untracked_vision_approach_lift_cap = active_cap
+
+    if not holding and active_cap >= float(output_a_target) - 1e-6:
+      self.untracked_vision_approach_lift_confirm_t = 0.0
+      self.untracked_vision_approach_lift_cap = None
+      self.untracked_vision_approach_lift_target = None
+      self.untracked_vision_approach_lift_hold_until = 0.0
+      return None
+
+    return active_cap
 
   def get_vision_slow_stopped_lead_cap(self, lead, v_ego, accel_min, t_follow):
     if lead is None or not lead.status or bool(getattr(lead, "radar", False)):
@@ -2606,11 +2651,8 @@ class LongitudinalPlanner:
       uncert_slope > UNCERT_SLOPE_TRIG or uncertainty >= UNCERT_MAG_TRIG
     )
 
-    prioritize_smooth_following = bool(getattr(starpilot_toggles, "prioritize_smooth_following", False))
-    allow_complex_follow_logic = not prioritize_smooth_following
-
     steady_follow_filter_floor = 0.0
-    if allow_complex_follow_logic and lead_one_active and desired_gap is not None and not panic_bypass:
+    if lead_one_active and desired_gap is not None and not panic_bypass:
       lead_brake = max(0.0, -float(getattr(self.lead_one, "aLeadK", 0.0)))
       lead_radar = bool(getattr(self.lead_one, "radar", False))
       lead_prob = float(getattr(self.lead_one, "modelProb", 1.0 if lead_radar else 0.0))
@@ -2671,7 +2713,7 @@ class LongitudinalPlanner:
     self.mpc.update(sm['radarState'], v_cruise, x, v, a, j,
                     sm['starpilotPlan'].dangerFactor, effective_t_follow,
                     personality=personality, tracking_lead=lead_control_active,
-                    optional_far_lead_comfort=allow_complex_follow_logic)
+                    optional_far_lead_comfort=True)
 
     self.a_desired_trajectory_full = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.a_solution)
     self.v_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.v_solution)
@@ -2697,7 +2739,7 @@ class LongitudinalPlanner:
     self.v_desired_filter.x = self.v_desired_filter.x + self.dt * (self.a_desired + a_prev) / 2.0
 
     # Anticipatory pre-brake to avoid "coming in hot" when closing on a lead
-    if allow_complex_follow_logic and lead_one_active:
+    if lead_one_active:
       rel_v = max(0.0, v_ego - self.lead_one.vLead)
       # dynamic time headway adds a small buffer when uncertainty is elevated
       base_th = max(1.6, effective_t_follow)
@@ -2748,6 +2790,7 @@ class LongitudinalPlanner:
     output_accel_min = comfort_output_accel_min
     model_desired_accel = float(sm['modelV2'].action.desiredAcceleration)
 
+    raw_approach_lift_cap = None
     if not tracking_lead:
       approach_lift_caps = [
         cap for cap in (
@@ -2756,16 +2799,7 @@ class LongitudinalPlanner:
         ) if cap is not None
       ]
       if approach_lift_caps:
-        self.untracked_vision_approach_lift_confirm_t = min(
-          self.untracked_vision_approach_lift_confirm_t + self.dt,
-          VISION_UNTRACKED_APPROACH_LIFT_CONFIRM_TIME,
-        )
-        if self.untracked_vision_approach_lift_confirm_t >= VISION_UNTRACKED_APPROACH_LIFT_CONFIRM_TIME:
-          approach_lift_cap = min(approach_lift_caps)
-          self.a_desired = min(self.a_desired, approach_lift_cap)
-          output_a_target = min(output_a_target, approach_lift_cap)
-      else:
-        self.untracked_vision_approach_lift_confirm_t = 0.0
+        raw_approach_lift_cap = min(approach_lift_caps)
 
       pretracking_vision_caps = []
       for lead in (self.lead_one, self.lead_two):
@@ -2798,8 +2832,18 @@ class LongitudinalPlanner:
       else:
         self.untracked_slow_lead_confirm_t = 0.0
     else:
-      self.untracked_vision_approach_lift_confirm_t = 0.0
       self.untracked_slow_lead_confirm_t = 0.0
+
+    approach_lift_cap = self.update_vision_untracked_approach_lift_cap(
+      raw_approach_lift_cap,
+      output_a_target,
+      prev_output_a_target,
+      now_t,
+      not tracking_lead,
+    )
+    if approach_lift_cap is not None:
+      self.a_desired = min(self.a_desired, approach_lift_cap)
+      output_a_target = min(output_a_target, approach_lift_cap)
 
     close_lead_caps = []
     tracked_vision_approach_caps = []
@@ -3077,7 +3121,7 @@ class LongitudinalPlanner:
       if close_final_guard_caps:
         close_final_guard_cap = min(close_final_guard_caps)
 
-    if allow_complex_follow_logic and lead_one_active:
+    if lead_one_active:
       lead_catchup_accel_cap = self.get_lead_catchup_accel_cap(
         self.lead_one,
         scene_v_ego,
@@ -3098,17 +3142,15 @@ class LongitudinalPlanner:
     if vision_brake_cap_active:
       output_accel_min = min(output_accel_min, vision_cap_accel_min)
 
-    follow_control_lead = None
-    if allow_complex_follow_logic:
-      follow_control_lead = self.get_follow_control_lead(
-        lead_control_active,
-        scene_v_ego,
-        effective_t_follow,
-        allow_optional_far_lead_logic=True,
-      )
-    duplicate_vision_comfort_lead = self.get_duplicate_vision_comfort_lead(scene_v_ego) if allow_complex_follow_logic else None
+    follow_control_lead = self.get_follow_control_lead(
+      lead_control_active,
+      scene_v_ego,
+      effective_t_follow,
+      allow_optional_far_lead_logic=True,
+    )
+    duplicate_vision_comfort_lead = self.get_duplicate_vision_comfort_lead(scene_v_ego)
     comfort_follow_lead = duplicate_vision_comfort_lead if duplicate_vision_comfort_lead is not None and follow_control_lead is not None else follow_control_lead
-    if allow_complex_follow_logic and follow_control_lead is not None and not panic_bypass:
+    if follow_control_lead is not None and not panic_bypass:
       if not output_should_stop and not vision_low_speed_stop_active:
         tracked_vision_model_brake_floor = self.get_tracked_vision_model_brake_floor(
           follow_control_lead,
@@ -3121,11 +3163,10 @@ class LongitudinalPlanner:
           self.a_desired = min(self.a_desired, tracked_vision_model_brake_floor)
           output_a_target = min(output_a_target, tracked_vision_model_brake_floor)
 
-      if allow_complex_follow_logic:
-        matched_follow_brake_cap = self.get_matched_follow_brake_cap(follow_control_lead, scene_v_ego, effective_t_follow)
-        if matched_follow_brake_cap is not None:
-          self.a_desired = max(self.a_desired, matched_follow_brake_cap)
-          output_a_target = max(output_a_target, matched_follow_brake_cap)
+      matched_follow_brake_cap = self.get_matched_follow_brake_cap(follow_control_lead, scene_v_ego, effective_t_follow)
+      if matched_follow_brake_cap is not None:
+        self.a_desired = max(self.a_desired, matched_follow_brake_cap)
+        output_a_target = max(output_a_target, matched_follow_brake_cap)
 
       if not close_lead_caps and not output_should_stop and not vision_low_speed_stop_active:
         low_speed_transition_brake_cap = self.get_low_speed_follow_transition_brake_cap(
@@ -3142,13 +3183,13 @@ class LongitudinalPlanner:
     comfort_lead = duplicate_vision_comfort_lead if duplicate_vision_comfort_lead is not None else (
       self.lead_two if self.mpc.source == 'lead1' and self.lead_two.status else self.lead_one
     )
-    if allow_complex_follow_logic and comfort_lead is not None and not panic_bypass:
+    if comfort_lead is not None and not panic_bypass:
       far_lead_brake_cap = self.get_far_lead_brake_cap(comfort_lead, scene_v_ego, effective_t_follow)
       if far_lead_brake_cap is not None:
         self.a_desired = max(self.a_desired, far_lead_brake_cap)
         output_a_target = max(output_a_target, far_lead_brake_cap)
 
-    if allow_complex_follow_logic and follow_control_lead is not None and not panic_bypass and not output_should_stop and not vision_low_speed_stop_active:
+    if follow_control_lead is not None and not panic_bypass and not output_should_stop and not vision_low_speed_stop_active:
       tracked_vision_model_brake_cap = self.get_tracked_vision_model_brake_cap(
         follow_control_lead,
         scene_v_ego,
@@ -3159,7 +3200,7 @@ class LongitudinalPlanner:
         self.a_desired = max(self.a_desired, tracked_vision_model_brake_cap)
         output_a_target = max(output_a_target, tracked_vision_model_brake_cap)
 
-    if allow_complex_follow_logic and comfort_follow_lead is not None and not panic_bypass and not output_should_stop and not vision_low_speed_stop_active:
+    if comfort_follow_lead is not None and not panic_bypass and not output_should_stop and not vision_low_speed_stop_active:
       matched_follow_transition_target = self.get_matched_follow_transition_target(
         comfort_follow_lead,
         scene_v_ego,
@@ -3176,7 +3217,7 @@ class LongitudinalPlanner:
           self.a_desired = max(self.a_desired, matched_follow_transition_target)
         output_a_target = matched_follow_transition_target
 
-    if allow_complex_follow_logic and comfort_lead is not None and not panic_bypass and not output_should_stop and not vision_low_speed_stop_active:
+    if comfort_lead is not None and not panic_bypass and not output_should_stop and not vision_low_speed_stop_active:
       near_duplicate_transition_target = self.get_near_duplicate_lead_transition_target(
         comfort_lead,
         scene_v_ego,
@@ -3209,7 +3250,7 @@ class LongitudinalPlanner:
           self.a_desired = max(self.a_desired, duplicate_slow_lead_brake_hold_target)
         output_a_target = duplicate_slow_lead_brake_hold_target
 
-    if allow_complex_follow_logic and comfort_follow_lead is not None and not panic_bypass and not output_should_stop and not vision_low_speed_stop_active:
+    if comfort_follow_lead is not None and not panic_bypass and not output_should_stop and not vision_low_speed_stop_active:
       cruise_tracking_lead_accel_cap = self.get_cruise_tracking_lead_accel_cap(
         comfort_follow_lead,
         scene_v_ego,

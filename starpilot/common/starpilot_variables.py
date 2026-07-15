@@ -20,6 +20,7 @@ from opendbc.car.hyundai.values import CAR as HYUNDAI_CAR, EV_CAR as HYUNDAI_EV_
 from opendbc.car.interfaces import TORQUE_SUBSTITUTE_PATH, CarInterfaceBase, GearShifter
 from opendbc.car.mock.values import CAR as MOCK
 from opendbc.car.subaru.values import SubaruFlags
+from opendbc.car.tesla.values import CAR as TESLA_CAR
 from opendbc.car.toyota.values import CAR as TOYOTA_CAR, ToyotaStarPilotFlags
 from openpilot.common.basedir import BASEDIR
 from openpilot.common.constants import CV
@@ -585,6 +586,8 @@ class StarPilotVariables:
   def update(self, holiday_theme="stock", started=False):
     toggle = self.starpilot_toggles
     toggle.tuning_level = self.params.get("TuningLevel") if self.params.get_bool("TuningLevelConfirmed") else TUNING_LEVELS["ADVANCED"]
+    # CarParams uses this value to select the matching Panda safety configuration.
+    toggle.tesla_cooperative_steering = self.params.get_bool("TeslaCoopSteering")
 
     fallback_platform = GM_CAR.CHEVROLET_BOLT_ACC_2022_2023 if HARDWARE.get_device_type() == "pc" else MOCK.MOCK
 
@@ -1170,13 +1173,6 @@ class StarPilotVariables:
     else:
       toggle.custom_accel_profile_values = [custom_accel_defaults[key] for key in CUSTOM_ACCEL_PROFILE_PARAM_KEYS]
     toggle.human_acceleration = self.get_value("HumanAcceleration", condition=longitudinal_tuning)
-    toggle.prioritize_smooth_following = self.get_value("PrioritizeSmoothFollowing", condition=longitudinal_tuning)
-    if longitudinal_tuning and self.params_raw.get("PrioritizeSmoothFollowing") is None:
-      legacy_coast_value = self.params_raw.get("CoastUpToLeads")
-      if legacy_coast_value is not None:
-        toggle.prioritize_smooth_following = not self.params_raw.get_bool("CoastUpToLeads")
-      else:
-        toggle.prioritize_smooth_following = False
     toggle.human_lane_changes = has_radar and self.get_value("HumanLaneChanges", condition=longitudinal_tuning)
     toggle.nav_longitudinal_allowed = toggle.openpilot_longitudinal and self.get_value("NavLongitudinalAllowed", condition=longitudinal_tuning)
     # Keep lead detection sensitivity normalized even when longitudinal tuning is disabled.
@@ -1413,6 +1409,11 @@ class StarPilotVariables:
 
     toggle.subaru_sng = self.get_value("SubaruSNG", condition=toggle.car_make == "subaru" and not (CP.flags & SubaruFlags.GLOBAL_GEN2 or CP.flags & SubaruFlags.HYBRID))
     toggle.subaru_sng_manual_parking_brake = self.get_value("SubaruSNGManualParkingBrake", condition=toggle.subaru_sng)
+
+    toggle.tesla_cooperative_steering = self.get_value(
+      "TeslaCoopSteering",
+      condition=toggle.car_make == "tesla" and toggle.car_model == TESLA_CAR.TESLA_MODEL_3,
+    )
 
     toggle.tethering_config = self.get_value("TetheringEnabled", cast=float)
 

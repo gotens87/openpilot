@@ -103,6 +103,7 @@ class HyundaiSafetyFlags(IntFlag):
   NON_SCC = 4096
   CAN_CANFD_BLENDED = 8192
   CANCEL_BTN_ENABLE = 16384
+  CAN_REFRESH_MSGS = 32768
   CCNC = 32768
 
 
@@ -219,6 +220,11 @@ class HyundaiPlatformConfig(PlatformConfig):
 
 
 @dataclass
+class HyundaiRefreshPlatformConfig(HyundaiPlatformConfig):
+  dbc_dict: DbcDict = field(default_factory=lambda: {Bus.pt: "hyundai_can_refresh_generated"})
+
+
+@dataclass
 class HyundaiCanFDPlatformConfig(PlatformConfig):
   dbc_dict: DbcDict = field(default_factory=lambda: {Bus.pt: "hyundai_canfd_generated"})
   radar_dbc: str | None = None
@@ -289,7 +295,7 @@ class CAR(Platforms):
     CarSpecs(mass=2800 * CV.LB_TO_KG, wheelbase=2.72, steerRatio=12.9, tireStiffnessFactor=0.65),
     flags=HyundaiFlags.CHECKSUM_CRC8,
   )
-  HYUNDAI_ELANTRA_2024 = HyundaiPlatformConfig(
+  HYUNDAI_ELANTRA_2024 = HyundaiRefreshPlatformConfig(
     [HyundaiCarDocs("Hyundai Elantra 2024-25", car_parts=CarParts.common([CarHarness.hyundai_k]))],
     CarSpecs(mass=2797 * CV.LB_TO_KG, wheelbase=2.72, steerRatio=12.9, tireStiffnessFactor=0.65),
     flags=HyundaiFlags.CHECKSUM_CRC8 | HyundaiFlags.CAMERA_SCC,
@@ -300,7 +306,7 @@ class CAR(Platforms):
     CarSpecs(mass=3017 * CV.LB_TO_KG, wheelbase=2.72, steerRatio=12.9, tireStiffnessFactor=0.65),
     flags=HyundaiFlags.CHECKSUM_CRC8 | HyundaiFlags.HYBRID,
   )
-  HYUNDAI_ELANTRA_HEV_2024 = HyundaiPlatformConfig(
+  HYUNDAI_ELANTRA_HEV_2024 = HyundaiRefreshPlatformConfig(
     [
       HyundaiCarDocs("Hyundai Elantra Hybrid 2024-26", car_parts=CarParts.common([CarHarness.hyundai_k])),
       HyundaiCarDocs("Hyundai i30 Hybrid 2024", car_parts=CarParts.common([CarHarness.hyundai_k])),

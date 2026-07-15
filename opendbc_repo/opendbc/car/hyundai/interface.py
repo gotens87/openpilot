@@ -176,6 +176,8 @@ class CarInterface(CarInterfaceBase):
 
       if ret.flags & HyundaiFlags.CAMERA_SCC:
         ret.safetyConfigs[0].safetyParam |= HyundaiSafetyFlags.CAMERA_SCC.value
+      if candidate in (CAR.HYUNDAI_ELANTRA_2024, CAR.HYUNDAI_ELANTRA_HEV_2024):
+        ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CAN_REFRESH_MSGS.value
 
       # These cars expose an LKAS/LFA steering-wheel button that StarPilot can customize.
       if 0x391 in fingerprint[0] or ret.flags & HyundaiFlags.CAN_CANFD_BLENDED:
