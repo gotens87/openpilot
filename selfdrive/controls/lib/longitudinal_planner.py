@@ -3134,9 +3134,9 @@ class LongitudinalPlanner:
         output_a_target = min(output_a_target, lead_catchup_accel_cap)
 
     if lead_control_active and np.isfinite(v_cruise) and any(lead.status for lead in (self.lead_one, self.lead_two)):
-      # Keep follow/catchup behavior from pulling past the cruise target. Using the
-      # same action horizon as the planner preserves normal accel farther below set speed.
-      cruise_accel_cap = (v_cruise - v_ego + 0.01) / max(action_t, self.dt)
+      # This is only an acceleration cap. A negative cap would manufacture hard
+      # braking on abrupt cruise-target drops instead of letting the MPC decelerate.
+      cruise_accel_cap = max(0.0, (v_cruise - v_ego + 0.01) / max(action_t, self.dt))
       output_a_target = min(output_a_target, cruise_accel_cap)
 
     if vision_brake_cap_active:

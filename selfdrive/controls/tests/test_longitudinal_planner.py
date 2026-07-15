@@ -230,6 +230,73 @@ def test_acc_mode_matches_no_lead_baseline_for_far_vision_only_lead_without_trac
   np.testing.assert_allclose(far_vision_outputs, no_lead_outputs, atol=1e-6)
 
 
+def test_cruise_accel_cap_does_not_manufacture_braking_after_set_speed_drop_with_lead():
+  v_ego = 20.115
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead_one = make_lead(
+    status=True,
+    d_rel=68.95,
+    v_lead=18.74,
+    a_lead=-0.32,
+    radar=True,
+    model_prob=0.991,
+    y_rel=-0.15,
+  )
+  lead_two = make_lead(
+    status=True,
+    d_rel=68.95,
+    v_lead=18.74,
+    a_lead=-0.32,
+    radar=True,
+    model_prob=0.993,
+    y_rel=-0.15,
+  )
+  sm = make_sm(
+    v_ego,
+    desired_accel=-0.05,
+    min_accel=-1.0,
+    experimental_mode=True,
+    tracking_lead=True,
+    lead_one=lead_one,
+    lead_two=lead_two,
+  )
+  sm["starpilotPlan"].vCruise = 15.646
+  sm["starpilotPlan"].tFollow = 1.0
+
+  planner.update(sm, make_toggles())
+
+  assert planner.output_a_target > -1.0
+  assert planner.output_a_target <= 0.0
+
+
+def test_cruise_accel_cap_preserves_close_lead_braking_after_set_speed_drop():
+  v_ego = 20.115
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  sm = make_sm(
+    v_ego,
+    desired_accel=-0.05,
+    min_accel=-1.0,
+    experimental_mode=True,
+    tracking_lead=True,
+    lead_one=make_lead(
+      status=True,
+      d_rel=20.0,
+      v_lead=0.0,
+      a_lead=-1.0,
+      radar=True,
+      model_prob=0.99,
+    ),
+  )
+  sm["starpilotPlan"].vCruise = 15.646
+  sm["starpilotPlan"].tFollow = 1.0
+
+  planner.update(sm, make_toggles())
+
+  assert planner.output_a_target <= -3.0
+
+
 def test_soften_far_radar_lead_accel_reduces_gentle_far_brake():
   softened = soften_far_radar_lead_accel(114.8, 28.88, -0.75, 29.26, 1.45, radar=True)
   assert softened > -0.35

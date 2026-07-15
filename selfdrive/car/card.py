@@ -22,7 +22,10 @@ from opendbc.car.interfaces import CarInterfaceBase, RadarInterfaceBase
 from opendbc.safety import ALTERNATIVE_EXPERIENCE
 from openpilot.selfdrive.pandad import can_capnp_to_list, can_list_to_can_capnp
 from openpilot.common.constants import CV
-from openpilot.selfdrive.car.cruise import VCruiseHelper, IMPERIAL_INCREMENT, V_CRUISE_MAX, V_CRUISE_MIN
+from openpilot.selfdrive.car.cruise import (
+  VCruiseHelper, IMPERIAL_INCREMENT, V_CRUISE_MAX, V_CRUISE_MIN,
+  is_speed_limit_confirmation_pending,
+)
 from openpilot.selfdrive.car.redneck_cruise import RedneckCruise, select_redneck_target_speed
 from openpilot.selfdrive.car.car_specific import MockCarState
 
@@ -232,11 +235,12 @@ class Car:
       self.CP.openpilotLongitudinalControl and not self.CP.pcmCruise
     )
     if not preap_software_cruise:
+      speed_limit_confirmation_pending = is_speed_limit_confirmation_pending(self.sm['starpilotPlan'])
       self.v_cruise_helper.update_v_cruise(
         CS,
         self.sm['carControl'].enabled,
         self.is_metric,
-        self.sm['starpilotPlan'].speedLimitChanged,
+        speed_limit_confirmation_pending,
         self.starpilot_toggles,
         FPCS,
       )
