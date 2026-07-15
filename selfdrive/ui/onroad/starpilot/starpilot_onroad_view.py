@@ -472,12 +472,12 @@ class StarPilotOnroadView(AugmentedRoadView):
     sz = measure_text_cached(font, road_name, font_size)
 
     pad_x = 24
-    pad_y = 8
+    pad_y = 5
     pill_w = sz.x + pad_x * 2
     pill_h = font_size + pad_y * 2
 
     cx = self._content_rect.x + self._content_rect.width / 2
-    by = self._content_rect.y + self._content_rect.height - pill_h - 20
+    by = self._content_rect.y + self._content_rect.height - pill_h - 16
 
     pill = rl.Rectangle(cx - pill_w / 2, by, pill_w, pill_h)
     rl.draw_rectangle_rounded(pill, 0.4, 8, rl.Color(0, 0, 0, 166))
