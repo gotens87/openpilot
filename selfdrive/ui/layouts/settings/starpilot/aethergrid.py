@@ -626,6 +626,7 @@ class PanelManagerView(AetherInteractiveMixin, Widget):
     self._page_drag_start_x = 0.0
     self._page_drag_start_y = 0.0
     self._page_clip_rect: rl.Rectangle | None = None
+    self._max_page_size = 0
 
   # ── hooks ─────────────────────────────────────────────────
 
@@ -804,6 +805,9 @@ class PanelManagerView(AetherInteractiveMixin, Widget):
     self._toggle_pages = pages
     self._page_count = max(1, len(pages))
     self._current_page = 0
+    self._max_page_size = max(len(p) for p in pages) if self._page_count > 1 else 0
+    if self._page_grid is not None and self._page_count <= 1:
+      self._page_grid._tile_height = None
     self._on_page_changed()
 
   def _get_page_defs(self) -> list:
@@ -859,6 +863,12 @@ class PanelManagerView(AetherInteractiveMixin, Widget):
     self._page_clip_rect = clip_rect
 
     grid_rect = rl.Rectangle(rect.x, rect.y, rect.width, max(0.0, rect.height - pagination_padding))
+
+    if self._has_pagination and grid._tile_height is None and self._max_page_size > 0:
+      cols = grid.get_effective_column_count(grid_rect.width, self._max_page_size)
+      rows = (self._max_page_size + cols - 1) // cols
+      grid._tile_height = max(grid.min_tile_height or 0,
+                              (grid_rect.height - (rows - 1) * grid.gap) / rows)
 
     # active drag
     if self._page_drag_active:
@@ -5759,7 +5769,7 @@ class TileGrid(Widget):
           tile_h = min(self.max_tile_height, tile_h)
       uniform_tile_w = (rect.width - (self._gap * (cols - 1))) / cols if self._uniform_width else 0
     content_height = rows * tile_h + max(0, rows - 1) * self._gap
-    y_offset = max(0, (rect.height - content_height) / 2)
+    y_offset = 0
     tile_idx = 0
     for r in range(rows):
       remaining = count - tile_idx
