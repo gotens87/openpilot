@@ -779,6 +779,7 @@ class PanelManagerView(AetherInteractiveMixin, Widget):
   PAGE_COMMIT_RATIO = 0.20
   PAGE_ANIM_DURATION = 0.28
   PAGE_SNAP_DURATION = 0.20
+  PAGE_INDICATOR_HEIGHT = 44
 
 
 
@@ -789,7 +790,7 @@ class PanelManagerView(AetherInteractiveMixin, Widget):
   def measure_page_grid_height(self, grid: TileGrid, width: float) -> float:
     h = grid.measure_height(width)
     if self._has_pagination:
-      h += 32
+      h += self.PAGE_INDICATOR_HEIGHT
     return h
 
   def register_page_grid(self, grid: TileGrid) -> None:
@@ -850,7 +851,7 @@ class PanelManagerView(AetherInteractiveMixin, Widget):
     self._page_anim_from = from_offset
 
   def _render_page_grid(self, grid: TileGrid, rect: rl.Rectangle, clip_rect: rl.Rectangle | None = None) -> None:
-    pagination_padding = 32.0 if self._has_pagination else 0.0
+    pagination_padding = self.PAGE_INDICATOR_HEIGHT if self._has_pagination else 0.0
 
     if clip_rect is None:
       clip_rect = rl.Rectangle(rect.x - self.GRID_PADDING, rect.y - self.GRID_PADDING,
