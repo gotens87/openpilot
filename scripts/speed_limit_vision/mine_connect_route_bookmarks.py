@@ -101,6 +101,8 @@ def load_route_bookmarks(clip_root: Path, log_id: str) -> list[dict]:
       if event_type == "userBookmark":
         deduped[-1]["event_type"] = event_type
         deduped[-1]["route_time_s"] = route_time_s
+        deduped[-1]["segment"] = max(int(route_time_s // 60.0), 0)
+        deduped[-1]["segment_offset_s"] = route_time_s - deduped[-1]["segment"] * 60.0
       continue
 
     segment = max(int(route_time_s // 60.0), 0)
