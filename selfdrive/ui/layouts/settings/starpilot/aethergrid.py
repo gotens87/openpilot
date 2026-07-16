@@ -2057,7 +2057,7 @@ def draw_list_group_shell(
   *,
   fill: rl.Color | None = None,
   border: rl.Color | None = None,
-  radius: float = 0.055,
+  radius: float = 0.08,
   segments: int = 18,
   style: PanelStyle = DEFAULT_PANEL_STYLE,
 ):
@@ -3424,7 +3424,7 @@ class AetherSettingsView(PanelManagerView):
         pressed=pressed,
         is_last=is_last,
         show_chevron=row.on_click is not None,
-        title_size=34, subtitle_size=22, value_size=28,
+        title_size=41, subtitle_size=28, value_size=34,
         style=self._panel_style,
       )
     elif row.type == "action":
@@ -3440,8 +3440,8 @@ class AetherSettingsView(PanelManagerView):
         pressed=pressed,
         is_last=is_last,
         action_pill=True,
-        title_size=34, subtitle_size=22,
-        action_pill_height=AETHER_LIST_METRICS.toggle_height, action_text_size=24,
+        title_size=41, subtitle_size=28,
+        action_pill_height=AETHER_LIST_METRICS.toggle_height, action_text_size=28,
         action_text_color=action_text_color,
         action_fill=action_fill,
         action_border=action_border,
@@ -3485,19 +3485,14 @@ class CardHubManagerView(AetherSettingsView):
     def _render(self, rect: rl.Rectangle):
         self.set_rect(rect)
         self._interactive_rects.clear()
-        mx = float(self._metrics.outer_margin_x)
-        my = float(self._metrics.outer_margin_y)
-        grid_x = rect.x + mx
-        grid_y = rect.y + my
-        grid_w = rect.width - mx * 2
-        grid_h = rect.y + rect.height - grid_y - my
-        self._scroll_rect = rl.Rectangle(grid_x, grid_y, grid_w, grid_h)
-        self._content_height = grid_h
+        frame, scroll_rect, content_width = init_list_panel(rect, self._panel_style, self._metrics)
+        self._scroll_rect = scroll_rect
+        self._content_height = scroll_rect.height
         self._scroll_panel.set_enabled(self.is_visible)
         self._scroll_offset = self._scroll_panel.update(
-            self._scroll_rect, self._scroll_rect.height)
+            scroll_rect, scroll_rect.height)
         self._scroll_offset = 0.0
-        self._draw_scroll_content(self._scroll_rect, self._scroll_rect.width)
+        self._draw_scroll_content(scroll_rect, content_width)
 
     def _draw_scroll_content(self, rect: rl.Rectangle, width: float):
         y = rect.y + self._scroll_offset

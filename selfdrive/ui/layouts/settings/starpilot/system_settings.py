@@ -551,15 +551,15 @@ class SystemSettingsManagerView(PanelManagerView):
       adj_container_h = self._system_max_container_h
 
       draw_list_group_shell(rl.Rectangle(x, y, column_w, adj_container_h), style=PANEL_STYLE)
-      
+
       current_y = y + 4
-      current_y = draw_group_header(x + 24, current_y, column_w - 48, tr("DISPLAY"))
+      current_y = draw_group_header(x + 24, current_y, column_w - 48, tr("Display"))
       for index, key in enumerate(self._display_slider_keys):
         current_y = self._draw_slider_row(rl.Rectangle(x, current_y, column_w, 0), key, is_last=index == len(self._display_slider_keys) - 1)
         
       current_y += SECTION_GAP
       
-      current_y = draw_group_header(x + 24, current_y, column_w - 48, tr("POWER"))
+      current_y = draw_group_header(x + 24, current_y, column_w - 48, tr("Power"))
       for index, key in enumerate(self._power_slider_keys):
         current_y = self._draw_slider_row(rl.Rectangle(x, current_y, column_w, 0), key, is_last=index == len(self._power_slider_keys) - 1)
 

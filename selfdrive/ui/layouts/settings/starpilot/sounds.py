@@ -259,7 +259,7 @@ class SoundsManagerView(AdjustorTogglesPanelView):
 
   def _draw_utility_column(self, y: float, x: float, width: float):
     draw_list_group_shell(rl.Rectangle(x, y, width, self._tiles_container_h), style=PANEL_STYLE)
-    header_y = draw_group_header(x + 24, y + 4, width - 48, tr("ALERTS"))
+    header_y = draw_group_header(x + 24, y + 4, width - 48, tr("Alerts"))
     avail_h = self._tiles_container_h - (header_y - y)
     self._render_page_grid(self._toggle_grid, rl.Rectangle(x + 12, header_y, width - 24, max(0.0, avail_h - 12)))
 
