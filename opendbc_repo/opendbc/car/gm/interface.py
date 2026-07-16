@@ -497,7 +497,7 @@ class CarInterface(CarInterfaceBase):
       ret.steerActuatorDelay = 0.2
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 
-    elif candidate == CAR.CADILLAC_XT4:
+    elif candidate in (CAR.CADILLAC_XT4, CAR.CADILLAC_XT4_CC):
       ret.steerActuatorDelay = 0.2
       if not ret.openpilotLongitudinalControl:
         ret.minEnableSpeed = -1.
