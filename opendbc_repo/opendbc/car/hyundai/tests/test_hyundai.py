@@ -352,6 +352,24 @@ class TestHyundaiFingerprint:
     assert CP.flags & HyundaiFlags.HYBRID
     assert CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.HYBRID_GAS
 
+  def test_carnival_2025_hda2_detects_alternate_buttons(self):
+    fingerprint = gen_empty_fingerprint()
+    CAN = CanBus(None, fingerprint)
+    fingerprint[CAN.CAM] = {0x110: 32}
+    fingerprint[1] = {0x1aa: 16}
+
+    carnival_cp = CarInterface.get_params(CAR.KIA_CARNIVAL_2025, fingerprint, [], False, False, False, None)
+    assert carnival_cp.flags & HyundaiFlags.CANFD_LKA_STEERING_ALT
+    assert carnival_cp.flags & HyundaiFlags.CANFD_ALT_BUTTONS
+    assert carnival_cp.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CANFD_ALT_BUTTONS
+
+    carnival_state = CarState(carnival_cp, None)
+    pt_states = {state.name for state in carnival_state.get_can_parsers(carnival_cp)[Bus.pt].message_states.values()}
+    assert "CRUISE_BUTTONS" not in pt_states
+
+    k4_cp = CarInterface.get_params(CAR.KIA_K4_2025, fingerprint, [], False, False, False, None)
+    assert not (k4_cp.flags & HyundaiFlags.CANFD_ALT_BUTTONS)
+
   def test_ioniq_6_hda1_layout_stays_non_lka(self):
     fingerprint = gen_empty_fingerprint()
     fingerprint[1] = {0x100: 8, 0x110: 8}
