@@ -211,11 +211,7 @@ def get_stopped_equivalence_factor(v_lead):
   return (v_lead**2) / (2 * COMFORT_BRAKE)
 
 def get_safe_obstacle_distance(v_ego, t_follow):
-  from openpilot.common.params import Params
-  params = Params()
-  stop_str = params.get("StopDistance", encoding="utf8")
-  stop_distance = float(stop_str) if stop_str else STOP_DISTANCE
-  return (v_ego**2) / (2 * COMFORT_BRAKE) + t_follow * v_ego + stop_distance
+  return (v_ego**2) / (2 * COMFORT_BRAKE) + t_follow * v_ego + STOP_DISTANCE
 
 def desired_follow_distance(v_ego, v_lead, t_follow=None):
   if t_follow is None:

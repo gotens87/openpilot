@@ -128,7 +128,6 @@ def make_toggles(model_version: str = "v11", radar_takeoffs: bool = False):
     classic_model=False,
     tinygrad_model=True,
     model_version=model_version,
-    stop_distance=6.0,
     vEgoStopping=0.5,
     radar_takeoffs=radar_takeoffs,
   )

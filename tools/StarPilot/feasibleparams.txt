@@ -343,7 +343,6 @@ SteerRatioStock
 StockConfidenceBallWidget
 StopAccel
 StopAccelStock
-StopDistance
 StoppedTimer
 StoppingDecelRate
 StoppingDecelRateStock

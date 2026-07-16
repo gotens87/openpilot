@@ -252,8 +252,6 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
         self._controller._on_scores_clicked()
       elif action == "recovery_power":
         self._controller._on_recovery_power_clicked()
-      elif action == "stop_distance":
-        self._controller._on_stop_distance_clicked()
       return
 
   def _render(self, rect: rl.Rectangle):
@@ -963,13 +961,6 @@ class StarPilotDrivingModelLayout(_SettingsPage):
           "type": "value",
           "value": f"{self._params.get_float('RecoveryPower'):.1f}x",
         },
-        {
-          "id": "stop_distance",
-          "title": tr("Stop Distance"),
-          "subtitle": tr("Preferred gap held at a complete stop."),
-          "type": "value",
-          "value": f"{self._params.get_float('StopDistance'):.1f}m",
-        },
       ]
     )
 
@@ -1099,9 +1090,6 @@ class StarPilotDrivingModelLayout(_SettingsPage):
 
   def _on_recovery_power_clicked(self):
     self._show_slider("RecoveryPower", 0.5, 2.0, step=0.1, unit="x", value_type="float", title="Recovery Power", color=PANEL_STYLE.accent)
-
-  def _on_stop_distance_clicked(self):
-    self._show_slider("StopDistance", 4.0, 10.0, step=0.1, unit="m", value_type="float", title="Stop Distance", color=PANEL_STYLE.accent)
 
   def _on_blacklist_clicked(self):
     blacklisted = [m.strip() for m in (self._params.get("BlacklistedModels", encoding="utf-8") or "").split(",") if m.strip()]

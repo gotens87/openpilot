@@ -204,7 +204,7 @@ class StarPilotPlanner:
     self.road_curvature_detected = (1 / abs(self.road_curvature))**0.5 < v_ego > CRUISING_SPEED and not (sm["carState"].leftBlinker or sm["carState"].rightBlinker)
 
     if not sm["carState"].standstill:
-      self.tracking_lead = self.update_lead_status(v_ego, starpilot_toggles.stop_distance)
+      self.tracking_lead = self.update_lead_status(v_ego)
 
     self.starpilot_following.update(controls_enabled, v_ego, sm, starpilot_toggles)
 
@@ -231,12 +231,12 @@ class StarPilotPlanner:
     else:
       self.starpilot_weather.weather_id = 0
 
-  def update_lead_status(self, v_ego, stop_distance=STOP_DISTANCE):
+  def update_lead_status(self, v_ego):
     following_lead = should_track_lead(
       self.lead_one.status,
       self.lead_one.dRel,
       self.model_length,
-      stop_distance,
+      STOP_DISTANCE,
       v_ego,
       v_lead=self.lead_one.vLead,
       radar=bool(getattr(self.lead_one, "radar", False)),
@@ -247,7 +247,7 @@ class StarPilotPlanner:
         self.lead_one.status,
         self.lead_one.dRel,
         self.model_length,
-        stop_distance,
+        STOP_DISTANCE,
         v_ego,
         model_prob=float(getattr(self.lead_one, "modelProb", 0.0)),
         y_rel=float(getattr(self.lead_one, "yRel", 0.0)),

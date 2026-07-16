@@ -902,11 +902,6 @@ _TROUBLESHOOT_SECTION_DEFINITIONS = [
     "keys": _TROUBLESHOOT_PERSONALITY_KEYS,
   },
   {
-    "id": "model_stop_distance",
-    "title": "Model Stop Distance",
-    "keys": ["StopDistance"],
-  },
-  {
     "id": "cem_settings",
     "title": "CEM Settings",
     "keys": _TROUBLESHOOT_CEM_KEYS,

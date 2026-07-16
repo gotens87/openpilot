@@ -76,7 +76,6 @@ SAFE_MODE_MANAGED_KEYS = (
   "HumanLaneChanges",
   "LeadDetectionThreshold",
   "RecoveryPower",
-  "StopDistance",
   "TacoTune",
   "QOLLongitudinal",
   "ForceStops",

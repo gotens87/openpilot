@@ -108,7 +108,6 @@ class Plant:
       classic_model=False,
       tinygrad_model=True,
       model_version="v11",
-      stop_distance=6.0,
       longitudinalActuatorDelay=0.2,
       vEgoStopping=0.5,
     )

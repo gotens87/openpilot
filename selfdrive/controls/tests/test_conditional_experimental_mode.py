@@ -963,7 +963,6 @@ def test_starpilot_planner_updates_cem_with_current_frame_state(monkeypatch):
       minimum_lane_change_speed=100.0,
       pause_lateral_below_speed=0.0,
       pause_lateral_below_signal=False,
-      stop_distance=6.0,
       weather_presets=False,
     )
 

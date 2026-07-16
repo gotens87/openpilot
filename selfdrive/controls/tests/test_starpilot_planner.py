@@ -27,7 +27,6 @@ def make_toggles(**overrides):
     "pause_lateral_below_signal": True,
     "pause_lateral_signal_delay": 0.0,
     "set_speed_offset": 0,
-    "stop_distance": 6.0,
     "weather_presets": False,
   }
   defaults.update(overrides)
@@ -136,7 +135,7 @@ def test_radarless_follow_hold_applies_to_tracked_vision_lead(monkeypatch):
       radar=False,
     )
 
-    planner.update_lead_status(27.5, stop_distance=6.0)
+    planner.update_lead_status(27.5)
     assert planner.radarless_follow_hold_until > 100.0
   finally:
     planner.shutdown()
@@ -159,7 +158,7 @@ def test_tracked_vision_lead_uses_exit_hysteresis_at_mid_speed():
       radar=False,
     )
 
-    assert planner.update_lead_status(16.8, stop_distance=6.0)
+    assert planner.update_lead_status(16.8)
   finally:
     planner.shutdown()
 
@@ -179,6 +178,6 @@ def test_untracked_vision_lead_still_uses_strict_entry_gate():
       radar=False,
     )
 
-    assert not planner.update_lead_status(16.8, stop_distance=6.0)
+    assert not planner.update_lead_status(16.8)
   finally:
     planner.shutdown()

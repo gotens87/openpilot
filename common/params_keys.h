@@ -599,7 +599,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"StopAccel", {PERSISTENT, FLOAT, "0.0", "0.0", 3}},
     {"StopAccelStock", {PERSISTENT, FLOAT, "0.0", "0.0", 3}},
     {"StoppedTimer", {PERSISTENT, BOOL, "0", "0", 1}},
-    {"StopDistance", {PERSISTENT, FLOAT, "6.0", "6.0", 2}},
     {"StoppingDecelRate", {PERSISTENT, FLOAT, "0.0", "0.0", 3}},
     {"StoppingDecelRateStock", {PERSISTENT, FLOAT, "0.0", "0.0", 3}},
     {"StarButtonControl", {PERSISTENT, INT, "0", "0", 2}},
