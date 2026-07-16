@@ -717,6 +717,20 @@ class TestHyundaiFingerprint:
     assert exact
     assert matches == {CAR.HYUNDAI_ELANTRA_HEV_2024}
 
+  def test_kia_carnival_2025_canadian_route_fw_exact_matches(self):
+    route_fw = {
+      (Ecu.fwdCamera, 0x7c4): b'\xf1\x00KA4 MFC  AT CAN LHD 1.00 1.00 99210-R0700 250324',
+      (Ecu.fwdRadar, 0x7d0): b'\xf1\x00KA4_ RDR -----      1.00 1.01 99110-R0510         ',
+    }
+    car_fw = [
+      CarParams.CarFw(ecu=ecu, fwVersion=version, address=address, subAddress=0, brand="hyundai")
+      for (ecu, address), version in route_fw.items()
+    ]
+
+    exact, matches = match_fw_to_car(car_fw, "", allow_exact=True, allow_fuzzy=False, log=False)
+    assert exact
+    assert matches == {CAR.KIA_CARNIVAL_2025}
+
   def test_kona_non_scc_fca_radar_fw_is_optional(self):
     fw_versions = FW_VERSIONS[CAR.HYUNDAI_KONA_NON_SCC]
     car_fw = [
