@@ -47,6 +47,7 @@ class WritableFakeParams:
   def __init__(self, values=None):
     self.values = dict(values or {})
     self.writes = []
+    self.removals = []
 
   def get(self, key, encoding=None, default=None, block=False):
     del encoding, block
@@ -65,6 +66,10 @@ class WritableFakeParams:
   def put_bool(self, key, value):
     self.writes.append((key, bool(value)))
     self.values[key] = bool(value)
+
+  def remove(self, key):
+    self.removals.append(key)
+    self.values.pop(key, None)
 
 
 def _params_client(monkeypatch, values, device_type):
@@ -236,3 +241,40 @@ def test_legacy_try_raylib_ui_payload_updates_use_old_ui(monkeypatch):
   assert fake_params.values["UseOldUI"] is False
   assert fake_params.values["TryRaylibUI"] is True
   assert fake_params.writes == [("UseOldUI", False), ("TryRaylibUI", True)]
+
+
+def test_curve_speed_controller_reset_clears_learned_data_offroad(monkeypatch):
+  client, fake_params = _params_client(monkeypatch, {
+    "IsOnroad": False,
+    "CalibratedLateralAcceleration": 2.73,
+    "CalibrationProgress": 48.0,
+    "CurvatureData": {"0.01": {"average": 2.73, "count": 12}},
+  }, "tici")
+
+  response = client.post("/api/curve_speed_controller/reset")
+
+  assert response.status_code == 200
+  assert response.get_json()["updated"] == {
+    "CalibratedLateralAcceleration": 2.0,
+    "CalibrationProgress": 0.0,
+  }
+  assert fake_params.values["CalibratedLateralAcceleration"] == 2.0
+  assert "CalibrationProgress" not in fake_params.values
+  assert "CurvatureData" not in fake_params.values
+  assert fake_params.removals == ["CalibrationProgress", "CurvatureData"]
+
+
+def test_curve_speed_controller_reset_rejected_onroad(monkeypatch):
+  client, fake_params = _params_client(monkeypatch, {
+    "IsOnroad": True,
+    "CalibratedLateralAcceleration": 2.73,
+    "CalibrationProgress": 48.0,
+    "CurvatureData": {"0.01": {"average": 2.73, "count": 12}},
+  }, "tici")
+
+  response = client.post("/api/curve_speed_controller/reset")
+
+  assert response.status_code == 403
+  assert response.get_json()["error"] == "Curve Speed Controller data can only be reset while parked."
+  assert fake_params.writes == []
+  assert fake_params.removals == []

@@ -627,6 +627,16 @@
         "parent_key": "CurveSpeedController"
       },
       {
+        "key": "ResetCurveData",
+        "label": "Reset Curve Data",
+        "description": "Clear learned Curve Speed Controller data and begin training again from the default lateral acceleration.",
+        "ui_type": "action",
+        "action_label": "Reset",
+        "action_endpoint": "/api/curve_speed_controller/reset",
+        "confirm_message": "Reset all learned Curve Speed Controller data? Training will restart from the default value.",
+        "parent_key": "CurveSpeedController"
+      },
+      {
         "key": "CustomPersonalities",
         "label": "Driving Personalities",
         "description": "Customize the \"Driving Personalities\" to better match your driving style.",

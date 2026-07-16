@@ -4539,6 +4539,23 @@ def setup(app):
       return canonical_model_key(str(value).strip()), 200
     return value, 200
 
+  @app.route("/api/curve_speed_controller/reset", methods=["POST"])
+  def reset_curve_speed_controller_data():
+    if params.get_bool("IsOnroad"):
+      return jsonify({"error": "Curve Speed Controller data can only be reset while parked."}), 403
+
+    params.put("CalibratedLateralAcceleration", 2.0)
+    params.remove("CalibrationProgress")
+    params.remove("CurvatureData")
+
+    return jsonify({
+      "message": "Curve Speed Controller data reset. Training will restart on the next drive.",
+      "updated": {
+        "CalibratedLateralAcceleration": 2.0,
+        "CalibrationProgress": 0.0,
+      },
+    }), 200
+
   @app.route("/api/params/all", methods=["GET"])
   def get_all_params():
     migrate_cancel_button_controls(params)

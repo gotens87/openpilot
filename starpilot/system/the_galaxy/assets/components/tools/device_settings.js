@@ -36,6 +36,7 @@ const state = reactive({
   fetched: false,
   activeSectionSlug: "",
   numericUpdating: {},
+  actionUpdating: {},
   favoriteLoading: false,
   favoriteSaving: false,
   favoriteOptions: [],
@@ -860,6 +861,35 @@ async function resetNumericParam(param) {
   })
 }
 
+async function runSettingAction(param) {
+  const key = String(param?.key || "")
+  const endpoint = String(param?.action_endpoint || "")
+  if (!key || !endpoint || state.actionUpdating[key]) return
+
+  const confirmation = String(param?.confirm_message || `Run ${param?.label || key}?`)
+  if (!window.confirm(confirmation)) return
+
+  state.actionUpdating = { ...state.actionUpdating, [key]: true }
+  try {
+    const response = await fetch(endpoint, { method: "POST" })
+    const payload = await response.json()
+    if (!response.ok) {
+      throw new Error(payload.error || response.statusText || "Action failed")
+    }
+
+    const updated = payload.updated && typeof payload.updated === "object" ? payload.updated : {}
+    state.values = { ...state.values, ...updated }
+    showParamSnackbar(payload.message || `${param?.label || key} completed.`)
+    scheduleSyncInputs()
+  } catch (error) {
+    showParamSnackbar(error?.message || `${param?.label || key} failed.`, "error")
+  } finally {
+    const next = { ...state.actionUpdating }
+    delete next[key]
+    state.actionUpdating = next
+  }
+}
+
 async function updateParam(key, elType) {
   if (String(key).toLowerCase() === "starpilotfavoriteslots") {
     await saveFavoriteSlots(state.favoriteSlots)
@@ -1230,6 +1260,7 @@ function renderSettingRow(p) {
 
   const isNumeric = p.ui_type === "numeric"
   const isColor = p.ui_type === "color"
+  const isAction = p.ui_type === "action"
   const isGroup = isGroupParam(p)
   const isChild = p.parent_key ? "ds-child-modifier" : ""
   const lockReason = () => getSettingLockReason(p)
@@ -1238,7 +1269,16 @@ function renderSettingRow(p) {
   const flmTrialSummary = p.key === "AdvancedLateralTune" ? getFlmTrialSummary() : null
   let rowControl = ""
 
-  if (isNumeric) {
+  if (isAction) {
+    rowControl = html`
+      <button
+        class="ds-reset-btn"
+        disabled="${() => isLocked() || !!state.actionUpdating[p.key]}"
+        @click="${() => runSettingAction(p)}">
+        ${() => state.actionUpdating[p.key] ? "Resetting..." : (p.action_label || "Run")}
+      </button>
+    `
+  } else if (isNumeric) {
     rowControl = html`
       <div class="ds-stepper-container">
         ${(() => {
