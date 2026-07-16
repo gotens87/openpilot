@@ -583,7 +583,7 @@ class StarPilotVariables:
       self.params.put_float("SteerDelay", full_stock_delay)
     self.params.put_bool(STEER_DELAY_MODE_MIGRATION_KEY, True)
 
-  def update(self, holiday_theme="stock", started=False):
+  def update(self, holiday_theme="stock", started=False, clear_update_flag=True):
     toggle = self.starpilot_toggles
     toggle.tuning_level = self.params.get("TuningLevel") if self.params.get_bool("TuningLevelConfirmed") else TUNING_LEVELS["ADVANCED"]
     # CarParams uses this value to select the matching Panda safety configuration.
@@ -1446,4 +1446,5 @@ class StarPilotVariables:
     toggle.volt_sng = self.get_value("VoltSNG", condition=toggle.car_model in LEGACY_VOLT_STOCK_ACC_CARS)
 
     process_starpilot_toggles.cache_clear()
-    self.params_memory.remove("StarPilotTogglesUpdated")
+    if clear_update_flag:
+      self.params_memory.remove("StarPilotTogglesUpdated")
