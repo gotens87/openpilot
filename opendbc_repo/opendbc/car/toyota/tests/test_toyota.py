@@ -8,7 +8,8 @@ from opendbc.can import CANPacker, CANParser
 from opendbc.car.structs import CarParams
 from opendbc.car.fw_versions import build_fw_dict
 from opendbc.car.toyota import toyotacan
-from opendbc.car.toyota.carcontroller import CarController, get_long_tune, get_prius_positive_feedforward_scale, limit_interceptor_pcm_accel, \
+from opendbc.car.toyota.carcontroller import CarController, get_camry_hybrid_feedforward, get_long_tune, get_prius_positive_feedforward_scale, \
+                                             limit_interceptor_pcm_accel, \
                                              limit_interceptor_stopping_accel, limit_no_lead_cruise_sign_flip, \
                                              limit_prius_stopping_accel, update_permit_braking
 from opendbc.car.toyota.carstate import CarState, LKAS_BUTTON_CAR, calculate_interceptor_gas_pressed, create_lkas_button_events
@@ -164,7 +165,7 @@ class TestToyotaInterfaces:
     controller = get_long_tune(car_params, SimpleNamespace(ACCEL_MIN=-3.5, ACCEL_MAX=2.0))
     controller.speed = 0.0
     assert controller.k_i == pytest.approx(0.5)
-    assert controller.k_f == pytest.approx(0.8)
+    assert controller.k_f == pytest.approx(1.0)
 
     radar_interface = RadarInterface(car_params)
     assert radar_interface.radar_acc_tssp
@@ -463,6 +464,10 @@ class TestToyotaCarController:
   def test_prius_positive_feedforward_scale_restores_cruise_authority(self):
     assert get_prius_positive_feedforward_scale(20.0) > get_prius_positive_feedforward_scale(8.0)
     assert abs(get_prius_positive_feedforward_scale(20.0) - 1.0) < 1e-6
+
+  def test_camry_hybrid_feedforward_only_softens_acceleration(self):
+    assert get_camry_hybrid_feedforward(1.0) == pytest.approx(0.8)
+    assert get_camry_hybrid_feedforward(-2.0) == pytest.approx(-2.0)
 
   def test_sng_hack_clears_existing_standstill_latch(self):
     controller = self._make_controller(standstill_req=True, last_standstill=True)
