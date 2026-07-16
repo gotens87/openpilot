@@ -11,7 +11,7 @@ from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.widgets import DialogResult, Widget
 from openpilot.system.ui.widgets.option_dialog import MultiOptionDialog
-from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import TileGrid, HubTile, ToggleTile, ValueTile, SliderTile, SPACING, AetherSliderDialog, AetherTransitionManager
+from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import TileGrid, HubTile, ToggleTile, ValueTile, SliderTile, SPACING, AetherSliderDialog, AetherTransitionManager, AetherListColors
 from openpilot.selfdrive.ui.layouts.settings.starpilot.sectioned_panel import SectionedTileLayout, TileSection
 import time
 
@@ -92,11 +92,8 @@ class StarPilotPanelType(IntEnum):
     LATERAL = 4
     MAPS = 5
     DEVICE = 6
-    UTILITIES = 7
     VISUALS = 8
-    THEMES = 9
     VEHICLE = 10
-    WHEEL = 11
     SYSTEM = 12
 
 
@@ -349,7 +346,7 @@ class _SettingsPage(StarPilotPanel):
   shared slider and selector dialog helpers.
   """
 
-  SLIDER_COLOR = "#8B5CF6"
+  SLIDER_COLOR = AetherListColors.PRIMARY
 
   def __init__(self):
     super().__init__()

@@ -1033,6 +1033,71 @@ class PanelManagerView(AetherInteractiveMixin, Widget):
       self._on_page_changed()
 
 
+# ═══════════════════════════════════════════════════════════════
+# AdjustorTogglesPanelView — shared adjustor+toggle-grid base
+# ═══════════════════════════════════════════════════════════════
+
+class AdjustorTogglesPanelView(PanelManagerView):
+    """PanelManagerView with AetherAdjustorRow sliders + paginated toggles.
+
+    Subclasses must set ``self._adjustor_rows``, ``self._toggle_grid``,
+    and call ``super().__init__()``.  May override ``_get_active_elements()``
+    to control which children receive mouse events.
+    """
+
+    @property
+    def vertical_scrolling_disabled(self) -> bool:
+        return True
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._pressed_target: str | None = None
+        self._adjustor_rows: dict[str, AetherAdjustorRow] = {}
+        self._can_click = True
+        self._active_adjustor_key = None
+
+    def _set_active_adjustor(self, key: str, active: bool):
+        if active:
+            if self._active_adjustor_key and self._active_adjustor_key != key:
+                old = self._adjustor_rows.get(self._active_adjustor_key)
+                if old:
+                    old.reset_interaction()
+            self._active_adjustor_key = key
+        elif self._active_adjustor_key == key:
+            self._active_adjustor_key = None
+
+    def show_event(self):
+        super().show_event()
+        self._pressed_target = None
+        self._can_click = True
+
+    def hide_event(self):
+        super().hide_event()
+        self._pressed_target = None
+        self._can_click = True
+
+    def _get_active_elements(self):
+        elems = list(self._adjustor_rows.values())
+        if hasattr(self, '_toggle_grid'):
+            elems.append(self._toggle_grid)
+        return elems
+
+    def _handle_mouse_press(self, mouse_pos):
+        super()._handle_mouse_press(mouse_pos)
+        for el in self._get_active_elements():
+            el._handle_mouse_press(mouse_pos)
+
+    def _handle_mouse_release(self, mouse_pos):
+        for el in self._get_active_elements():
+            el._handle_mouse_release(mouse_pos)
+        super()._handle_mouse_release(mouse_pos)
+
+    def _handle_mouse_event(self, mouse_event):
+        super()._handle_mouse_event(mouse_event)
+        for el in self._get_active_elements():
+            el._handle_mouse_event(mouse_event)
+
+
 class BreadcrumbController:
   EXPAND_DURATION: float = 2.5
 
@@ -3380,8 +3445,64 @@ class AetherSettingsView(PanelManagerView):
         action_text_color=action_text_color,
         action_fill=action_fill,
         action_border=action_border,
-        row_separator=self._panel_style.divider_color,
+          row_separator=self._panel_style.divider_color,
       )
+
+
+# ═══════════════════════════════════════════════════════════════
+# CardHubManagerView — shared HubTile card-grid landing page
+# ═══════════════════════════════════════════════════════════════
+
+class CardHubManagerView(AetherSettingsView):
+    """AetherSettingsView that renders a TileGrid of HubTile navigation cards.
+
+    Subclasses override ``_build_cards()`` to return a list of card dicts
+    with keys ``title``, ``desc``, ``icon``, ``on_click``.
+    """
+
+    @property
+    def vertical_scrolling_disabled(self) -> bool:
+        return True
+
+    def __init__(self, controller, sections, *, columns=3, padding=SPACING.tile_gap, **kwargs):
+        super().__init__(controller, sections, **kwargs)
+        self._grid = TileGrid(columns=columns, padding=padding)
+        self._grid.set_touch_valid_callback(lambda: self._scroll_panel.is_touch_valid())
+        self._child(self._grid)
+        self._init_cards()
+
+    def _init_cards(self):
+        self._grid.clear()
+        for d in self._build_cards():
+            self._grid.add_tile(HubTile(
+                title=d["title"], desc=d["desc"], icon_key=d["icon"],
+                on_click=d["on_click"],
+            ))
+
+    def _build_cards(self) -> list[dict]:
+        raise NotImplementedError
+
+    def _render(self, rect: rl.Rectangle):
+        self.set_rect(rect)
+        self._interactive_rects.clear()
+        mx = float(self._metrics.outer_margin_x)
+        my = float(self._metrics.outer_margin_y)
+        grid_x = rect.x + mx
+        grid_y = rect.y + my
+        grid_w = rect.width - mx * 2
+        grid_h = rect.y + rect.height - grid_y - my
+        self._scroll_rect = rl.Rectangle(grid_x, grid_y, grid_w, grid_h)
+        self._content_height = grid_h
+        self._scroll_panel.set_enabled(self.is_visible)
+        self._scroll_offset = self._scroll_panel.update(
+            self._scroll_rect, self._scroll_rect.height)
+        self._scroll_offset = 0.0
+        self._draw_scroll_content(self._scroll_rect, self._scroll_rect.width)
+
+    def _draw_scroll_content(self, rect: rl.Rectangle, width: float):
+        y = rect.y + self._scroll_offset
+        self._grid.set_parent_rect(self._scroll_rect)
+        self._grid.render(rl.Rectangle(rect.x, y, width, rect.height))
 
 
 def draw_back_button(pill_rect: rl.Rectangle, center_y: float, pressed: bool, hovered: bool) -> rl.Rectangle:

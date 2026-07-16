@@ -15,6 +15,7 @@ from openpilot.system.ui.widgets.confirm_dialog import ConfirmDialog, alert_dial
 from openpilot.system.ui.widgets.option_dialog import MultiOptionDialog
 from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import _SettingsPage
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
+  AETHER_LIST_METRICS,
   AetherSliderDialog,
   COMPACT_PANEL_METRICS,
   DEFAULT_PANEL_STYLE,
@@ -73,7 +74,7 @@ def _lock_doors_timer_labels():
   return labels
 
 
-SECTION_GAP = 28
+SECTION_GAP = AETHER_LIST_METRICS.section_gap
 ROW_HEIGHT = 125.0
 PANEL_STYLE = DEFAULT_PANEL_STYLE
 
@@ -275,7 +276,7 @@ class VehicleSettingsManagerView(PanelManagerView):
         row_y += self._left_row_height
 
       if steering_rows:
-        row_y = draw_group_header(rect.x + 24, row_y, col_w - 48, tr("STEERING CONTROLS"))
+        row_y = draw_group_header(rect.x + 24, row_y, col_w - 48, tr("Steering Controls"))
         for i, row in enumerate(steering_rows):
           self._draw_row(rl.Rectangle(rect.x, row_y, col_w, self._left_row_height),
                          row, i == len(steering_rows) - 1)

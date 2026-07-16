@@ -17,6 +17,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import _SettingsPag
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AETHER_LIST_METRICS,
   COMPACT_PANEL_METRICS,
+  AdjustorTogglesPanelView,
   AetherAdjustorRow,
   AetherListColors,
   PanelManagerView,
@@ -44,7 +45,7 @@ SOUNDS_PANEL_METRICS = replace(
 
 
 
-class SoundsManagerView(PanelManagerView):
+class SoundsManagerView(AdjustorTogglesPanelView):
   METRICS = SOUNDS_PANEL_METRICS
 
   @property
@@ -54,9 +55,6 @@ class SoundsManagerView(PanelManagerView):
   def __init__(self, controller: StarPilotSoundsLayout):
     super().__init__()
     self._controller = controller
-    self._pressed_target: str | None = None
-    self._adjustor_rows: dict[str, AetherAdjustorRow] = {}
-    self._can_click = True
     self._reset_rect = rl.Rectangle(0, 0, 0, 0)
 
     self._tile_grid_h = 0.0
@@ -92,16 +90,6 @@ class SoundsManagerView(PanelManagerView):
 
     page_size = self._compute_page_size(TOGGLE_ROW_HEIGHT)
     self._set_toggle_pages([toggle_defs[i:i+page_size] for i in range(0, len(toggle_defs), page_size)])
-
-  def _set_active_adjustor(self, key: str, active: bool):
-    if active:
-      if self._active_adjustor_key and self._active_adjustor_key != key:
-        old = self._adjustor_rows.get(self._active_adjustor_key)
-        if old:
-          old.reset_interaction()
-      self._active_adjustor_key = key
-    elif self._active_adjustor_key == key:
-      self._active_adjustor_key = None
 
   def _init_adjustors(self):
     for key in self._controller.VOLUME_KEYS:
@@ -199,24 +187,6 @@ class SoundsManagerView(PanelManagerView):
       )
     )
 
-  def _handle_mouse_press(self, mouse_pos: MousePos):
-    super()._handle_mouse_press(mouse_pos)
-    for adjustor in self._adjustor_rows.values():
-      adjustor._handle_mouse_press(mouse_pos)
-    self._toggle_grid._handle_mouse_press(mouse_pos)
-
-  def _handle_mouse_release(self, mouse_pos: MousePos):
-    for adjustor in self._adjustor_rows.values():
-      adjustor._handle_mouse_release(mouse_pos)
-    self._toggle_grid._handle_mouse_release(mouse_pos)
-    super()._handle_mouse_release(mouse_pos)
-
-  def _handle_mouse_event(self, mouse_event: MouseEvent):
-    super()._handle_mouse_event(mouse_event)
-    for adjustor in self._adjustor_rows.values():
-      adjustor._handle_mouse_event(mouse_event)
-    self._toggle_grid._handle_mouse_event(mouse_event)
-
   def _target_at(self, mouse_pos: MousePos) -> str | None:
     if point_hits(mouse_pos, self._reset_rect, None, pad_x=6, pad_y=0):
       return "action:restore_defaults"
@@ -225,16 +195,6 @@ class SoundsManagerView(PanelManagerView):
   def _activate_target(self, target: str):
     if target == "action:restore_defaults":
       self._controller._restore_defaults()
-
-  def show_event(self):
-    super().show_event()
-    self._pressed_target = None
-    self._can_click = True
-
-  def hide_event(self):
-    super().hide_event()
-    self._pressed_target = None
-    self._can_click = True
 
   def _measure_content_height(self, content_width: float) -> float:
     col_width = (content_width - SECTION_GAP) / 2

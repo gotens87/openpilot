@@ -18,6 +18,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import _SettingsPag
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AETHER_LIST_METRICS,
   COMPACT_PANEL_METRICS,
+  AdjustorTogglesPanelView,
   AetherAdjustorRow,
   AetherSegmentedControl,
   AetherSliderDialog,
@@ -27,12 +28,14 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   SettingRow,
   SettingSection,
   AetherSettingsView,
+  CardHubManagerView,
   TileGrid,
   HubTile,
   TOGGLE_MIN_HEIGHT,
   TOGGLE_ROW_HEIGHT,
   RowToggleTile,
   ToggleTile,
+  SPACING,
   draw_section_header,
   draw_list_group_shell,
   SECTION_GAP,
@@ -88,7 +91,7 @@ class AdaptiveSpeedView(Widget):
     super().__init__()
     self._header_title = tr_noop("Adaptive Speed Controls")
     self._controller = controller
-    self._grid = TileGrid(columns=2, padding=12)
+    self._grid = TileGrid(columns=2, padding=SPACING.tile_gap)
     self._child(self._grid)
 
     self._grid.add_tile(HubTile(
@@ -96,7 +99,6 @@ class AdaptiveSpeedView(Widget):
       desc=tr("Configure automated switching between Experimental and Chill Modes based on set conditions."),
       icon_key="steering",
       on_click=lambda: controller._navigate_to("ce"),
-      bg_color="#8B5CF6",
     ))
 
     self._grid.add_tile(HubTile(
@@ -104,130 +106,68 @@ class AdaptiveSpeedView(Widget):
       desc=tr("Configure speed control on curves and reset collected calibration data."),
       icon_key="navigate",
       on_click=lambda: controller._navigate_to("csc"),
-      bg_color="#8B5CF6",
     ))
 
   def _render(self, rect: rl.Rectangle):
-    margin_x = 10.0
-    margin_y = 10.0
-    grid_x = rect.x + margin_x
-    grid_y = rect.y + margin_y
-    grid_w = rect.width - margin_x * 2
-    grid_h = rect.y + rect.height - grid_y - margin_y
+    mx = float(AETHER_LIST_METRICS.outer_margin_x)
+    my = float(AETHER_LIST_METRICS.outer_margin_y)
+    grid_x = rect.x + mx
+    grid_y = rect.y + my
+    grid_w = rect.width - mx * 2
+    grid_h = rect.y + rect.height - grid_y - my
     self._grid.render(rl.Rectangle(grid_x, grid_y, grid_w, grid_h))
 
 
 # ═══════════════════════════════════════════════════════════════
-# LongitudinalManagerView — main category grid
+# LongitudinalManagerView — 6-card category hub
 # ═══════════════════════════════════════════════════════════════
 
-class LongitudinalManagerView(AetherSettingsView):
-  @property
-  def vertical_scrolling_disabled(self) -> bool:
-    return True
-
+class LongitudinalManagerView(CardHubManagerView):
   def __init__(self, controller, sections, **kwargs):
     super().__init__(controller, sections, **kwargs)
-    self._main_grid = TileGrid(columns=3, padding=12)
-    self._main_grid.set_touch_valid_callback(lambda: self._scroll_panel.is_touch_valid())
-    self._child(self._main_grid)
 
-    self._init_toggles()
-
-  def _init_toggles(self):
-    hero_data = [
+  def _build_cards(self):
+    return [
       {
         "title": tr("Longitudinal Tuning"),
         "desc": tr("Configure acceleration profiles, lane changes, and route speed control."),
         "icon": "steering",
-        "color": "#8B5CF6",
-        "on_click": lambda: self._controller._navigate_to("tune")
+        "on_click": lambda: self._controller._navigate_to("tune"),
       },
       {
         "title": tr("Advanced Actuators"),
         "desc": tr("Adjust actuator delay, EV/Truck tuning, and launch/stop speeds/rates."),
         "icon": "vehicle",
-        "color": "#8B5CF6",
-        "on_click": lambda: self._controller._navigate_to("advanced")
+        "on_click": lambda: self._controller._navigate_to("advanced"),
       },
       {
         "title": tr("Speed Limit Controller"),
         "desc": tr("Manage auto speed matching, confirmation, offsets, and source priority."),
         "icon": "navigate",
-        "color": "#8B5CF6",
-        "on_click": lambda: self._controller._navigate_to("slc")
+        "on_click": lambda: self._controller._navigate_to("slc"),
       },
-    ]
-
-    standard_data = [
       {
         "title": tr("Adaptive Speed Controls"),
         "desc": tr("Configure Curve Speed Controller and Conditional Experimental Mode triggers."),
         "icon": "display",
-        "color": "#8B5CF6",
-        "on_click": lambda: self._controller._navigate_to("adaptive_speed")
+        "on_click": lambda: self._controller._navigate_to("adaptive_speed"),
       },
       {
         "title": tr("Driving Personalities"),
         "desc": tr("Customize follow distance and jerk/response metrics for each personality profile."),
         "icon": "system",
-        "color": "#8B5CF6",
-        "on_click": lambda: self._controller._navigate_to("personality")
+        "on_click": lambda: self._controller._navigate_to("personality"),
       },
       {
         "title": tr("Quality of Life"),
         "desc": tr("Configure cruise intervals, standstill behaviors, gear mapping, and weather presets."),
         "icon": "sound",
-        "color": "#8B5CF6",
-        "on_click": lambda: self._controller._navigate_to("daily")
+        "on_click": lambda: self._controller._navigate_to("daily"),
       },
     ]
 
-    all_data = hero_data + standard_data
-    self._main_grid.clear()
-    for d in all_data:
-      self._main_grid.add_tile(
-        HubTile(
-          title=d["title"],
-          desc=d["desc"],
-          icon_key=d["icon"],
-          on_click=d["on_click"],
-          bg_color=d["color"],
-        )
-      )
 
-  def _render(self, rect: rl.Rectangle):
-    self.set_rect(rect)
-    self._interactive_rects.clear()
-
-    margin_x = 10.0
-    margin_y = 10.0
-
-    grid_x = rect.x + margin_x
-    grid_y = rect.y + margin_y
-    grid_w = rect.width - margin_x * 2
-    grid_h = rect.y + rect.height - grid_y - margin_y
-
-    self._scroll_rect = rl.Rectangle(grid_x, grid_y, grid_w, grid_h)
-    self._content_height = grid_h
-
-    self._scroll_panel.set_enabled(self.is_visible)
-    self._scroll_offset = self._scroll_panel.update(
-      self._scroll_rect, self._scroll_rect.height
-    )
-
-    if self.vertical_scrolling_disabled:
-      self._scroll_offset = 0.0
-
-    self._draw_scroll_content(self._scroll_rect, self._scroll_rect.width)
-
-  def _draw_scroll_content(self, rect: rl.Rectangle, width: float):
-    y = rect.y + self._scroll_offset
-    self._main_grid.set_parent_rect(self._scroll_rect)
-    self._main_grid.render(rl.Rectangle(rect.x, y, width, rect.height))
-
-
-class ConditionalDriveModeView(PanelManagerView):
+class ConditionalDriveModeView(AdjustorTogglesPanelView):
   METRICS = COMPACT_PANEL_METRICS
   TAB_HEIGHT = 98
   TAB_BOTTOM_GAP = 26
@@ -240,18 +180,10 @@ class ConditionalDriveModeView(PanelManagerView):
     super().__init__()
     self._header_title = tr("Conditional Drive Mode")
     self._controller = controller
-    self._pressed_target: str | None = None
-    self._adjustor_rows: dict[str, AetherAdjustorRow] = {}
-    self._can_click = True
-    self._active_adjustor_key = None
 
     self._init_segmented_control()
     self._init_adjustors()
     self._init_toggles()
-    self._forward_touch_valid()
-
-  def _forward_touch_valid(self):
-    pass
 
   def _init_segmented_control(self):
     self._drive_mode_control = self._child(
@@ -343,16 +275,6 @@ class ConditionalDriveModeView(PanelManagerView):
       
     return cls(**kwargs)
 
-  def _set_active_adjustor(self, key: str, active: bool):
-    if active:
-      if self._active_adjustor_key and self._active_adjustor_key != key:
-        old = self._adjustor_rows.get(self._active_adjustor_key)
-        if old:
-          old.reset_interaction()
-      self._active_adjustor_key = key
-    elif self._active_adjustor_key == key:
-      self._active_adjustor_key = None
-
   def _init_adjustors(self):
     speed_unit = self._controller._speed_unit()
     is_metric = self._controller._is_metric()
@@ -416,16 +338,6 @@ class ConditionalDriveModeView(PanelManagerView):
       on_close=on_close, presets=[float(p) for p in spec["presets"]],
       unit=spec["unit"], labels=spec["labels"], color=PANEL_STYLE.accent
     ))
-
-  def show_event(self):
-    super().show_event()
-    self._pressed_target = None
-    self._can_click = True
-
-  def hide_event(self):
-    super().hide_event()
-    self._pressed_target = None
-    self._can_click = True
 
   def _draw_header(self, rect: rl.Rectangle):
     pass
@@ -539,30 +451,13 @@ class ConditionalDriveModeView(PanelManagerView):
 
   def _get_active_elements(self):
     mode = self._get_drive_mode_index()
+    elems = [self._drive_mode_control]
     if mode == 1:
-      return [self._adjustor_rows[k] for k in self._cem_keys] + [self._toggle_grid]
+      elems += [self._adjustor_rows[k] for k in self._cem_keys]
     elif mode == 2:
-      return [self._adjustor_rows[k] for k in self._ccm_keys] + [self._toggle_grid]
-    return []
-
-  def _handle_mouse_press(self, mouse_pos: MousePos):
-    super()._handle_mouse_press(mouse_pos)
-    for el in self._get_active_elements():
-      el._handle_mouse_press(mouse_pos)
-    self._drive_mode_control._handle_mouse_press(mouse_pos)
-
-  def _handle_mouse_release(self, mouse_pos: MousePos):
-    for el in self._get_active_elements():
-      el._handle_mouse_release(mouse_pos)
-    self._drive_mode_control._handle_mouse_release(mouse_pos)
-    super()._handle_mouse_release(mouse_pos)
-
-  def _handle_mouse_event(self, mouse_event: MouseEvent):
-    super()._handle_mouse_event(mouse_event)
-    for el in self._get_active_elements():
-      el._handle_mouse_event(mouse_event)
-    self._drive_mode_control._handle_mouse_event(mouse_event)
-
+      elems += [self._adjustor_rows[k] for k in self._ccm_keys]
+    elems.append(self._toggle_grid)
+    return elems
 
 
 # ═══════════════════════════════════════════════════════════════
