@@ -64,6 +64,8 @@ class ToyotaFlags(IntFlag):
   # Detected flags
   HYBRID = 1
   DISABLE_RADAR = 4
+  # The DSU's ACC messages are rerouted through the camera bus by an adapter.
+  DSU_BYPASS = 8192
 
   # Static flags
   TSS2 = 8

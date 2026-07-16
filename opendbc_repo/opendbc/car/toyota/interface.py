@@ -60,6 +60,12 @@ class CarInterface(CarInterfaceBase):
       # sDSU / radar filter hardware needs the Toyota safety long-filter TX set.
       ret.safetyConfigs[0].safetyParam |= ToyotaSafetyFlags.LONG_FILTER.value
 
+    # A DSU bypass adapter reroutes the stock DSU messages to the camera bus.
+    # These messages are normally absent there on pre-TSS2 platforms.
+    camera_fingerprint = fingerprint.get(2, {})
+    if not use_sdsu and candidate not in TSS2_CAR and (0x343 in camera_fingerprint or 0x4CB in camera_fingerprint):
+      ret.flags |= ToyotaFlags.DSU_BYPASS.value
+
     # In TSS2 cars, the camera does long control
     found_ecus = [fw.ecu for fw in car_fw]
 
@@ -137,6 +143,7 @@ class CarInterface(CarInterfaceBase):
     #  - TSS2 radar ACC cars (disables radar)
 
     ret.openpilotLongitudinalControl = (use_sdsu or
+                                        bool(ret.flags & ToyotaFlags.DSU_BYPASS.value) or
                                         candidate in (TSS2_CAR - RADAR_ACC_CAR) or
                                         bool(ret.flags & ToyotaFlags.DISABLE_RADAR.value))
 

@@ -11,7 +11,7 @@ from opendbc.car.toyota import toyotacan
 from opendbc.car.toyota.carcontroller import CarController, get_long_tune, get_prius_positive_feedforward_scale, limit_interceptor_pcm_accel, \
                                              limit_interceptor_stopping_accel, limit_no_lead_cruise_sign_flip, \
                                              limit_prius_stopping_accel, update_permit_braking
-from opendbc.car.toyota.carstate import LKAS_BUTTON_CAR, calculate_interceptor_gas_pressed, create_lkas_button_events
+from opendbc.car.toyota.carstate import CarState, LKAS_BUTTON_CAR, calculate_interceptor_gas_pressed, create_lkas_button_events
 from opendbc.car.toyota.fingerprints import FW_VERSIONS
 from opendbc.car.toyota.interface import CarInterface
 from opendbc.car.toyota.radar_interface import RadarInterface, TSSP_RADAR_EGO_SPEED_SCALE
@@ -81,6 +81,63 @@ class TestToyotaInterfaces:
     assert abs(car_params.longitudinalActuatorDelay - 0.05) < 1e-6
     assert abs(car_params.vEgoStopping - 0.25) < 1e-6
     assert abs(car_params.vEgoStarting - 0.25) < 1e-6
+
+  @pytest.mark.parametrize("camera_message", [0x343, 0x4CB])
+  def test_dsu_bypass_enables_longitudinal(self, camera_message):
+    fingerprint = {bus: {} for bus in range(8)}
+    fingerprint[2][camera_message] = 8
+
+    car_params = CarInterface.get_params(
+      CAR.TOYOTA_COROLLA,
+      fingerprint,
+      [],
+      alpha_long=False,
+      is_release=False,
+      docs=False,
+      starpilot_toggles=SimpleNamespace(),
+    )
+
+    assert car_params.flags & ToyotaFlags.DSU_BYPASS.value
+    assert car_params.openpilotLongitudinalControl
+    assert not car_params.safetyConfigs[0].safetyParam & ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
+
+    starpilot_params = CarInterface.get_starpilot_params(
+      CAR.TOYOTA_COROLLA, fingerprint, [], car_params, SimpleNamespace(),
+    )
+    car_state = CarState(car_params, starpilot_params)
+    can_parsers = car_state.get_can_parsers(car_params)
+    car_state.update(can_parsers, SimpleNamespace(cluster_offset=1.0))
+
+    for message in ("ACC_CONTROL", "PRE_COLLISION", "PCS_HUD"):
+      assert message not in can_parsers[Bus.pt].vl
+      assert message in can_parsers[Bus.cam].vl
+
+  def test_dsu_bypass_does_not_change_tss2_or_smart_dsu(self):
+    fingerprint = {bus: {} for bus in range(8)}
+    fingerprint[0][0x2FF] = 8
+    fingerprint[2][0x343] = 8
+
+    smart_dsu_params = CarInterface.get_params(
+      CAR.TOYOTA_COROLLA,
+      fingerprint,
+      [],
+      alpha_long=False,
+      is_release=False,
+      docs=False,
+      starpilot_toggles=SimpleNamespace(),
+    )
+    tss2_params = CarInterface.get_params(
+      CAR.TOYOTA_CAMRY_TSS2,
+      fingerprint,
+      [],
+      alpha_long=False,
+      is_release=False,
+      docs=False,
+      starpilot_toggles=SimpleNamespace(),
+    )
+
+    assert not smart_dsu_params.flags & ToyotaFlags.DSU_BYPASS.value
+    assert not tss2_params.flags & ToyotaFlags.DSU_BYPASS.value
 
   def test_camry_hybrid_continental_radar_uses_ths_longitudinal_tune(self):
     fingerprint = {bus: ({0x2FF: 8} if bus == 0 else {}) for bus in range(8)}
