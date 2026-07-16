@@ -2296,6 +2296,10 @@ def test_allow_throttle_hysteresis_filters_gas_prob_chatter():
   assert planner.allow_throttle
 
   sm["modelV2"] = make_model(v_ego, desired_accel=0.0, gas_press_prob=0.34)
+  for _ in range(4):
+    planner.update(sm, toggles)
+    assert planner.model_allow_throttle
+    assert planner.allow_throttle
   planner.update(sm, toggles)
   assert not planner.model_allow_throttle
   assert not planner.allow_throttle
@@ -2306,9 +2310,39 @@ def test_allow_throttle_hysteresis_filters_gas_prob_chatter():
   assert not planner.allow_throttle
 
   sm["modelV2"] = make_model(v_ego, desired_accel=0.0, gas_press_prob=0.46)
+  for _ in range(4):
+    planner.update(sm, toggles)
+    assert not planner.model_allow_throttle
+    assert not planner.allow_throttle
   planner.update(sm, toggles)
   assert planner.model_allow_throttle
   assert planner.allow_throttle
+
+
+def test_allow_throttle_confirmation_filters_route_length_model_pulses():
+  v_ego = 25.0
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  sm = make_sm(v_ego, desired_accel=0.0, min_accel=-1.0, experimental_mode=False, gas_press_prob=0.6)
+  toggles = make_toggles()
+
+  planner.update(sm, toggles)
+
+  # Representative gasPressProb runs from route b85c25a4c6f99d83/0000000c:
+  # repeated 0.05-0.20 second threshold crossings must not change the coast cap.
+  for probability, frames in ((0.30, 2), (0.50, 1), (0.32, 3), (0.48, 4), (0.29, 4)):
+    sm["modelV2"] = make_model(v_ego, desired_accel=0.0, gas_press_prob=probability)
+    for _ in range(frames):
+      planner.update(sm, toggles)
+      assert planner.model_allow_throttle
+      assert planner.allow_throttle
+
+  # A sustained model request still applies the physical coast cap.
+  sm["modelV2"] = make_model(v_ego, desired_accel=0.0, gas_press_prob=0.2)
+  for _ in range(5):
+    planner.update(sm, toggles)
+  assert not planner.model_allow_throttle
+  assert not planner.allow_throttle
 
 
 def test_no_throttle_cap_stays_at_coast_limit_until_throttle_returns():
@@ -2320,7 +2354,8 @@ def test_no_throttle_cap_stays_at_coast_limit_until_throttle_returns():
   sm["carControl"].orientationNED = [0.0, 0.1, 0.0]
   toggles = make_toggles()
 
-  planner.update(sm, toggles)
+  for _ in range(5):
+    planner.update(sm, toggles)
 
   accel_coast = max(get_vehicle_min_accel(CP, v_ego), get_coast_accel(sm["carControl"].orientationNED[1]))
 

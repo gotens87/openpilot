@@ -29,6 +29,7 @@ ALLOW_THROTTLE_THRESHOLD = 0.4
 ALLOW_THROTTLE_HYSTERESIS = 0.05
 ALLOW_THROTTLE_ENABLE_THRESHOLD = ALLOW_THROTTLE_THRESHOLD + ALLOW_THROTTLE_HYSTERESIS
 ALLOW_THROTTLE_DISABLE_THRESHOLD = ALLOW_THROTTLE_THRESHOLD - ALLOW_THROTTLE_HYSTERESIS
+ALLOW_THROTTLE_TRANSITION_CONFIRM_TIME = 0.25
 MIN_ALLOW_THROTTLE_SPEED = 5.0
 MODEL_LAUNCH_DISARM_SPEED = 2.0
 MODEL_LAUNCH_COMMIT_TIME = 3.5
@@ -582,6 +583,7 @@ class LongitudinalPlanner:
     self.fcw = False
     self.dt = dt
     self.model_allow_throttle = True
+    self.model_allow_throttle_transition_t = 0.0
     self.allow_throttle = True
     self.mode = 'acc'
     self.is_preap = (
@@ -2476,6 +2478,7 @@ class LongitudinalPlanner:
       # Clip aEgo to cruise limits to prevent large accelerations when becoming active
       self.a_desired = np.clip(sm['carState'].aEgo, accel_limits[0], accel_limits[1])
       self.model_allow_throttle = True
+      self.model_allow_throttle_transition_t = 0.0
 
     # Prevent divergence, smooth in current v_ego
     self.v_desired_filter.x = max(0.0, self.v_desired_filter.update(v_ego))
@@ -2494,14 +2497,24 @@ class LongitudinalPlanner:
       self.model_launch_stop_seen = False
     model_launch_v = np.array(v, copy=True)
     model_launch_a = np.array(a, copy=True)
-    # Don't clip at low speeds since throttle_prob doesn't account for creep. Use
-    # hysteresis here because raw gasPressProb noise can chatter the throttle gate.
+    # Don't clip at low speeds since throttle_prob doesn't account for creep. Raw
+    # gasPressProb can cross both hysteresis thresholds for only a few model frames,
+    # so confirm transitions before changing the physical coast cap.
     if v_ego <= MIN_ALLOW_THROTTLE_SPEED:
       self.model_allow_throttle = True
-    elif self.model_allow_throttle:
-      self.model_allow_throttle = throttle_prob > ALLOW_THROTTLE_DISABLE_THRESHOLD
+      self.model_allow_throttle_transition_t = 0.0
     else:
-      self.model_allow_throttle = throttle_prob > ALLOW_THROTTLE_ENABLE_THRESHOLD
+      transition_requested = (
+        throttle_prob <= ALLOW_THROTTLE_DISABLE_THRESHOLD if self.model_allow_throttle
+        else throttle_prob > ALLOW_THROTTLE_ENABLE_THRESHOLD
+      )
+      if transition_requested:
+        self.model_allow_throttle_transition_t += self.dt
+        if self.model_allow_throttle_transition_t + 1e-6 >= ALLOW_THROTTLE_TRANSITION_CONFIRM_TIME:
+          self.model_allow_throttle = not self.model_allow_throttle
+          self.model_allow_throttle_transition_t = 0.0
+      else:
+        self.model_allow_throttle_transition_t = 0.0
     self.allow_throttle = self.model_allow_throttle and not sm['starpilotPlan'].disableThrottle
 
     if not self.allow_throttle:
