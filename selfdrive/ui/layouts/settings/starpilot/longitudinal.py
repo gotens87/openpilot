@@ -8,7 +8,7 @@ import pyray as rl
 from openpilot.selfdrive.ui.lib.starpilot_state import starpilot_state
 from openpilot.system.ui.lib.application import FontWeight, MouseEvent, MousePos, gui_app
 from openpilot.system.ui.lib.multilang import tr, tr_noop
-from openpilot.system.ui.widgets import DialogResult, Widget
+from openpilot.system.ui.widgets import DialogResult
 from openpilot.system.ui.widgets.confirm_dialog import ConfirmDialog
 from openpilot.system.ui.widgets.keyboard import Keyboard
 from openpilot.system.ui.widgets.option_dialog import MultiOptionDialog
@@ -86,36 +86,26 @@ SLC_OVERRIDE_OPTIONS = [
 # AdaptiveSpeedView — nested panel with two adaptive speed tiles
 # ═══════════════════════════════════════════════════════════════
 
-class AdaptiveSpeedView(Widget):
+class AdaptiveSpeedView(CardHubManagerView):
   def __init__(self, controller):
-    super().__init__()
-    self._header_title = tr_noop("Adaptive Speed Controls")
-    self._controller = controller
-    self._grid = TileGrid(columns=2, padding=SPACING.tile_gap)
-    self._child(self._grid)
+    super().__init__(controller, [], columns=2,
+                     header_title=tr_noop("Adaptive Speed Controls"))
 
-    self._grid.add_tile(HubTile(
-      title=tr("Conditional Drive Mode"),
-      desc=tr("Configure automated switching between Experimental and Chill Modes based on set conditions."),
-      icon_key="steering",
-      on_click=lambda: controller._navigate_to("ce"),
-    ))
-
-    self._grid.add_tile(HubTile(
-      title=tr("Curve Speed Controller"),
-      desc=tr("Configure speed control on curves and reset collected calibration data."),
-      icon_key="navigate",
-      on_click=lambda: controller._navigate_to("csc"),
-    ))
-
-  def _render(self, rect: rl.Rectangle):
-    mx = float(AETHER_LIST_METRICS.outer_margin_x)
-    my = float(AETHER_LIST_METRICS.outer_margin_y)
-    grid_x = rect.x + mx
-    grid_y = rect.y + my
-    grid_w = rect.width - mx * 2
-    grid_h = rect.y + rect.height - grid_y - my
-    self._grid.render(rl.Rectangle(grid_x, grid_y, grid_w, grid_h))
+  def _build_cards(self):
+    return [
+      {
+        "title": tr("Conditional Drive Mode"),
+        "desc": tr("Configure automated switching between Experimental and Chill Modes based on set conditions."),
+        "icon": "steering",
+        "on_click": lambda: self._controller._navigate_to("ce"),
+      },
+      {
+        "title": tr("Curve Speed Controller"),
+        "desc": tr("Configure speed control on curves and reset collected calibration data."),
+        "icon": "navigate",
+        "on_click": lambda: self._controller._navigate_to("csc"),
+      },
+    ]
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -171,10 +161,6 @@ class ConditionalDriveModeView(AdjustorTogglesPanelView):
   METRICS = COMPACT_PANEL_METRICS
   TAB_HEIGHT = 98
   TAB_BOTTOM_GAP = 26
-
-  @property
-  def vertical_scrolling_disabled(self) -> bool:
-    return True
 
   def __init__(self, controller: StarPilotLongitudinalLayout):
     super().__init__()

@@ -285,7 +285,7 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
 
   def _draw_relocated_header(self, x: float, y: float, width: float):
     # Buttons placed horizontally
-    btn_gap = 12.0
+    btn_gap = float(AETHER_LIST_METRICS.header_button_gap)
     btn_w = (width - 16.0 - btn_gap * 2) / 3.0
     
     primary_rect = rl.Rectangle(x + 8, y, btn_w, BUTTON_HEIGHT)

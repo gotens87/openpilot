@@ -48,10 +48,6 @@ SOUNDS_PANEL_METRICS = replace(
 class SoundsManagerView(AdjustorTogglesPanelView):
   METRICS = SOUNDS_PANEL_METRICS
 
-  @property
-  def vertical_scrolling_disabled(self) -> bool:
-    return True
-
   def __init__(self, controller: StarPilotSoundsLayout):
     super().__init__()
     self._controller = controller

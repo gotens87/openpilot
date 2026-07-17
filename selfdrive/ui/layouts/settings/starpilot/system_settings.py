@@ -40,7 +40,6 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   GROUP_HEADER_LINE_GAP,
   GROUP_HEADER_HEIGHT,
   draw_group_header,
-  draw_tab_bar,
   AetherSliderDialog,
   mix_colors,
   snap_rect,
