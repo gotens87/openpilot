@@ -402,6 +402,7 @@ NEAR_DUPLICATE_LEAD_TRANSITION_MAX_HEADWAY_ABOVE_TARGET = 0.85
 NEAR_DUPLICATE_VISION_TRANSITION_MIN_HEADWAY_MARGIN = 0.55
 NEAR_DUPLICATE_VISION_TRANSITION_EXTRA_CLOSING_SPEED = 1.25
 LOW_SPEED_IDENTICAL_RADAR_DUPLICATE_TRANSITION_EXTRA_HEADWAY = 0.15
+LOW_SPEED_DUPLICATE_VISION_TRANSITION_EXTRA_HEADWAY = 0.75
 NEAR_DUPLICATE_LEAD_TRANSITION_MIN_DELTA_A = 0.35
 NEAR_DUPLICATE_LEAD_TRANSITION_POSITIVE_STEP = 0.22
 NEAR_DUPLICATE_LEAD_TRANSITION_NEGATIVE_STEP = 0.32
@@ -1888,7 +1889,12 @@ class LongitudinalPlanner:
       self.duplicate_vision_comfort_lead_source = None
       return None
 
-    if not self.mpc.leads_are_near_duplicates(self.lead_one, self.lead_two, v_ego):
+    if not self.mpc.leads_are_near_duplicates(
+      self.lead_one,
+      self.lead_two,
+      v_ego,
+      vision_min_speed=LOW_SPEED_MATCHED_FOLLOW_TRANSITION_MIN_SPEED,
+    ):
       self.duplicate_vision_comfort_lead_source = None
       return None
 
@@ -2106,7 +2112,12 @@ class LongitudinalPlanner:
     if not (self.lead_one.status and self.lead_two.status):
       return None
     identical_radar_duplicates = self.mpc.leads_share_identical_radar_track(self.lead_one, self.lead_two)
-    if not self.mpc.leads_are_near_duplicates(self.lead_one, self.lead_two, v_ego):
+    if not self.mpc.leads_are_near_duplicates(
+      self.lead_one,
+      self.lead_two,
+      v_ego,
+      vision_min_speed=LOW_SPEED_MATCHED_FOLLOW_TRANSITION_MIN_SPEED,
+    ):
       return None
     low_speed_extension_active = bool(
       tracking_lead_active and
@@ -2135,6 +2146,8 @@ class LongitudinalPlanner:
     max_headway_above_target = NEAR_DUPLICATE_LEAD_TRANSITION_MAX_HEADWAY_ABOVE_TARGET
     if low_speed_extension_active and identical_radar_duplicates:
       max_headway_above_target += LOW_SPEED_IDENTICAL_RADAR_DUPLICATE_TRANSITION_EXTRA_HEADWAY
+    elif low_speed_extension_active and not lead_radar:
+      max_headway_above_target += LOW_SPEED_DUPLICATE_VISION_TRANSITION_EXTRA_HEADWAY
     if actual_headway > float(base_t_follow) + max_headway_above_target:
       return None
 

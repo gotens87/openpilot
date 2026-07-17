@@ -656,7 +656,7 @@ class LongitudinalMpc:
     return track_one >= 0 and track_one == track_two
 
   @staticmethod
-  def leads_are_near_duplicates(lead_one, lead_two, v_ego):
+  def leads_are_near_duplicates(lead_one, lead_two, v_ego, *, vision_min_speed=None):
     if lead_one is None or lead_two is None or not lead_one.status or not lead_two.status:
       return False
     if LongitudinalMpc.leads_share_identical_radar_track(lead_one, lead_two):
@@ -666,7 +666,8 @@ class LongitudinalMpc:
         abs(float(lead_one.dRel) - float(lead_two.dRel)) <= NEAR_DUPLICATE_LEAD_SOURCE_MAX_DREL_DIFF and
         abs(float(lead_one.vRel) - float(lead_two.vRel)) <= max(1.0, NEAR_DUPLICATE_LEAD_SOURCE_MAX_VREL_DIFF)
       )
-    if float(v_ego) < NEAR_DUPLICATE_LEAD_SOURCE_MIN_SPEED:
+    min_vision_speed = NEAR_DUPLICATE_LEAD_SOURCE_MIN_SPEED if vision_min_speed is None else float(vision_min_speed)
+    if float(v_ego) < min_vision_speed:
       return False
     lead_one_radar = bool(getattr(lead_one, "radar", False))
     lead_two_radar = bool(getattr(lead_two, "radar", False))

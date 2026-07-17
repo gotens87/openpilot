@@ -3658,6 +3658,22 @@ def test_duplicate_vision_comfort_lead_prefers_centered_candidate_before_closer_
   assert planner.duplicate_vision_comfort_lead_source == "lead0"
 
 
+def test_duplicate_vision_comfort_lead_supports_mid_speed_follow_churn():
+  v_ego = 16.0
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead_one = make_lead(status=True, d_rel=30.0, v_lead=15.8, a_lead=0.02, radar=False, model_prob=1.0, y_rel=0.05)
+  lead_two = make_lead(status=True, d_rel=30.1, v_lead=15.82, a_lead=0.01, radar=False, model_prob=1.0, y_rel=0.08)
+  lead_one.vRel = lead_one.vLead - v_ego
+  lead_two.vRel = lead_two.vLead - v_ego
+  planner.lead_one = lead_one
+  planner.lead_two = lead_two
+
+  selected = planner.get_duplicate_vision_comfort_lead(v_ego)
+
+  assert selected is lead_one
+
+
 def test_duplicate_vision_comfort_lead_latches_source_until_duplicate_cluster_resolves():
   v_ego = 25.0
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
@@ -3775,6 +3791,31 @@ def test_near_duplicate_lead_transition_target_damps_low_speed_duplicate_radar_h
 
   assert smoothed is not None
   assert smoothed == pytest.approx(0.57, abs=1e-6)
+
+
+def test_near_duplicate_lead_transition_target_damps_mid_speed_duplicate_vision_handoff():
+  v_ego = 17.6
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead_one = make_lead(status=True, d_rel=44.8, v_lead=16.8, a_lead=0.0, radar=False, model_prob=1.0)
+  lead_two = make_lead(status=True, d_rel=44.9, v_lead=16.82, a_lead=0.0, radar=False, model_prob=1.0)
+  lead_one.vRel = lead_one.vLead - v_ego
+  lead_two.vRel = lead_two.vLead - v_ego
+  planner.lead_one = lead_one
+  planner.lead_two = lead_two
+
+  smoothed = planner.get_near_duplicate_lead_transition_target(
+    lead_one,
+    v_ego,
+    1.25,
+    prev_output_a_target=0.49,
+    output_a_target=0.03,
+    current_source="cruise",
+    tracking_lead_active=True,
+  )
+
+  assert smoothed is not None
+  assert smoothed == pytest.approx(0.17, abs=1e-6)
 
 
 def test_near_duplicate_lead_transition_target_damps_generous_headway_duplicate_vision_sign_flip():
