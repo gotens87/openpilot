@@ -2584,6 +2584,13 @@
         "ui_type": "toggle"
       },
       {
+        "key": "JeepBrakeHold",
+        "label": "Jeep Brake Hold",
+        "description": "Hold the brakes after Jeep ACC times out at a stop, then send resume when traffic moves again.",
+        "data_type": "bool",
+        "ui_type": "toggle"
+      },
+      {
         "key": "SubaruSNG",
         "label": "Stop and Go",
         "description": "Stop and go for supported Subaru vehicles.",
