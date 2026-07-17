@@ -968,10 +968,12 @@ class StarPilotSystemLayout(_SettingsPage):
 
   def _set_brightness(self, key, val):
     self._params.put_int(key, int(val))
-    if key == "ScreenBrightnessOnroad" and not ui_state.started:
-      return
-    if key in ("ScreenBrightnessOnroad", "ScreenBrightness") and hasattr(HARDWARE, 'set_brightness'):
-      HARDWARE.set_brightness(int(val))
+    if not ui_state.started and key == "ScreenBrightness":
+      if hasattr(HARDWARE, 'set_screen_brightness'):
+        HARDWARE.set_screen_brightness(int(val))
+    elif ui_state.started and key == "ScreenBrightnessOnroad":
+      if hasattr(HARDWARE, 'set_screen_brightness'):
+        HARDWARE.set_screen_brightness(int(val))
 
   def _get_konik_state(self):
     if Path("/data/not_vetted").exists():
