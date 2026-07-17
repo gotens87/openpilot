@@ -1106,7 +1106,7 @@ class StarPilotLongitudinalLayout(_SettingsPage):
     self._navigate_to(panel_name)
 
   def _build_personality_profile_rows(self, profile: str) -> list[SettingRow]:
-    follow_min = 1.0 if profile == "Traffic" else 0.5
+    follow_min = 0.5
     follow_max = 2.5 if profile == "Traffic" else 3.0
     p = profile
     rows = [

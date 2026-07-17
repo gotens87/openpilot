@@ -227,7 +227,7 @@ class LongControl:
     positive_cap = interp(a_target, [-1.5, -0.6, -0.1], [0.0, 0.0, 0.05])
     return min(output_accel, float(positive_cap))
 
-  def update(self, active, CS, a_target, should_stop, accel_limits, starpilot_toggles, has_lead=False):
+  def update(self, active, CS, a_target, should_stop, accel_limits, starpilot_toggles, has_lead=False, traffic_mode_enabled=False):
     """Update longitudinal control. This updates the state machine and runs a PID loop"""
     self.pid.neg_limit = accel_limits[0]
     self.pid.pos_limit = accel_limits[1]
@@ -250,7 +250,11 @@ class LongControl:
       self.reset(preserve_stop_release=True)
 
     elif self.long_control_state == LongCtrlState.starting:
-      if getattr(starpilot_toggles, "custom_accel_profile", False):
+      if traffic_mode_enabled:
+        # Traffic Mode has its own soft launch curve (a_target); bypass the raw
+        # StartAccel kick used elsewhere so launches stay within the traffic cap.
+        output_accel = clip(a_target, 0.0, starpilot_toggles.startAccel)
+      elif getattr(starpilot_toggles, "custom_accel_profile", False):
         output_accel = clip(a_target, 0.0, starpilot_toggles.startAccel)
       else:
         output_accel = starpilot_toggles.startAccel

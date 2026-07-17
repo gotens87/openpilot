@@ -170,6 +170,58 @@ def test_starting_accel_obeys_a_target_cap_when_custom_profile_enabled():
   assert output_accel == 0.1
 
 
+def test_starting_accel_obeys_a_target_cap_when_traffic_mode_enabled():
+  CP = car.CarParams.new_message(startingState=True, vEgoStarting=0.5)
+  CP.longitudinalTuning.kpBP = [0.0]
+  CP.longitudinalTuning.kpV = [0.1]
+  CP.longitudinalTuning.kiBP = [0.0]
+  CP.longitudinalTuning.kiV = [0.03]
+
+  lc = LongControl(CP)
+  CS = car.CarState.new_message(vEgo=0.0, aEgo=0.0, brakePressed=False)
+  CS.cruiseState.standstill = False
+
+  # Large manually-tuned startAccel override (e.g. 3.5) should not fire a raw
+  # launch kick while Traffic Mode is active; output must track the soft a_target.
+  output_accel = lc.update(
+    active=True,
+    CS=CS,
+    a_target=1.10,
+    should_stop=False,
+    accel_limits=(-3.0, 4.0),
+    starpilot_toggles=make_toggles(startAccel=3.5),
+    traffic_mode_enabled=True,
+  )
+
+  assert lc.long_control_state == LongCtrlState.starting
+  assert output_accel == pytest.approx(1.10)
+
+
+def test_starting_accel_uses_raw_start_accel_when_traffic_mode_disabled():
+  CP = car.CarParams.new_message(startingState=True, vEgoStarting=0.5)
+  CP.longitudinalTuning.kpBP = [0.0]
+  CP.longitudinalTuning.kpV = [0.1]
+  CP.longitudinalTuning.kiBP = [0.0]
+  CP.longitudinalTuning.kiV = [0.03]
+
+  lc = LongControl(CP)
+  CS = car.CarState.new_message(vEgo=0.0, aEgo=0.0, brakePressed=False)
+  CS.cruiseState.standstill = False
+
+  output_accel = lc.update(
+    active=True,
+    CS=CS,
+    a_target=1.10,
+    should_stop=False,
+    accel_limits=(-3.0, 4.0),
+    starpilot_toggles=make_toggles(startAccel=3.5),
+    traffic_mode_enabled=False,
+  )
+
+  assert lc.long_control_state == LongCtrlState.starting
+  assert output_accel == pytest.approx(3.5)
+
+
 def test_update_requires_sustained_moderate_positive_target_to_leave_stopping():
   CP = car.CarParams.new_message(startingState=True, vEgoStarting=0.5)
   CP.longitudinalTuning.kpBP = [0.0]

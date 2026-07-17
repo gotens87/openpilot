@@ -61,6 +61,8 @@ LEGACY_BOLT_FP_MIGRATION_FLAG = Path("/data") / "legacy_bolt_fp_migration_v1"
 STARPILOT_DEFAULTS_PARITY_MIGRATION_FLAG = Path("/data") / "starpilot_defaults_parity_v1"
 STARPILOT_HUMANLIKE_DISABLE_MIGRATION_FLAG = Path("/data") / "starpilot_humanlike_disable_v1"
 STARPILOT_CLUSTER_OFFSET_MIGRATION_FLAG = Path("/data") / "starpilot_cluster_offset_v1"
+STARPILOT_TRAFFIC_SMOOTH_MIGRATION_FLAG = Path("/data") / "starpilot_traffic_smooth_v1"
+STARPILOT_TRAFFIC_FOLLOW_MIGRATION_FLAG = Path("/data") / "starpilot_traffic_follow_v1"
 STARPILOT_PARAM_RENAME_MIGRATION_FLAG = Path("/data") / "starpilot_param_rename_v1"
 STARPILOT_PARAM_CANONICALIZATION_MIGRATION_FLAG = Path("/data") / "starpilot_param_canonicalization_v1"
 STARPILOT_PC_ROOT_MIGRATION_FLAG = Path("/data") / "starpilot_pc_root_v1"
@@ -603,6 +605,67 @@ def migrate_cluster_offset_default(params: Params, params_cache: Params) -> None
     cloudlog.exception(f"Failed to write migration flag: {STARPILOT_CLUSTER_OFFSET_MIGRATION_FLAG}")
 
 
+def migrate_traffic_mode_smooth_defaults(params: Params, params_cache: Params) -> None:
+  # Traffic Mode was repurposed from an aggressive city mode (jerk 50%) into a smooth
+  # bumper-to-bumper mode with Relaxed-parity jerk defaults (100%). Rewrite persisted
+  # legacy defaults only; user-tuned values are preserved.
+  if STARPILOT_TRAFFIC_SMOOTH_MIGRATION_FLAG.exists():
+    return
+
+  migrated_keys: list[str] = []
+  for key in ("TrafficJerkAcceleration", "TrafficJerkDeceleration", "TrafficJerkSpeed", "TrafficJerkSpeedDecrease"):
+    # Decide off the real params store only: the boot sync mirrors real -> cache, so a
+    # cache-first check could clobber a user override with a stale cached default.
+    raw_value = _read_raw_param_bytes(params, key)
+    if not raw_value:
+      continue
+
+    try:
+      parsed_value = float(raw_value.decode("utf-8", errors="strict").strip())
+    except Exception:
+      continue
+
+    if abs(parsed_value - 50.0) < 1e-6:
+      params.put_float(key, 100.0)
+      params_cache.put_float(key, 100.0)
+      migrated_keys.append(key)
+
+  if migrated_keys:
+    cloudlog.warning(f"Applied one-time Traffic Mode smooth-defaults migration for {migrated_keys}")
+
+  try:
+    STARPILOT_TRAFFIC_SMOOTH_MIGRATION_FLAG.parent.mkdir(parents=True, exist_ok=True)
+    STARPILOT_TRAFFIC_SMOOTH_MIGRATION_FLAG.write_text(f"{datetime.datetime.now(datetime.UTC).isoformat()}\n")
+  except Exception:
+    cloudlog.exception(f"Failed to write migration flag: {STARPILOT_TRAFFIC_SMOOTH_MIGRATION_FLAG}")
+
+
+def migrate_traffic_follow_default(params: Params, params_cache: Params) -> None:
+  # TrafficFollow's initial smooth-mode default (0.5s) proved too tight in on-road
+  # testing (frequent closing-on-lead); raised to 0.75s. Rewrite persisted legacy
+  # 0.5 only; user-tuned values are preserved.
+  if STARPILOT_TRAFFIC_FOLLOW_MIGRATION_FLAG.exists():
+    return
+
+  raw_value = _read_raw_param_bytes(params, "TrafficFollow")
+  if raw_value:
+    try:
+      parsed_value = float(raw_value.decode("utf-8", errors="strict").strip())
+    except Exception:
+      parsed_value = None
+
+    if parsed_value is not None and abs(parsed_value - 0.5) < 1e-6:
+      params.put_float("TrafficFollow", 0.75)
+      params_cache.put_float("TrafficFollow", 0.75)
+      cloudlog.warning("Applied one-time TrafficFollow migration from 0.5 to 0.75")
+
+  try:
+    STARPILOT_TRAFFIC_FOLLOW_MIGRATION_FLAG.parent.mkdir(parents=True, exist_ok=True)
+    STARPILOT_TRAFFIC_FOLLOW_MIGRATION_FLAG.write_text(f"{datetime.datetime.now(datetime.UTC).isoformat()}\n")
+  except Exception:
+    cloudlog.exception(f"Failed to write migration flag: {STARPILOT_TRAFFIC_FOLLOW_MIGRATION_FLAG}")
+
+
 def _read_raw_param_bytes(params: Params, key: str | bytes):
   try:
     path = params.get_param_path(key)
@@ -822,6 +885,8 @@ def manager_init() -> None:
   migrate_starpilot_default_parity(params, params_cache)
   migrate_disable_humanlike_defaults(params, params_cache)
   migrate_cluster_offset_default(params, params_cache)
+  migrate_traffic_mode_smooth_defaults(params, params_cache)
+  migrate_traffic_follow_default(params, params_cache)
   last_timing = _log_boot_timing("manager_init", "starpilot_migrations", manager_init_start, last_timing)
 
   # set unset params to their default value

@@ -752,7 +752,7 @@
       {
         "key": "TrafficFollow",
         "label": "Following Distance",
-        "description": "The minimum following distance to the lead vehicle in \"Traffic Mode\". openpilot blends between this value and the \"Aggressive\" profile as speed increases. Increase for more space; decrease for tighter gaps.",
+        "description": "The minimum following distance to the lead vehicle in \"Traffic Mode\". openpilot blends between this value and the \"Relaxed\" profile as speed increases. Increase for more space; decrease for tighter gaps.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.5,
