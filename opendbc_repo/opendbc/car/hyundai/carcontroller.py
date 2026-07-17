@@ -67,9 +67,11 @@ REDNECK_BUTTON_COPIES_TIME_METRIC = [REDNECK_BUTTON_COPIES_TIME, 40]
 ANGLE_SAFETY_BASELINE_MODEL = str(CAR.KIA_SPORTAGE_HEV_2026)
 DEFAULT_ANGLE_SMOOTHING_VEGO_BP = [5.0, 10.0, 20.0]
 DEFAULT_ANGLE_SMOOTHING_ALPHA_V = [0.2, 0.1, 0.0]
-EV9_HIGH_ANGLE_GAIN_BP = [70.0, 120.0, 220.0, 320.0]
-EV9_HIGH_ANGLE_GAIN_CAP_V = [0.85, 0.55, 0.30, 0.16]
+EV9_HIGH_ANGLE_GAIN_BP = [0.0, 70.0, 120.0, 220.0, 320.0]
+EV9_HIGH_ANGLE_GAIN_CAP_V = [1.0, 0.85, 0.55, 0.30, 0.16]
 EV9_HIGH_ANGLE_GAIN_MIN = 0.004
+EV9_TRACKING_GAIN_FULL_TORQUE = 75.0
+EV9_TRACKING_GAIN_RELEASE_TORQUE = 125.0
 EV9_DRIVER_OVERRIDE_TORQUE_THRESHOLD = 175.0
 EV9_DRIVER_OVERRIDE_GAIN_BP = [0.0, 175.0, 350.0, 525.0]
 EV9_DRIVER_OVERRIDE_GAIN_CAP_V = [0.08, 0.08, 0.04, 0.004]
@@ -260,6 +262,20 @@ def compute_torque_reduction_gain(steering_torque, v_ego, lat_active, last_gain)
 
   gain = rate_limit(target, last_gain, -0.014, 0.004)
   return round(gain / 0.004) * 0.004
+
+
+def apply_ev9_tracking_gain(CP, gain: float, steering_torque: float, steering_pressed: bool, lat_active: bool) -> float:
+  if CP.carFingerprint != CAR.KIA_EV9 or not CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING or not lat_active or steering_pressed:
+    return gain
+
+  torque = abs(steering_torque)
+  if torque >= EV9_TRACKING_GAIN_RELEASE_TORQUE:
+    return gain
+
+  tracking_floor = float(np.interp(torque,
+                                   [EV9_TRACKING_GAIN_FULL_TORQUE, EV9_TRACKING_GAIN_RELEASE_TORQUE],
+                                   [1.0, 0.85]))
+  return max(gain, tracking_floor)
 
 
 def apply_ev9_high_angle_gain_cap(CP, gain: float, steering_angle_deg: float, lat_active: bool,
@@ -472,6 +488,7 @@ class CarController(CarControllerBase):
                                                   CS.out.steeringAngleDeg, CC.latActive, self.params, self.BASELINE_VM)
 
       apply_torque = compute_torque_reduction_gain(CS.out.steeringTorque, v_ego_raw, CC.latActive, self.apply_torque_last)
+      apply_torque = apply_ev9_tracking_gain(self.CP, apply_torque, CS.out.steeringTorque, CS.out.steeringPressed, CC.latActive)
       apply_torque = apply_ev9_high_angle_gain_cap(self.CP, apply_torque, CS.out.steeringAngleDeg, CC.latActive,
                                                    CS.out.steeringTorque, CS.out.steeringPressed)
       _, recovery_gain_cap = get_ev9_driver_override_recovery_limits(self.CP, self._ev9_driver_override_recovery_frames)
