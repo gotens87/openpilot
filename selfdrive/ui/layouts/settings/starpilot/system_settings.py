@@ -270,7 +270,7 @@ class SystemSettingsManagerView(PanelManagerView):
         "title": tr("Disable Uploads"),
         "subtitle": "",
         "get_state": lambda: self._controller._params.get_bool("NoUploads"),
-        "set_state": lambda v: self._controller._params.put_bool("NoUploads", v),
+        "set_state": self._controller._on_no_uploads_toggle,
       },
       {
         "title": tr("Disable Onroad Uploads"),
@@ -284,7 +284,7 @@ class SystemSettingsManagerView(PanelManagerView):
         "title": tr("Disable Logging"),
         "subtitle": "",
         "get_state": lambda: self._controller._params.get_bool("NoLogging"),
-        "set_state": lambda v: self._controller._params.put_bool("NoLogging", v),
+        "set_state": self._controller._on_no_logging_toggle,
       },
       {
         "title": tr("High Bitrate Recording"),
@@ -1014,6 +1014,24 @@ class StarPilotSystemLayout(_SettingsPage):
         callback=on_confirm
       )
     )
+
+  def _on_no_uploads_toggle(self, state):
+    if state:
+      gui_app.push_widget(ConfirmDialog(
+        tr("This will prevent your drives from being uploaded to comma connect which may impact receiving support. Are you sure?"),
+        lambda res: self._params.put_bool("NoUploads", True) if res == DialogResult.CONFIRM else None
+      ))
+    else:
+      self._params.put_bool("NoUploads", False)
+
+  def _on_no_logging_toggle(self, state):
+    if state:
+      gui_app.push_widget(ConfirmDialog(
+        tr("This will prevent your drives from being logged. Are you sure?"),
+        lambda res: self._params.put_bool("NoLogging", True) if res == DialogResult.CONFIRM else None
+      ))
+    else:
+      self._params.put_bool("NoLogging", False)
 
   def _on_higher_bitrate_toggle(self, state):
     self._params.put_bool("HigherBitrate", state)
