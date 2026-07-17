@@ -14,6 +14,8 @@ let syncScheduled = false
 let lastParams = null
 let flmWorkspaceInflight = null
 let lastFlmWorkspaceFetch = 0
+let favoritePollInflight = null
+let favoritePollTimer = null
 const DYNAMIC_DEFAULT_DEP_KEYS = new Set(["AccelerationProfile", "EVTuning", "TruckTuning"])
 const PANDA_FIRMWARE_TOGGLE_KEYS = new Set(["IgnoreIgnitionLine", "RemoteStartBootsComma", "HKGRemoteStartBootsComma"])
 const FLM_ADVANCED_LATERAL_KEYS = new Set([
@@ -531,7 +533,7 @@ function populateFavoriteSelect(index, selectEl = null) {
 async function fetchFavoriteSlots() {
   state.favoriteLoading = true
   try {
-    const res = await fetch("/api/favorites/slots")
+    const res = await fetch("/api/favorites/slots", { cache: "no-store" })
     const data = await res.json()
     if (res.ok) {
       state.favoriteOptions = normalizeFavoriteOptions(data.options)
@@ -543,6 +545,45 @@ async function fetchFavoriteSlots() {
     console.error("Failed to fetch favorite slots:", e)
   }
   state.favoriteLoading = false
+}
+
+async function refreshFavoriteValues() {
+  if (favoritePollInflight || state.favoriteSaving || state.favoriteLoading) return favoritePollInflight
+
+  favoritePollInflight = fetch("/api/favorites/values", { cache: "no-store" })
+    .then(async res => {
+      if (!res.ok) return
+
+      const data = await res.json()
+      const values = (data.values && typeof data.values === "object") ? data.values : {}
+      const changed = Object.entries(values).some(([key, value]) => state.values[key] !== value)
+      if (!changed) return
+
+      state.favoriteValues = { ...state.favoriteValues, ...values }
+      state.values = { ...state.values, ...values }
+      scheduleSyncInputs()
+    })
+    .catch(() => {})
+    .finally(() => {
+      favoritePollInflight = null
+    })
+
+  return favoritePollInflight
+}
+
+function ensureFavoriteValuePolling() {
+  if (favoritePollTimer !== null) return
+
+  favoritePollTimer = setInterval(() => {
+    if (!window.location.pathname.startsWith("/device_settings")) {
+      clearInterval(favoritePollTimer)
+      favoritePollTimer = null
+      return
+    }
+    if (document.visibilityState === "visible") {
+      refreshFavoriteValues()
+    }
+  }, 1000)
 }
 
 async function saveFavoriteSlots(slots) {
@@ -1487,6 +1528,7 @@ export function DeviceSettings({ params }) {
   lastParams = params
 
   fetchFlmWorkspace()
+  ensureFavoriteValuePolling()
 
   if (!state.fetched) {
     state.fetched = true

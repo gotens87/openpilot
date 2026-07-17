@@ -96,7 +96,10 @@ def _install_server_import_stubs():
   )
   sys.modules["openpilot.system.hardware.hw"] = _simple_module(
     "openpilot.system.hardware.hw",
-    Paths=SimpleNamespace(log_root=lambda **kwargs: "/tmp/dashboard-test-routes/"),
+    Paths=SimpleNamespace(
+      comma_home=lambda: "/tmp/dashboard-test-comma-home",
+      log_root=lambda **kwargs: "/tmp/dashboard-test-routes/",
+    ),
   )
   sys.modules["openpilot.system.version"] = _simple_module("openpilot.system.version", get_build_metadata=lambda: SimpleNamespace())
   sys.modules["openpilot.tools.longitudinal_maneuvers.capabilities"] = _simple_module(
@@ -182,6 +185,9 @@ def _install_server_import_stubs():
   sys.modules["openpilot.starpilot.system.the_galaxy.factory_reset"] = _simple_module(
     "openpilot.starpilot.system.the_galaxy.factory_reset",
     remove_path=lambda *args, **kwargs: None,
+  )
+  sys.modules["openpilot.starpilot.system.the_galaxy.flm_workspace"] = _simple_module(
+    "openpilot.starpilot.system.the_galaxy.flm_workspace",
   )
   sys.modules["openpilot.starpilot.system.the_galaxy.utilities"] = utilities
 
@@ -1259,3 +1265,176 @@ def test_stats_endpoint_keeps_existing_keys_and_adds_dashboard(monkeypatch):
   assert include_response.status_code == 200
   assert ignored_calls == [route_name]
   assert included_calls == [route_name]
+
+
+def test_toggle_backup_restore_round_trip_filters_non_settings(monkeypatch):
+  server = _load_server_module()
+  assert server._import_galaxy_web_symbols()
+
+  persistent = server.ParamKeyFlag.PERSISTENT
+  dont_log = server.ParamKeyFlag.DONT_LOG
+  definitions = {
+    "EnabledSetting": (True, server.ParamKeyType.BOOL, persistent),
+    "AdbEnabled": (None, server.ParamKeyType.BOOL, persistent),
+    "NumericSetting": (1.5, server.ParamKeyType.FLOAT, persistent),
+    "JsonSetting": ({"mode": "default"}, server.ParamKeyType.JSON, persistent),
+    "SensitiveSetting": ("", server.ParamKeyType.STRING, persistent | dont_log),
+    "TransientSetting": (False, server.ParamKeyType.BOOL, server.ParamKeyFlag.CLEAR_ON_MANAGER_START),
+    "NoDefaultSetting": (None, server.ParamKeyType.STRING, persistent),
+    "StatsSetting": ({}, server.ParamKeyType.JSON, persistent),
+  }
+
+  class ToggleParams:
+    def __init__(self):
+      self.values = {
+        "EnabledSetting": False,
+        "AdbEnabled": True,
+        "NumericSetting": 2.75,
+        "JsonSetting": {"mode": "custom"},
+        "SensitiveSetting": "secret",
+        "TransientSetting": True,
+        "NoDefaultSetting": "runtime",
+        "StatsSetting": {"drives": 10},
+      }
+
+    def all_keys(self):
+      return list(definitions)
+
+    def get(self, key, block=False):
+      del block
+      default = definitions[key][0]
+      return self.values.get(key, default)
+
+    def get_default_value(self, key):
+      return definitions[key][0]
+
+    def get_key_flag(self, key):
+      return definitions[key][2]
+
+    def get_type(self, key):
+      return definitions[key][1]
+
+    def get_tuning_level(self, key):
+      del key
+      return 0
+
+    def put(self, key, value):
+      self.values[key] = value
+
+  raw_params = ToggleParams()
+  server.starpilot_default_params = [
+    (key, default, value_type, 0)
+    for key, (default, value_type, _) in definitions.items()
+  ]
+  server._cached_static_default_values = None
+  monkeypatch.setattr(server, "_params_raw", raw_params)
+  monkeypatch.setattr(server, "params", server.ParamsCompat(raw_params))
+  monkeypatch.setattr(server, "EXCLUDED_KEYS", {"StatsSetting"})
+  update_calls = []
+  monkeypatch.setattr(server, "update_starpilot_toggles", lambda: update_calls.append(True))
+
+  app = server.Flask(
+    "toggle_backup_test",
+    template_folder=str(MODULE_DIR / "templates"),
+    static_folder=str(MODULE_DIR / "assets"),
+  )
+  server.setup(app)
+  client = app.test_client()
+
+  backup_response = client.post("/api/toggles/backup")
+  backup_payload = json.loads(backup_response.data)
+  backed_up_values = utilities.decode_parameters(backup_payload["data"])
+
+  assert backup_response.status_code == 200
+  assert backup_payload["format"] == server.TOGGLE_BACKUP_FORMAT
+  assert backup_payload["version"] == server.TOGGLE_BACKUP_VERSION
+  assert backup_payload["settingsCount"] == 4
+  assert backed_up_values == {
+    "AdbEnabled": True,
+    "EnabledSetting": False,
+    "JsonSetting": {"mode": "custom"},
+    "NumericSetting": 2.75,
+  }
+
+  raw_params.values.update({
+    "EnabledSetting": True,
+    "AdbEnabled": False,
+    "NumericSetting": 9.0,
+    "JsonSetting": {"mode": "changed"},
+    "SensitiveSetting": "new-secret",
+    "TransientSetting": False,
+    "NoDefaultSetting": "new-runtime",
+    "StatsSetting": {"drives": 99},
+  })
+  restore_response = client.post("/api/toggles/restore", json={"data": backup_payload["data"]})
+  restore_payload = restore_response.get_json()
+
+  assert restore_response.status_code == 200
+  assert restore_payload["restoredCount"] == 4
+  assert restore_payload["skippedCount"] == 0
+  assert raw_params.values["AdbEnabled"] is True
+  assert raw_params.values["EnabledSetting"] is False
+  assert raw_params.values["NumericSetting"] == 2.75
+  assert raw_params.values["JsonSetting"] == {"mode": "custom"}
+  assert raw_params.values["SensitiveSetting"] == "new-secret"
+  assert raw_params.values["TransientSetting"] is False
+  assert raw_params.values["NoDefaultSetting"] == "new-runtime"
+  assert raw_params.values["StatsSetting"] == {"drives": 99}
+  assert update_calls == [True]
+
+
+def test_toggle_restore_reports_invalid_and_unavailable_settings(monkeypatch):
+  server = _load_server_module()
+  assert server._import_galaxy_web_symbols()
+
+  class ToggleParams:
+    def __init__(self):
+      self.values = {"EnabledSetting": False}
+
+    def get_key_flag(self, key):
+      del key
+      return server.ParamKeyFlag.PERSISTENT
+
+    def get_type(self, key):
+      del key
+      return server.ParamKeyType.BOOL
+
+    def put(self, key, value):
+      self.values[key] = value
+
+  raw_params = ToggleParams()
+  server.starpilot_default_params = [("EnabledSetting", True, server.ParamKeyType.BOOL, 0)]
+  monkeypatch.setattr(server, "_params_raw", raw_params)
+  monkeypatch.setattr(server, "EXCLUDED_KEYS", set())
+  monkeypatch.setattr(server, "update_starpilot_toggles", lambda: None)
+
+  app = server.Flask(
+    "toggle_restore_validation_test",
+    template_folder=str(MODULE_DIR / "templates"),
+    static_folder=str(MODULE_DIR / "assets"),
+  )
+  server.setup(app)
+  client = app.test_client()
+
+  mixed_data = utilities.encode_parameters({
+    "EnabledSetting": "true",
+    "RemovedSetting": "1",
+  })
+  mixed_response = client.post("/api/toggles/restore", json={"data": mixed_data})
+  mixed_payload = mixed_response.get_json()
+
+  assert mixed_response.status_code == 200
+  assert mixed_payload["restoredCount"] == 1
+  assert mixed_payload["skippedCount"] == 1
+  assert raw_params.values["EnabledSetting"] is True
+
+  damaged_response = client.post("/api/toggles/restore", json={"data": "not-a-backup"})
+  wrong_format_response = client.post("/api/toggles/restore", json={
+    "format": "different-format",
+    "data": mixed_data,
+  })
+
+  assert damaged_response.status_code == 400
+  assert damaged_response.get_json()["success"] is False
+  assert wrong_format_response.status_code == 400
+  assert wrong_format_response.get_json()["success"] is False

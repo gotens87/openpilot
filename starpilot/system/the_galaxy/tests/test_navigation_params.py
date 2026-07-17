@@ -193,6 +193,38 @@ def test_galaxy_session_value_matches_cookie_format():
   ) == f"testGalaxySlug01%3A{'a' * 64}"
 
 
+def test_configured_favorite_slot_values_only_reads_selected_keys(monkeypatch):
+  fake_params = WritableFakeParams({
+    "NavDesiresAllowed": False,
+    "RedneckCruise": True,
+    "UnusedToggle": True,
+  })
+  monkeypatch.setattr(the_galaxy, "params", fake_params)
+
+  values = the_galaxy._configured_favorite_slot_values([
+    {"enabled": True, "key": "NavDesiresAllowed"},
+    {"enabled": False, "key": "RedneckCruise"},
+    {"enabled": False, "key": None},
+  ])
+
+  assert values == {"NavDesiresAllowed": False, "RedneckCruise": True}
+
+
+def test_favorite_values_endpoint_returns_current_selected_value(monkeypatch):
+  client, _ = _params_client(monkeypatch, {"UseOldUI": False}, "tici")
+  monkeypatch.setattr(the_galaxy, "_get_favorite_slot_options", lambda: [{"key": "UseOldUI"}])
+  monkeypatch.setattr(
+    the_galaxy,
+    "normalize_favorite_slots",
+    lambda *args, **kwargs: [{"enabled": True, "key": "UseOldUI"}],
+  )
+
+  response = client.get("/api/favorites/values")
+
+  assert response.status_code == 200
+  assert response.get_json() == {"values": {"UseOldUI": False}}
+
+
 def test_use_old_ui_is_noop_on_c4_mici(monkeypatch):
   client, fake_params = _params_client(monkeypatch, {"UseOldUI": False, "IsOnroad": False}, "mici")
 
