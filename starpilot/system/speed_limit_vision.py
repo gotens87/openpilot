@@ -1013,9 +1013,7 @@ class SpeedLimitVisionDaemon:
       stream_name = "wide camera"
 
     if desired_stream is None:
-      self.client = None
-      self.stream_type = None
-      self.stream_name = ""
+      self._disconnect_camera()
       return False
 
     if self.client is None or self.stream_type != desired_stream:
@@ -1027,6 +1025,13 @@ class SpeedLimitVisionDaemon:
       self.client.connect(True)
 
     return self.client.is_connected()
+
+  def _disconnect_camera(self):
+    # Dropping the client closes its imported VisionIPC buffer FDs. Keeping the
+    # client alive offroad pins the previous camerad allocation between drives.
+    self.client = None
+    self.stream_type = None
+    self.stream_name = ""
 
   @staticmethod
   def _letterbox(image, shape=(640, 640), color=(114, 114, 114)):
@@ -2459,6 +2464,7 @@ class SpeedLimitVisionDaemon:
         if self.started_prev:
           self._write_debug_event("session_end", reason="offroad")
           self._close_debug_session()
+          self._disconnect_camera()
         self.last_road_name = ""
         self.started_prev = False
         self.current_frame_bgr = None

@@ -12,6 +12,13 @@ def test_legacy_volt_stock_acc_models_share_sng_and_auto_hold_scope():
   }
 
 
+def test_jeep_brake_hold_scope_is_grand_cherokee_only():
+  assert {str(car) for car in spv.CHRYSLER_JEEPS} == {
+    "JEEP_GRAND_CHEROKEE",
+    "JEEP_GRAND_CHEROKEE_2019",
+  }
+
+
 def test_get_starpilot_toggles_uses_last_non_empty_broadcast(monkeypatch):
   params = SimpleNamespace(get_bool=lambda _key: False)
   monkeypatch.setattr(spv.get_starpilot_toggles, "_params", params, raising=False)
@@ -64,6 +71,23 @@ class _FakeParams:
     self.floats.pop(key, None)
     self.ints.pop(key, None)
     self.bools.pop(key, None)
+
+
+def test_sync_reboot_marker_uses_manager_guard(tmp_path):
+  params = _FakeParams()
+  marker = tmp_path / "cache" / "use_HD"
+
+  assert spv.sync_reboot_marker(marker, True, params) is True
+  assert marker.is_file()
+  assert params.get_bool("DoReboot") is True
+
+  params.put_bool("DoReboot", False)
+  assert spv.sync_reboot_marker(marker, True, params) is False
+  assert params.get_bool("DoReboot") is False
+
+  assert spv.sync_reboot_marker(marker, False, params) is True
+  assert not marker.exists()
+  assert params.get_bool("DoReboot") is True
 
 
 def test_sync_stock_param_does_not_stomp_existing_custom_value_when_stock_missing():

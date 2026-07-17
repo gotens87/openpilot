@@ -39,6 +39,19 @@ def publishing_daemon(is_metric):
   return daemon
 
 
+def test_disconnect_camera_releases_client_state():
+  daemon = SpeedLimitVisionDaemon.__new__(SpeedLimitVisionDaemon)
+  daemon.client = object()
+  daemon.stream_type = object()
+  daemon.stream_name = "road camera"
+
+  daemon._disconnect_camera()
+
+  assert daemon.client is None
+  assert daemon.stream_type is None
+  assert daemon.stream_name == ""
+
+
 def test_published_sign_value_uses_configured_units():
   imperial_daemon = publishing_daemon(False)
   metric_daemon = publishing_daemon(True)

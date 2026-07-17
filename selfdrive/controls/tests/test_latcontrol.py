@@ -72,6 +72,9 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_ioniq_6_low_speed_angle_assist_torque,
   get_kia_forte_center_taper_scale,
   get_kia_forte_ff_scale,
+  get_kia_carnival_center_taper_scale,
+  get_kia_carnival_friction_center_fade_scale,
+  get_kia_carnival_friction_threshold,
   get_kia_ev6_center_taper_scale,
   get_kia_ev6_ff_scale,
   get_kia_ev6_friction_scale,
@@ -402,6 +405,23 @@ class TestLatControl:
   def test_kia_forte_center_taper_curve(self):
     assert get_kia_forte_center_taper_scale(0.0, 30.0) < get_kia_forte_center_taper_scale(0.0, 15.0)
     assert get_kia_forte_center_taper_scale(0.0, 30.0) < get_kia_forte_center_taper_scale(0.20, 30.0) <= 1.0
+
+  def test_kia_carnival_near_center_stabilization(self):
+    center_taper = get_kia_carnival_center_taper_scale(0.04, 8.5)
+    turn_taper = get_kia_carnival_center_taper_scale(0.35, 8.5)
+    low_speed_taper = get_kia_carnival_center_taper_scale(0.04, 2.0)
+    highway_taper = get_kia_carnival_center_taper_scale(0.04, 25.0)
+    assert center_taper < turn_taper <= 1.0
+    assert center_taper < low_speed_taper <= 1.0
+    assert center_taper < highway_taper <= 1.0
+
+    center_threshold = get_kia_carnival_friction_threshold(8.5, 0.04)
+    turn_threshold = get_kia_carnival_friction_threshold(8.5, 0.35)
+    assert center_threshold > turn_threshold >= get_hkg_canfd_base_friction_threshold(8.5)
+
+    center_fade = get_kia_carnival_friction_center_fade_scale(0.04, 8.5)
+    turn_fade = get_kia_carnival_friction_center_fade_scale(0.35, 8.5)
+    assert center_fade < turn_fade <= 1.0
 
   def test_genesis_g90_ff_scale_curve(self):
     assert get_genesis_g90_ff_scale(0.0, 0.0, 20.0) == 1.0
@@ -792,6 +812,15 @@ class TestLatControl:
 
     assert lac_log.active
     assert controller.torque_params.latAccelFactor == pytest.approx(CP.lateralTuning.torque.latAccelFactor * 1.10)
+
+  def test_kia_carnival_default_update_path(self):
+    controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.KIA_CARNIVAL_2025)
+    CS.vEgo = 8.5
+
+    _, _, lac_log = controller.update(True, CS, VM, params, False, 0.0025, False, 0.2, None, None, starpilot_toggles)
+
+    assert controller.is_kia_carnival
+    assert lac_log.active
 
   def test_ioniq_6_update_path_does_not_post_taper_output(self, monkeypatch):
     base_controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.HYUNDAI_IONIQ_6)

@@ -15,6 +15,7 @@ import numpy as np
 from cereal import car, custom, log
 from opendbc.car import gen_empty_fingerprint
 from opendbc.car.car_helpers import interfaces
+from opendbc.car.chrysler.values import JEEPS as CHRYSLER_JEEPS
 from opendbc.car.gm.values import CAR as GM_CAR, EV_CAR as GM_EV_CAR, GMFlags
 from opendbc.car.hyundai.values import CAR as HYUNDAI_CAR, EV_CAR as HYUNDAI_EV_CAR, HyundaiFlags, HyundaiStarPilotSafetyFlags
 from opendbc.car.interfaces import TORQUE_SUBSTITUTE_PATH, CarInterfaceBase, GearShifter
@@ -162,6 +163,24 @@ CANCEL_BUTTON_MAPPINGS = (
 )
 
 AOL_LKAS_MIGRATION_KEY = "AOLLKASMigratedToButtonControl"
+
+
+def sync_reboot_marker(marker_path: Path, enabled: bool, params: Params) -> bool:
+  """Synchronize a boot-time marker and ask manager for a guarded reboot."""
+  if marker_path.is_file() == enabled:
+    return False
+
+  marker_path.parent.mkdir(parents=True, exist_ok=True)
+  if enabled:
+    marker_path.touch()
+  else:
+    marker_path.unlink(missing_ok=True)
+
+  # Manager defers DoReboot while onroad. Calling HARDWARE.reboot() here can
+  # abruptly reset the device if this constructor runs after engagement.
+  params.put_bool("DoReboot", True)
+  return True
+
 
 DEVELOPER_SIDEBAR_METRICS = {
   "NONE": 0,
@@ -419,24 +438,12 @@ class StarPilotVariables:
     toggle.use_higher_bitrate &= not self.get_value("DisableOnroadUploads")
     toggle.use_higher_bitrate &= not self.vetting_branch
 
-    HD_PATH.parent.mkdir(parents=True, exist_ok=True)
-    if not HD_PATH.is_file() and toggle.use_higher_bitrate:
-      HD_PATH.touch()
-      HARDWARE.reboot()
-    elif HD_PATH.is_file() and not toggle.use_higher_bitrate:
-      HD_PATH.unlink()
-      HARDWARE.reboot()
+    sync_reboot_marker(HD_PATH, toggle.use_higher_bitrate, self.params_raw)
 
     toggle.use_konik_server = device_management
     toggle.use_konik_server &= self.get_value("UseKonikServer")
 
-    KONIK_PATH.parent.mkdir(parents=True, exist_ok=True)
-    if not KONIK_PATH.is_file() and toggle.use_konik_server:
-      KONIK_PATH.touch()
-      HARDWARE.reboot()
-    elif KONIK_PATH.is_file() and not toggle.use_konik_server:
-      KONIK_PATH.unlink()
-      HARDWARE.reboot()
+    sync_reboot_marker(KONIK_PATH, toggle.use_konik_server, self.params_raw)
 
     stock_colors_json = (STOCK_THEME_PATH / "colors/colors.json")
     self.stock_colors = json.loads(stock_colors_json.read_text()) if stock_colors_json.is_file() else {}
@@ -1408,6 +1415,11 @@ class StarPilotVariables:
 
     toggle.subaru_sng = self.get_value("SubaruSNG", condition=toggle.car_make == "subaru" and not (CP.flags & SubaruFlags.GLOBAL_GEN2 or CP.flags & SubaruFlags.HYBRID))
     toggle.subaru_sng_manual_parking_brake = self.get_value("SubaruSNGManualParkingBrake", condition=toggle.subaru_sng)
+
+    toggle.jeep_brake_hold = self.get_value(
+      "JeepBrakeHold",
+      condition=toggle.car_make == "chrysler" and toggle.car_model in CHRYSLER_JEEPS,
+    )
 
     toggle.tesla_cooperative_steering = self.get_value(
       "TeslaCoopSteering",

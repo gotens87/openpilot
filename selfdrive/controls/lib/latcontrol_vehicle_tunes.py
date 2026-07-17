@@ -110,6 +110,9 @@ ELANTRA_NON_SCC_CARS = (
 KIA_EV6_CARS = (
   HYUNDAI_CAR.KIA_EV6,
 )
+KIA_CARNIVAL_CARS = (
+  HYUNDAI_CAR.KIA_CARNIVAL_2025,
+)
 KIA_XCEED_CARS = (
   HYUNDAI_CAR.KIA_XCEED_PHEV,
 )
@@ -328,6 +331,16 @@ KIA_NIRO_PHEV_2022_FRICTION_SPEED_WIDTH = 2.5
 KIA_NIRO_PHEV_2022_FRICTION_CALM_JERK = 0.22
 KIA_NIRO_PHEV_2022_FRICTION_CALM_JERK_WIDTH = 0.06
 KIA_NIRO_PHEV_2022_FRICTION_THRESHOLD_GAIN = 0.12
+
+KIA_CARNIVAL_CENTER_TAPER_MAX = 0.10
+KIA_CARNIVAL_CENTER_TAPER_LAT = 0.16
+KIA_CARNIVAL_CENTER_TAPER_LAT_WIDTH = 0.05
+KIA_CARNIVAL_CENTER_TAPER_SPEED = 6.5
+KIA_CARNIVAL_CENTER_TAPER_SPEED_WIDTH = 1.5
+KIA_CARNIVAL_CENTER_TAPER_SPEED_MAX = 16.0
+KIA_CARNIVAL_CENTER_TAPER_SPEED_MAX_WIDTH = 2.5
+KIA_CARNIVAL_FRICTION_THRESHOLD_GAIN = 0.18
+KIA_CARNIVAL_FRICTION_CENTER_FADE_MAX = 0.25
 
 KIA_FORTE_BASE_LAT_ACCEL_FACTOR_MULT = 1.05
 KIA_FORTE_FF_REDUCTION_LEFT = 0.05
@@ -1598,6 +1611,30 @@ def get_kia_niro_phev_2022_friction_threshold(v_ego: float, desired_lateral_acce
   return base_threshold * min(max(threshold_scale, 1.0), 1.18)
 
 
+def _kia_carnival_center_weights(desired_lateral_accel: float, v_ego: float) -> tuple[float, float]:
+  speed_onset = _sigmoid((v_ego - KIA_CARNIVAL_CENTER_TAPER_SPEED) / KIA_CARNIVAL_CENTER_TAPER_SPEED_WIDTH)
+  speed_cutoff = _sigmoid((KIA_CARNIVAL_CENTER_TAPER_SPEED_MAX - v_ego) / KIA_CARNIVAL_CENTER_TAPER_SPEED_MAX_WIDTH)
+  speed_weight = speed_onset * speed_cutoff
+  center_weight = _sigmoid((KIA_CARNIVAL_CENTER_TAPER_LAT - abs(desired_lateral_accel)) / KIA_CARNIVAL_CENTER_TAPER_LAT_WIDTH)
+  return speed_weight, center_weight
+
+
+def get_kia_carnival_center_taper_scale(desired_lateral_accel: float, v_ego: float) -> float:
+  speed_weight, center_weight = _kia_carnival_center_weights(desired_lateral_accel, v_ego)
+  return 1.0 - (KIA_CARNIVAL_CENTER_TAPER_MAX * speed_weight * center_weight)
+
+
+def get_kia_carnival_friction_threshold(v_ego: float, desired_lateral_accel: float = 0.0, desired_lateral_jerk: float = 0.0) -> float:
+  del desired_lateral_jerk
+  speed_weight, center_weight = _kia_carnival_center_weights(desired_lateral_accel, v_ego)
+  return get_hkg_canfd_base_friction_threshold(v_ego) * (1.0 + KIA_CARNIVAL_FRICTION_THRESHOLD_GAIN * speed_weight * center_weight)
+
+
+def get_kia_carnival_friction_center_fade_scale(desired_lateral_accel: float, v_ego: float) -> float:
+  speed_weight, center_weight = _kia_carnival_center_weights(desired_lateral_accel, v_ego)
+  return 1.0 - (KIA_CARNIVAL_FRICTION_CENTER_FADE_MAX * speed_weight * center_weight)
+
+
 def _kia_forte_sigmoid(x: float) -> float:
   return _sigmoid(x)
 
@@ -2724,13 +2761,13 @@ def get_flm_capabilities(car_fingerprint, brand: str = "", hyundai_canfd: bool =
   dedicated_friction = car_fingerprint in (
     set(BOLT_2022_2023_CARS) | set(BOLT_2018_2021_CARS) | set(VOLT_STANDARD_CARS) | set(PALISADE_CARS) |
     set(PRIUS_CARS) | set(IONIQ_5_CARS) | set(IONIQ_6_CARS) | set(KIA_EV6_CARS) | set(KIA_FORTE_CARS) |
-    set(KIA_NIRO_PHEV_2022_CARS) | set(GENESIS_G90_CARS)
+    set(KIA_NIRO_PHEV_2022_CARS) | set(KIA_CARNIVAL_CARS) | set(GENESIS_G90_CARS)
   )
   dedicated_center_taper = car_fingerprint in (
     set(PRIUS_CARS) | set(BOLT_CARS) | set(VOLT_STANDARD_CARS) | set(IONIQ_5_CARS) |
     set(IONIQ_EV_OLD_CARS) | set(IONIQ_6_CARS) | set(SONATA_CARS) | set(SONATA_HYBRID_CARS) |
     set(KIA_XCEED_CARS) | set(KIA_NIRO_PHEV_2022_CARS) | set(KIA_FORTE_CARS) | set(KIA_EV6_CARS) |
-    set(SILVERADO_CARS)
+    set(KIA_CARNIVAL_CARS) | set(SILVERADO_CARS)
   )
   rich_knobs = [name for name, meta in FLM_SUPPORTED_VEHICLE_KNOBS.items() if meta["profile"] == profile_key]
   return {

@@ -106,6 +106,12 @@ class FakeManagedProcess:
     return SimpleNamespace(name="ui")
 
 
+def test_reboot_guard_includes_raw_ignition_state():
+  assert manager.should_defer_reboot(started=True, ignition=False)
+  assert manager.should_defer_reboot(started=False, ignition=True)
+  assert not manager.should_defer_reboot(started=False, ignition=False)
+
+
 class TestManager:
   def setup_method(self):
     HARDWARE.set_power_save(False)
