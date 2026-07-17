@@ -13,7 +13,7 @@ from opendbc.car.car_helpers import interfaces
 from opendbc.car.chrysler.values import pacifica_hybrid_aol_stock_acc_mode
 from opendbc.car.gm.values import CAR as GM_CAR
 from opendbc.car.vehicle_model import VehicleModel
-from openpilot.selfdrive.controls.lib.drive_helpers import clip_curvature, get_lateral_active
+from openpilot.selfdrive.controls.lib.drive_helpers import MAX_LATERAL_JERK, clip_curvature, get_lateral_active
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, STEER_ANGLE_SATURATION_THRESHOLD
@@ -40,11 +40,19 @@ ACTUATOR_FIELDS = tuple(car.CarControl.Actuators.schema.fields.keys())
 # time so the final recenter correction is shaped instead of stepping through unclamped.
 LANE_CHANGE_SMOOTH_RELEASE_T = 2.0
 
-# Floor on the jerk factor when the model is unwinding lane-change curvature (the arrest and
-# any correction back toward center). Entry gentleness is comfort, but arrest speed is a
-# correctness constraint: a slow symmetric cap lets the car glide past the new lane center.
-# 0.6 (≈ pace-5 rate) fully tracks the arrest demand seen in logs while staying 40% below stock.
+# Cap on the extra jerk factor granted while the model is unwinding lane-change curvature
+# (the arrest and any correction back toward center). Entry gentleness is comfort, but arrest
+# speed is a correctness constraint: a slow symmetric cap lets the car glide past the new lane
+# center. 0.6 (≈ pace-5 rate) fully tracks the arrest demand seen in logs, 40% below stock.
 LANE_CHANGE_ARREST_JERK_FLOOR = 0.6
+# The extra unwind authority is proportional to how far the command lags the model
+# (rate = lag/tau, a P-pursuit), NOT a fixed fast rate: a boolean-gated floor engages as a
+# bang-bang switch right at the maneuver crest — where the slow entry command meets a model
+# that already peaked and is diving — snapping the wheel ~2 deg in 0.2 s (lanechange1/2
+# rlogs 2026-07-17). With pursuit, lag ~0 at the crest so the rate crosses zero smoothly,
+# and noise-scale lag inside the deadband gets no boost (kills the fast-down/slow-up sawtooth).
+LANE_CHANGE_ARREST_PURSUIT_TAU = 0.2   # s
+LANE_CHANGE_ARREST_GAP_DEADBAND = 5e-5  # 1/m
 
 # Low-speed turn-intent curvature hold. Approaching a turn with the blinker on, the
 # model's time-based plan collapses as the car slows to a stop: desiredCurvature decays
@@ -424,15 +432,19 @@ class Controls:
         release = 1.0 - self.lc_smooth_release / LANE_CHANGE_SMOOTH_RELEASE_T  # 0 in maneuver → 1 after
         jerk_factor = set_jerk + (1.0 - set_jerk) * release
         # When the model is unwinding curvature (reducing the lane-change curvature magnitude)
-        # and the entry cap would make the command lag it, apply the arrest floor so the car
-        # can stop on the new lane center. Applies only to the unwind direction; the entry
-        # ramp keeps the full pace smoothness. Robust to double lane changes (no baseline).
+        # and the entry cap would make the command lag it, grant extra rate proportional to the
+        # lag so the car can stop on the new lane center. Applies only to the unwind direction;
+        # the entry ramp keeps the full pace smoothness. Robust to double lane changes (no
+        # baseline). Pursuit (lag/tau) rather than a fixed floor so the crest stays smooth.
         model_unwinding = abs(new_desired_curvature) < abs(self.desired_curvature) and \
             math.copysign(1.0, new_desired_curvature - self.desired_curvature) == -math.copysign(1.0, self.desired_curvature) and \
             abs(self.desired_curvature) > 1e-4
         if model_unwinding:
-          arrest_floor = LANE_CHANGE_ARREST_JERK_FLOOR + (1.0 - LANE_CHANGE_ARREST_JERK_FLOOR) * release
-          jerk_factor = max(jerk_factor, arrest_floor)
+          v_lim = max(CS.vEgo, 1.0)
+          gap = max(abs(new_desired_curvature - self.desired_curvature) - LANE_CHANGE_ARREST_GAP_DEADBAND, 0.0)
+          jf_gap = (gap / LANE_CHANGE_ARREST_PURSUIT_TAU) * v_lim ** 2 / MAX_LATERAL_JERK
+          arrest_cap = LANE_CHANGE_ARREST_JERK_FLOOR + (1.0 - LANE_CHANGE_ARREST_JERK_FLOOR) * release
+          jerk_factor = max(jerk_factor, min(arrest_cap, jerk_factor + jf_gap))
 
     self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll,
                                                                jerk_factor)
