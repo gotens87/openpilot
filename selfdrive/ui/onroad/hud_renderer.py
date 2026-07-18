@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from openpilot.common.constants import CV
 from openpilot.selfdrive.ui.onroad.exp_button import ExpButton
 from openpilot.selfdrive.ui.onroad.starpilot.navigation_card import NavigationCardRenderer
+from openpilot.selfdrive.ui.onroad.starpilot.compass import get_compass_text
 from openpilot.selfdrive.ui.ui_state import ui_state, UIStatus
 from openpilot.system.ui.lib.application import gui_app, FontWeight
 from openpilot.system.ui.lib.multilang import tr
@@ -190,3 +191,10 @@ class HudRenderer(Widget):
     unit_text_size = measure_text_cached(self._font_medium, unit_text, FONT_SIZES.speed_unit)
     unit_pos = rl.Vector2(rect.x + rect.width / 2 - unit_text_size.x / 2, 290 - unit_text_size.y / 2)
     rl.draw_text_ex(self._font_medium, unit_text, unit_pos, FONT_SIZES.speed_unit, 0, COLORS.WHITE_TRANSLUCENT)
+
+    compass_text = get_compass_text()
+    if compass_text:
+      compass_font_size = 50
+      compass_size = measure_text_cached(self._font_bold, compass_text, compass_font_size)
+      compass_pos = rl.Vector2(rect.x + rect.width / 2 - compass_size.x / 2, 65 - compass_size.y / 2)
+      rl.draw_text_ex(self._font_bold, compass_text, compass_pos, compass_font_size, 0, rl.Color(255, 255, 255, 180))

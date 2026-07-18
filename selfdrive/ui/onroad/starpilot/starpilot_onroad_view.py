@@ -391,38 +391,19 @@ class StarPilotOnroadView(AugmentedRoadView):
         from openpilot.selfdrive.ui.onroad.starpilot.pause_indicators import render_longitudinal_paused
         render_longitudinal_paused(badge_rect)
 
-    # 2. Render Compass & Weather (on the opposite side of DM icon)
-    # Dimensions
-    compass_w = 120
-    compass_h = 120
-    weather_w = 120
-    weather_h = 120
-
-    # Determine compass position
-    if not dm.is_rhd:
-      # LHD: Compass on the far right
-      cx = self._content_rect.x + self._content_rect.width - 30 - compass_w
-    else:
-      # RHD: Compass on the far left
-      cx = self._content_rect.x + 30
-
-    cy = dm.position_y - compass_h / 2
-    compass_rect = rl.Rectangle(cx, cy, compass_w, compass_h)
-
-    # Render Compass
-    from openpilot.selfdrive.ui.onroad.starpilot.compass import render_compass
-    render_compass(compass_rect, self._font_medium)
-
-    # Render Weather next to Compass
+    # 2. Render Weather (on the opposite side of DM icon)
     plan = ui_state.sm["starpilotPlan"] if ui_state.sm.valid.get("starpilotPlan", False) else None
     if plan and plan.weatherId != 0:
+      weather_w = 120
+      weather_h = 120
       if not dm.is_rhd:
-        # LHD: Weather to the left of Compass
-        wx = cx - spacing - weather_w
+        # LHD: Weather on the far right
+        wx = self._content_rect.x + self._content_rect.width - 30 - weather_w
       else:
-        # RHD: Weather to the right of Compass
-        wx = cx + compass_w + spacing
+        # RHD: Weather on the far left
+        wx = self._content_rect.x + 30
 
+      cy = dm.position_y - weather_h / 2
       weather_rect = rl.Rectangle(wx, cy, weather_w, weather_h)
       from openpilot.selfdrive.ui.onroad.starpilot.weather_icon import render_weather_icon
       render_weather_icon(weather_rect)
