@@ -133,7 +133,6 @@ HideSpeedLimit
 HideTurningBanner
 HigherBitrate
 HolidayThemes
-HumanAcceleration
 HumanLaneChanges
 IconPack
 IncreaseFollowingLowVisibility

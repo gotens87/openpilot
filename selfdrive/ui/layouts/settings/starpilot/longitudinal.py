@@ -466,9 +466,6 @@ class StarPilotLongitudinalLayout(_SettingsPage):
   def _advanced_enabled(self) -> bool:
     return self._params.get_bool("AdvancedLongitudinalTune")
 
-  def _using_human_acceleration(self) -> bool:
-    return self._params.get_bool("LongitudinalTune") and self._params.get_bool("HumanAcceleration")
-
   def _show_stop_tuning_values(self) -> bool:
     return self._advanced_enabled() and not (starpilot_state.car_state.isToyota and self._params.get_bool("FrogsGoMoosTweak"))
 
@@ -553,7 +550,7 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                  subtitle=tr_noop("Extra acceleration when moving away from a stop."),
                  get_value=lambda: f"{self._params.get_float('StartAccel'):.2f}m/s",
                  on_click=lambda: self._show_slider("StartAccel", 0.0, 4.0, step=0.01, unit="m/s", value_type="float"),
-                 visible=lambda: adv() and not self._using_human_acceleration()),
+                 visible=adv),
       SettingRow("StopAccel", "value", tr_noop("Stop Acceleration"),
                  subtitle=tr_noop("Brake force to hold the vehicle at a complete stop."),
                  get_value=lambda: f"{self._params.get_float('StopAccel'):.2f}m/s",

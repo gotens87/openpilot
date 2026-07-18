@@ -15,7 +15,6 @@ from openpilot.selfdrive.controls.lib.longcontrol import (
 def make_toggles(**overrides):
   defaults = {
     "custom_accel_profile": False,
-    "human_acceleration": False,
     "startAccel": 1.5,
     "stopAccel": -0.5,
     "stoppingDecelRate": 0.8,

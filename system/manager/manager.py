@@ -66,7 +66,7 @@ STARPILOT_PARAM_CANONICALIZATION_MIGRATION_FLAG = Path("/data") / "starpilot_par
 STARPILOT_PC_ROOT_MIGRATION_FLAG = Path("/data") / "starpilot_pc_root_v1"
 STARPILOT_PARAMS_CACHE_MIGRATION_FLAG = Path("/data") / "starpilot_params_cache_v1"
 STARPILOT_LEGACY_CACHE_MARKER_KEYS = ("RemapCancelToDistance",)
-STARPILOT_REMOVED_PARAM_KEYS = ("CoastUpToLeads", "HumanFollowing", "PrioritizeSmoothFollowing")
+STARPILOT_REMOVED_PARAM_KEYS = ("CoastUpToLeads", "HumanAcceleration", "HumanFollowing", "PrioritizeSmoothFollowing")
 LEGACY_CARMODEL_MIGRATIONS = {
   "CHEVROLET_BOLT_CC_2019_2021": "CHEVROLET_BOLT_CC_2018_2021",
 }
@@ -507,7 +507,6 @@ def migrate_starpilot_default_parity(params: Params, params_cache: Params) -> No
   desired_bool_values = {
     "AdvancedLateralTune": True,
     "ForceAutoTuneOff": True,
-    "HumanAcceleration": False,
     "NNFF": False,
     "NNFFLite": False,
   }
@@ -555,7 +554,7 @@ def migrate_disable_humanlike_defaults(params: Params, params_cache: Params) -> 
 
   disabled_keys: list[str] = []
 
-  for key in ("HumanAcceleration", "HumanLaneChanges"):
+  for key in ("HumanLaneChanges",):
     if not (params.get_bool(key) or params_cache.get_bool(key)):
       continue
 

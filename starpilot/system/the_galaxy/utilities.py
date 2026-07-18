@@ -72,7 +72,7 @@ DASHBOARD_ROUTE_SEGMENT_SAMPLE_LIMIT = 2
 DASHBOARD_PERSISTED_ROUTE_LIMIT = 5000
 DASHBOARD_PERSIST_MIN_ROUTE_AGE_SECONDS = 120
 DASHBOARD_PERSISTENT_STATS_PARAM = "GalaxyDashboardStats"
-DASHBOARD_ROUTE_ANALYSIS_VERSION = 3
+DASHBOARD_ROUTE_ANALYSIS_VERSION = 4
 DASHBOARD_PARAMS_DIR = Path("/data/params/d")
 DASHBOARD_ANALYZER_LOG_PATH = "/tmp/galaxy_dashboard_analyzer.log"
 DASHBOARD_ANALYZER_STATUS_PATH = Path("/tmp/galaxy_dashboard_analyzer_status.json")
@@ -1433,18 +1433,6 @@ def _distance_from_meters(distance_m, is_metric):
   return distance_m * (METER_TO_KILOMETER if is_metric else METER_TO_MILE)
 
 
-def _current_model_name(params_obj, model_names):
-  for key in ("DrivingModelName", "DrivingModel", "Model"):
-    value = _params_get_text(params_obj, key, "")
-    model_key = canonical_model_key(value)
-    if model_key and model_key in model_names:
-      return model_names[model_key]["name"]
-    label = _clean_model_label(value)
-    if label:
-      return label
-  return ""
-
-
 def _route_shell_drive(route_info, params_obj, model_names, is_metric):
   segment_count = max(0, _safe_int(route_info.get("segmentCount", 0), 0))
   duration_seconds = segment_count * 60
@@ -1461,7 +1449,7 @@ def _route_shell_drive(route_info, params_obj, model_names, is_metric):
     "avgSpeed": 0,
     "engagedPercent": 0,
     "engagedSeconds": 0.0,
-    "model": _current_model_name(params_obj, model_names) or "Unknown model",
+    "model": "Unknown model",
     "segmentCount": segment_count,
     "distractedMoments": 0,
     "unresponsiveMoments": 0,
@@ -2469,6 +2457,10 @@ def _update_dashboard_persistent_stats(params_obj, drives, wall_now):
       next_distance = max(0.0, _safe_float(next_entry.get("distanceMeters", 0.0), 0.0))
       existing_current = _safe_float(existing_entry.get("modifiedAt", 0.0), 0.0) >= _safe_float(next_entry.get("modifiedAt", 0.0), 0.0)
       existing_attention_known = bool(existing_entry.get("attentionKnown", True))
+      existing_model = _clean_model_label(existing_entry.get("model", ""))
+      if not attention_known and existing_current and existing_model and existing_model != "Unknown model":
+        next_entry["model"] = existing_model
+        next_entry["modelKey"] = canonical_model_key(existing_entry.get("modelKey", "")) or _model_usage_key(existing_model)
       if not attention_known and existing_current and existing_attention_known:
         next_entry["clean"] = bool(existing_entry.get("clean", False))
         next_entry["undistracted"] = bool(existing_entry.get("undistracted", existing_entry.get("clean", False)))

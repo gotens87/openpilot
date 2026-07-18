@@ -36,7 +36,6 @@ def make_toggles(**overrides):
     "custom_accel_profile_values": [],
     "ev_tuning": True,
     "truck_tuning": False,
-    "human_acceleration": False,
     "map_acceleration": False,
     "map_deceleration": False,
     "set_speed_limit": True,

@@ -8,6 +8,39 @@ const COLOR_UI_DEFAULTS = {
   PathColor: "#30ff9c",
 }
 const FAVORITE_OPTION_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" })
+const GALAXY_DEVELOPER_MODE_KEY = "GalaxyDeveloperMode"
+const HIDDEN_SECTION_NAMES = new Set(["Model & Customization"])
+const HIDDEN_SETTING_KEYS = new Set(["DisableWideRoad", "HumanAcceleration", "ReverseCruise"])
+const GM_MAKES = ["Buick", "Cadillac", "Chevrolet", "GMC", "Holden"]
+const HKG_MAKES = ["Genesis", "Hyundai", "Kia"]
+const VEHICLE_SETTING_MAKES = {
+  TeslaCoopSteering: ["Tesla"],
+  NAPRadarEnabled: ["Tesla"],
+  NAPRadarBehindNosecone: ["Tesla"],
+  NAPRadarOffset: ["Tesla"],
+  NAPPedalEnabled: ["Tesla"],
+  NAPPedalCanBus: ["Tesla"],
+  NAPAdaptiveAccel: ["Tesla"],
+  NAPPedalCalibDone: ["Tesla"],
+  NAPPedalCalibFactor: ["Tesla"],
+  NAPPedalCalibZero: ["Tesla"],
+  GMPedalLongitudinal: GM_MAKES,
+  GMDashSpoofOffsets: GM_MAKES,
+  IgnoreIgnitionLine: GM_MAKES,
+  LongPitch: GM_MAKES,
+  RemoteStartBootsComma: GM_MAKES,
+  HKGRemoteStartBootsComma: HKG_MAKES,
+  VoltSNG: ["Chevrolet", "Holden"],
+  GMAutoHold: ["Chevrolet", "Holden"],
+  VoltOnePedalMode: ["Chevrolet", "Holden"],
+  RemapCancelToDistance: ["Chevrolet", "Holden"],
+  JeepBrakeHold: ["Jeep"],
+  SubaruSNG: ["Subaru"],
+  SubaruSNGManualParkingBrake: ["Subaru"],
+  ClusterOffset: ["Lexus", "Toyota"],
+  SNGHack: ["Lexus", "Toyota"],
+  ToyotaAutoHold: ["Lexus", "Toyota"],
+}
 
 // Plain variables — scheduling/routing flags that must NOT be reactive
 let syncScheduled = false
@@ -54,11 +87,34 @@ function slugifySectionName(name) {
     .replace(/^-+|-+$/g, "")
 }
 
+function normalizeVehicleMake(value) {
+  return String(value || "").trim().toLowerCase()
+}
+
+function isVehicleSettingVisible(section, param) {
+  if (section.name !== "Vehicle") return true
+  const allowedMakes = VEHICLE_SETTING_MAKES[param.key]
+  if (!allowedMakes) return true
+  const selectedMake = normalizeVehicleMake(state.values.CarMake)
+  return allowedMakes.some(make => normalizeVehicleMake(make) === selectedMake)
+}
+
+function isSettingVisible(section, param) {
+  // This policy controls Galaxy rendering only; hidden params retain their stored values.
+  if (HIDDEN_SETTING_KEYS.has(param.key) || !isVehicleSettingVisible(section, param)) return false
+  if (state.values[GALAXY_DEVELOPER_MODE_KEY]) return true
+  return section.name === "Favorites" || param.settings_tier === "simple"
+}
+
 function getSectionsWithSlug() {
-  return state.layout.map(section => ({
-    ...section,
-    slug: slugifySectionName(section.name),
-  }))
+  return state.layout
+    .filter(section => !HIDDEN_SECTION_NAMES.has(section.name))
+    .map(section => ({
+      ...section,
+      params: (section.params || []).filter(param => isSettingVisible(section, param)),
+      slug: slugifySectionName(section.name),
+    }))
+    .filter(section => section.params.length > 0)
 }
 
 function isGroupParam(param) {
@@ -317,7 +373,7 @@ async function fetchLayoutAndParams() {
   state.loadingValues = true
 
   try {
-    const layoutRes = await fetch("/assets/components/tools/device_settings_layout.json?v=favorite-slots-5", { cache: "no-store" })
+    const layoutRes = await fetch("/assets/components/tools/device_settings_layout.json?v=settings-tier-1", { cache: "no-store" })
     const rawLayoutData = await layoutRes.json()
 
     const layoutData = rawLayoutData

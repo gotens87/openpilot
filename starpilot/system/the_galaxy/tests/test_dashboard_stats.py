@@ -821,7 +821,7 @@ def test_lightweight_routes_surface_recent_drives_without_log_analysis(monkeypat
   dashboard = utilities.get_dashboard_stats(["/tmp/missing"], params, now=utilities.datetime(2026, 6, 16, 12, 0, 0))
 
   assert [drive["name"] for drive in dashboard["recentDrives"]] == ["route-new", "route-old"]
-  assert dashboard["lastDrive"]["model"] == "Orion"
+  assert dashboard["lastDrive"]["model"] == "Unknown model"
   assert dashboard["week"]["drives"] == 2
   assert dashboard["favoriteModels"] == []
   assert dashboard["analysis"]["pendingRoutes"] == 2
@@ -947,7 +947,7 @@ def test_shell_update_preserves_old_analysis_version_for_reparse():
     "distanceMeters": 0.0,
     "duration": 660,
     "engagedSeconds": 0.0,
-    "model": "Orion",
+    "model": "Vega",
     "routeModifiedAt": 100,
     "attentionKnown": False,
     "analysisComplete": False,
@@ -957,8 +957,65 @@ def test_shell_update_preserves_old_analysis_version_for_reparse():
   stats = utilities._update_dashboard_persistent_stats(params, [shell_drive], wall_now=1000)
 
   assert stats["routes"]["route-1"]["date"] == "2026-06-18T09:24:00"
+  assert stats["routes"]["route-1"]["model"] == "Orion"
   assert stats["routes"]["route-1"]["analysisVersion"] == utilities.DASHBOARD_ROUTE_ANALYSIS_VERSION - 1
   assert utilities._analysis_candidates([{"name": "route-1", "modifiedAt": 100}], stats)
+
+
+def test_route_shell_does_not_assign_the_current_model():
+  route_info = {
+    "name": "route-1",
+    "segments": [],
+    "segmentCount": 1,
+    "startedAt": utilities.datetime(2026, 6, 18, 9, 24, 0),
+    "modifiedAt": utilities.datetime(2026, 6, 18, 9, 25, 0).timestamp(),
+  }
+  params = FakeParams({"DrivingModelName": "Vega"})
+
+  shell_drive = utilities._route_shell_drive(route_info, params, {}, is_metric=False)
+
+  assert shell_drive["model"] == "Unknown model"
+
+
+def test_reanalysis_replaces_the_shell_model_and_recalculates_usage():
+  params = FakeParams({
+    utilities.DASHBOARD_PERSISTENT_STATS_PARAM: {
+      "routes": {
+        "route-1": {
+          "date": "2026-07-17T16:58:00",
+          "endDate": "2026-07-17T17:51:00",
+          "distanceMeters": 57000.0,
+          "duration": 3180,
+          "engagedSeconds": 1800.0,
+          "model": "Pop Model V2",
+          "modelKey": "Pop Model V2",
+          "modifiedAt": 100,
+          "attentionKnown": True,
+          "analysisComplete": True,
+          "analysisVersion": utilities.DASHBOARD_ROUTE_ANALYSIS_VERSION - 1,
+        },
+      },
+    },
+  })
+  analyzed_drive = {
+    "name": "route-1",
+    "date": "2026-07-17T16:58:00",
+    "endDate": "2026-07-17T17:51:00",
+    "distanceMeters": 57000.0,
+    "duration": 3180,
+    "engagedSeconds": 1800.0,
+    "model": "Michael RL",
+    "routeModifiedAt": 100,
+    "attentionKnown": True,
+    "analysisComplete": True,
+    "analysisVersion": utilities.DASHBOARD_ROUTE_ANALYSIS_VERSION,
+  }
+
+  stats = utilities._update_dashboard_persistent_stats(params, [analyzed_drive], wall_now=1000)
+
+  assert stats["routes"]["route-1"]["model"] == "Michael RL"
+  assert list(stats["modelUsage"]) == ["michael-rl"]
+  assert stats["modelUsage"]["michael-rl"]["drives"] == 1
 
 
 def test_week_summary_ignores_stale_premigration_route_rows(monkeypatch):

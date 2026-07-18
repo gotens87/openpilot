@@ -419,9 +419,7 @@ class LongControl:
       self.reset(preserve_stop_release=True)
 
     elif self.long_control_state == LongCtrlState.starting:
-      if starpilot_toggles.human_acceleration:
-        output_accel = a_target
-      elif getattr(starpilot_toggles, "custom_accel_profile", False):
+      if getattr(starpilot_toggles, "custom_accel_profile", False):
         output_accel = clip(a_target, 0.0, starpilot_toggles.startAccel)
       else:
         output_accel = starpilot_toggles.startAccel

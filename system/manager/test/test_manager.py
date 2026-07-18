@@ -222,7 +222,6 @@ class TestManager:
     params = FileBackedFakeParams(tmp_path / "params", {
       "AdvancedLateralTune": False,
       "ForceAutoTuneOff": False,
-      "HumanAcceleration": True,
       "CEModelStopTime": 3.5,
     })
     params_cache = FileBackedFakeParams(tmp_path / "cache", {
@@ -233,30 +232,26 @@ class TestManager:
 
     assert not params.get_bool("AdvancedLateralTune")
     assert not params.get_bool("ForceAutoTuneOff")
-    assert params.get_bool("HumanAcceleration")
     assert params.get("CEModelStopTime") == "3.5"
     assert params_cache.get_bool("NNFF")
 
   def test_migrate_disable_humanlike_defaults(self, tmp_path, monkeypatch):
     monkeypatch.setattr(manager, "STARPILOT_HUMANLIKE_DISABLE_MIGRATION_FLAG", tmp_path / "starpilot_humanlike_disable_v1")
 
-    params = FileBackedFakeParams(tmp_path / "params", {
-      "HumanAcceleration": True,
-    })
+    params = FileBackedFakeParams(tmp_path / "params", {})
     params_cache = FileBackedFakeParams(tmp_path / "cache", {
       "HumanLaneChanges": True,
     })
 
     manager.migrate_disable_humanlike_defaults(params, params_cache)
 
-    assert not params.get_bool("HumanAcceleration")
     assert not params.get_bool("HumanLaneChanges")
-    assert not params_cache.get_bool("HumanAcceleration")
     assert not params_cache.get_bool("HumanLaneChanges")
 
   def test_cleanup_removed_starpilot_params(self, tmp_path):
     params = FileBackedFakeParams(tmp_path / "params", {
       "CoastUpToLeads": True,
+      "HumanAcceleration": True,
       "HumanFollowing": True,
     })
     params_cache = FileBackedFakeParams(tmp_path / "cache", {
@@ -267,6 +262,7 @@ class TestManager:
     manager.cleanup_removed_starpilot_params(params, params_cache)
 
     assert not Path(params.get_param_path("CoastUpToLeads")).exists()
+    assert not Path(params.get_param_path("HumanAcceleration")).exists()
     assert not Path(params.get_param_path("HumanFollowing")).exists()
     assert not Path(params_cache.get_param_path("HumanFollowing")).exists()
     assert not Path(params_cache.get_param_path("PrioritizeSmoothFollowing")).exists()
