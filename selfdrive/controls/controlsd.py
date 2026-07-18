@@ -424,7 +424,8 @@ class Controls:
     self.LoC.experimental_mode = bool(self.sm['selfdriveState'].experimentalMode)
     actuators.accel = float(min(self.LoC.update(CC.longActive, CS, long_plan.aTarget, long_plan.shouldStop, pid_accel_limits,
                                                 self.starpilot_toggles, has_lead=long_plan.hasLead,
-                                                traffic_mode_enabled=self.sm['starpilotCarState'].trafficModeEnabled),
+                                                traffic_mode_enabled=self.sm['starpilotCarState'].trafficModeEnabled,
+                                                profile_max_accel=self.sm['starpilotPlan'].maxAcceleration),
                                 self.starpilot_toggles.max_desired_acceleration))
 
     # Steering PID loop and lateral MPC

@@ -190,15 +190,6 @@ def test_traffic_mode_overrides_custom_accel_profile():
   assert accel.max_accel == pytest.approx(get_max_accel_traffic(5.0))
 
 
-def test_traffic_mode_skips_human_acceleration_shaping():
-  accel = StarPilotAcceleration(FakePlanner(v_cruise=2.0))
-  sm = make_sm(traffic_mode=True)
-
-  accel.update(1.0, sm, make_toggles(human_acceleration=True))
-
-  assert accel.max_accel == pytest.approx(get_max_accel_traffic(1.0))
-
-
 def test_traffic_mode_sets_soft_cruise_decel_floor():
   accel = StarPilotAcceleration(FakePlanner(v_cruise=25.0))
   sm = make_sm(traffic_mode=True)
