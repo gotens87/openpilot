@@ -410,10 +410,14 @@ class TestLatControl:
     center_taper = get_kia_carnival_center_taper_scale(0.04, 8.5)
     turn_taper = get_kia_carnival_center_taper_scale(0.35, 8.5)
     low_speed_taper = get_kia_carnival_center_taper_scale(0.04, 2.0)
+    neighborhood_taper = get_kia_carnival_center_taper_scale(0.04, 5.0)
+    neighborhood_turn_taper = get_kia_carnival_center_taper_scale(0.35, 5.0)
     highway_taper = get_kia_carnival_center_taper_scale(0.04, 25.0)
     assert center_taper < turn_taper <= 1.0
     assert center_taper < low_speed_taper <= 1.0
     assert center_taper < highway_taper <= 1.0
+    assert neighborhood_taper < 0.94
+    assert neighborhood_turn_taper > 0.99
 
     center_threshold = get_kia_carnival_friction_threshold(8.5, 0.04)
     turn_threshold = get_kia_carnival_friction_threshold(8.5, 0.35)

@@ -694,6 +694,57 @@ def test_cpu_temp_reader_ignores_non_cpu_thermal_zones(tmp_path):
   assert utilities._read_cpu_temp_c(tmp_path) == 61
 
 
+def test_network_name_uses_wifi_ssid(monkeypatch):
+  monkeypatch.setattr(utilities, "HARDWARE", SimpleNamespace(get_network_type=lambda: 1))
+  monkeypatch.setattr(utilities, "_read_active_wifi_ssid", lambda: "Garage Wi-Fi")
+  utilities._NETWORK_STATUS_CACHE.update({"updated_at": 0.0, "value": None})
+
+  assert utilities.get_current_network_name() == "Garage Wi-Fi"
+
+
+def test_wifi_ssid_reader_uses_active_nmcli_row(monkeypatch):
+  result = SimpleNamespace(
+    returncode=0,
+    stdout=" :Nearby Network\n*:Garage:Main Wi-Fi\n",
+  )
+  monkeypatch.setattr(utilities.subprocess, "run", lambda *args, **kwargs: result)
+
+  assert utilities._read_active_wifi_ssid() == "Garage:Main Wi-Fi"
+
+
+def test_network_name_labels_cellular_generations(monkeypatch):
+  network_type = {"value": 4}
+  monkeypatch.setattr(utilities, "HARDWARE", SimpleNamespace(get_network_type=lambda: network_type["value"]))
+  monkeypatch.setattr(utilities, "_read_active_wifi_ssid", lambda: None)
+
+  utilities._NETWORK_STATUS_CACHE.update({"updated_at": 0.0, "value": None})
+  assert utilities.get_current_network_name() == "Cellular (LTE)"
+
+  network_type["value"] = 5
+  utilities._NETWORK_STATUS_CACHE.update({"updated_at": 0.0, "value": None})
+  assert utilities.get_current_network_name() == "Cellular (5G)"
+
+
+def test_network_name_reports_no_wireless_connectivity(monkeypatch):
+  monkeypatch.setattr(utilities, "HARDWARE", SimpleNamespace(get_network_type=lambda: 0))
+  monkeypatch.setattr(utilities, "_read_active_wifi_ssid", lambda: None)
+  utilities._NETWORK_STATUS_CACHE.update({"updated_at": 0.0, "value": None})
+
+  assert utilities.get_current_network_name() == "No wireless connectivity"
+
+
+def test_device_summary_includes_network_name(monkeypatch):
+  monkeypatch.setattr(utilities, "_read_uptime_seconds", lambda: 120)
+  monkeypatch.setattr(utilities, "_read_cpu_temp_c", lambda: 55)
+  monkeypatch.setattr(utilities, "get_current_lan_ip", lambda: "192.168.1.10")
+  monkeypatch.setattr(utilities, "get_current_network_name", lambda: "Home Network")
+
+  summary = utilities._build_device_summary(FakeParams({"IsOnroad": False}))
+
+  assert summary["networkName"] == "Home Network"
+  assert summary["lanIp"] == "192.168.1.10"
+
+
 def test_persistent_loader_accepts_decoded_param_dict():
   params = FakeParams({
     utilities.DASHBOARD_PERSISTENT_STATS_PARAM: {

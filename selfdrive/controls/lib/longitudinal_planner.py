@@ -313,6 +313,9 @@ UNCERT_PANIC_MIN_CLOSING_SPEED = 2.0
 UNCERT_PANIC_MIN_CLOSING_SPEED_GAIN = 0.08
 UNCERT_PANIC_MAX_GAP_BUFFER_MIN = 8.0
 UNCERT_PANIC_MAX_GAP_BUFFER_GAIN = 0.35
+UNCERT_DUPLICATE_VISION_MIN_TTC = 6.0
+UNCERT_DUPLICATE_VISION_MIN_HEADWAY = 0.85
+UNCERT_DUPLICATE_VISION_HEADWAY_BELOW_TARGET = 0.45
 STEADY_FOLLOW_SMOOTHING_MIN_SPEED = 22.0
 STEADY_FOLLOW_SMOOTHING_MIN_CLOSING_SPEED = 0.15
 STEADY_FOLLOW_SMOOTHING_MAX_CLOSING_SPEED = 1.8
@@ -1927,6 +1930,27 @@ class LongitudinalPlanner:
     self.duplicate_vision_comfort_lead_source = selected_source
     return selected_lead
 
+  def is_nonurgent_duplicate_vision_follow(self, v_ego, t_follow):
+    if bool(getattr(self.lead_one, "radar", False)) or bool(getattr(self.lead_two, "radar", False)):
+      return False
+    if not self.mpc.leads_are_near_duplicates(
+      self.lead_one,
+      self.lead_two,
+      v_ego,
+      vision_min_speed=LOW_SPEED_MATCHED_FOLLOW_TRANSITION_MIN_SPEED,
+    ):
+      return False
+
+    lead = self.lead_one
+    closing_speed = max(0.0, float(v_ego) - float(lead.vLead))
+    ttc = float(lead.dRel) / max(closing_speed, 0.1) if closing_speed > 0.1 else float("inf")
+    actual_headway = float(lead.dRel) / max(float(v_ego), 1e-3)
+    minimum_headway = max(
+      UNCERT_DUPLICATE_VISION_MIN_HEADWAY,
+      float(t_follow) - UNCERT_DUPLICATE_VISION_HEADWAY_BELOW_TARGET,
+    )
+    return ttc > UNCERT_DUPLICATE_VISION_MIN_TTC and actual_headway > minimum_headway
+
   def lead_is_spacious_brake_cap_window(self, lead, v_ego, base_t_follow):
     if lead is None or not lead.status or v_ego < STEADY_FOLLOW_SMOOTHING_MIN_SPEED:
       return False
@@ -2706,6 +2730,10 @@ class LongitudinalPlanner:
     panic_bypass = panic_close_window and closing_fast and (
       uncert_slope > UNCERT_SLOPE_TRIG or uncertainty >= UNCERT_MAG_TRIG
     )
+    # Duplicate vision tracks can share the same noisy velocity spike. Keep the
+    # comfort path unless distance, TTC, or lead braking makes the scene urgent.
+    if panic_bypass and self.is_nonurgent_duplicate_vision_follow(scene_v_ego, effective_t_follow):
+      panic_bypass = False
 
     steady_follow_filter_floor = 0.0
     if lead_one_active and desired_gap is not None and not panic_bypass:

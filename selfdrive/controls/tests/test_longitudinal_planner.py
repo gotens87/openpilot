@@ -3812,6 +3812,55 @@ def test_duplicate_vision_comfort_lead_resets_when_duplicate_cluster_clears():
   assert planner.duplicate_vision_comfort_lead_source is None
 
 
+def test_nonurgent_duplicate_vision_follow_keeps_comfort_smoothing():
+  v_ego = 25.0
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead_one = make_lead(status=True, d_rel=35.0, v_lead=20.5, a_lead=-0.05, radar=False, model_prob=0.99)
+  lead_two = make_lead(status=True, d_rel=35.2, v_lead=20.52, a_lead=-0.04, radar=False, model_prob=0.99)
+  lead_one.vRel = lead_one.vLead - v_ego
+  lead_two.vRel = lead_two.vLead - v_ego
+  planner.lead_one = lead_one
+  planner.lead_two = lead_two
+
+  assert planner.is_nonurgent_duplicate_vision_follow(v_ego, 1.45)
+
+
+@pytest.mark.parametrize("d_rel,v_lead,a_lead", [
+  (24.0, 20.0, -0.05),  # Low TTC.
+  (22.0, 23.0, -0.05),  # Headway materially below the requested gap.
+  (35.0, 20.5, -0.50),  # The lead is braking.
+])
+def test_duplicate_vision_follow_preserves_urgent_panic_bypass(d_rel, v_lead, a_lead):
+  v_ego = 25.0
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead_one = make_lead(status=True, d_rel=d_rel, v_lead=v_lead, a_lead=a_lead, radar=False, model_prob=0.99)
+  lead_two = make_lead(status=True, d_rel=d_rel + 0.2, v_lead=v_lead + 0.02, a_lead=a_lead, radar=False, model_prob=0.99)
+  lead_one.vRel = lead_one.vLead - v_ego
+  lead_two.vRel = lead_two.vLead - v_ego
+  planner.lead_one = lead_one
+  planner.lead_two = lead_two
+
+  assert not planner.is_nonurgent_duplicate_vision_follow(v_ego, 1.45)
+
+
+def test_radar_duplicates_preserve_panic_bypass():
+  v_ego = 25.0
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead_one = make_lead(status=True, d_rel=35.0, v_lead=20.5, a_lead=-0.05, radar=True, model_prob=1.0)
+  lead_two = make_lead(status=True, d_rel=35.0, v_lead=20.5, a_lead=-0.05, radar=True, model_prob=1.0)
+  lead_one.radarTrackId = 17
+  lead_two.radarTrackId = 17
+  lead_one.vRel = lead_one.vLead - v_ego
+  lead_two.vRel = lead_two.vLead - v_ego
+  planner.lead_one = lead_one
+  planner.lead_two = lead_two
+
+  assert not planner.is_nonurgent_duplicate_vision_follow(v_ego, 1.45)
+
+
 def test_near_duplicate_lead_transition_target_damps_same_source_sign_flip():
   v_ego = 25.0
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)

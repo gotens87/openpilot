@@ -21,6 +21,7 @@ from urllib.parse import quote
 
 from openpilot.common.constants import CV
 from openpilot.common.params import Params
+from openpilot.system.hardware import HARDWARE
 from openpilot.system.loggerd.config import get_available_bytes, get_used_bytes
 from openpilot.system.loggerd.deleter import PRESERVE_ATTR_NAME, PRESERVE_ATTR_VALUE
 from openpilot.system.loggerd.uploader import listdir_by_creation
@@ -78,6 +79,7 @@ DASHBOARD_ANALYZER_STATUS_PATH = Path("/tmp/galaxy_dashboard_analyzer_status.jso
 DASHBOARD_ANALYZER_STATUS_MAX_AGE_SECONDS = 30 * 60
 DASHBOARD_TOP_MODEL_LIMIT = 3
 LAN_IP_CACHE_TTL_SECONDS = 10.0
+NETWORK_STATUS_CACHE_TTL_SECONDS = 10.0
 DASHBOARD_EVENT_DISTRACTED = "driverDistracted2"
 DASHBOARD_EVENT_UNRESPONSIVE = "driverUnresponsive3"
 DASHBOARD_TIME_SOURCE_LOG = "log"
@@ -108,6 +110,10 @@ _DASHBOARD_CACHE = {
   "value": None,
 }
 _LAN_IP_CACHE = {
+  "updated_at": 0.0,
+  "value": None,
+}
+_NETWORK_STATUS_CACHE = {
   "updated_at": 0.0,
   "value": None,
 }
@@ -204,6 +210,100 @@ def get_current_lan_ip():
   _LAN_IP_CACHE["updated_at"] = time.monotonic()
   _LAN_IP_CACHE["value"] = None
   return None
+
+
+def _clean_network_name(value):
+  text = "".join(character for character in str(value or "").strip().strip("\x00") if character.isprintable())
+  return text[:128]
+
+
+def _read_active_wifi_ssid():
+  commands = (
+    (["nmcli", "-t", "--escape", "no", "-f", "IN-USE,SSID", "device", "wifi", "list", "--rescan", "no"], "nmcli"),
+    (["iwgetid", "--raw"], "iwgetid"),
+    (["iw", "dev", "wlan0", "link"], "iw"),
+  )
+
+  for command, source in commands:
+    try:
+      result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=0.5)
+    except Exception:
+      continue
+    if result.returncode != 0:
+      continue
+
+    if source == "nmcli":
+      for line in result.stdout.splitlines():
+        in_use, separator, ssid = line.partition(":")
+        if separator and in_use.strip() == "*":
+          name = _clean_network_name(ssid)
+          if name:
+            return name
+    elif source == "iwgetid":
+      name = _clean_network_name(result.stdout)
+      if name:
+        return name
+    else:
+      for line in result.stdout.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("SSID:"):
+          name = _clean_network_name(stripped.partition(":")[2])
+          if name:
+            return name
+
+  return None
+
+
+def _network_type_name(network_type):
+  raw_value = getattr(network_type, "raw", network_type)
+  try:
+    raw_value = int(raw_value)
+  except (TypeError, ValueError):
+    text = str(network_type or "").strip().lower()
+    for name in ("none", "wifi", "cell2g", "cell3g", "cell4g", "cell5g", "ethernet"):
+      if text == name or text.endswith(f".{name}"):
+        return name
+    return "unknown"
+
+  return {
+    0: "none",
+    1: "wifi",
+    2: "cell2g",
+    3: "cell3g",
+    4: "cell4g",
+    5: "cell5g",
+    6: "ethernet",
+  }.get(raw_value, "unknown")
+
+
+def get_current_network_name():
+  now = time.monotonic()
+  if now - _NETWORK_STATUS_CACHE["updated_at"] < NETWORK_STATUS_CACHE_TTL_SECONDS:
+    return _NETWORK_STATUS_CACHE["value"]
+
+  try:
+    network_type = _network_type_name(HARDWARE.get_network_type())
+  except Exception:
+    network_type = "unknown"
+
+  if network_type == "wifi":
+    value = _read_active_wifi_ssid() or "Wi-Fi"
+  elif network_type == "cell2g":
+    value = "Cellular (2G)"
+  elif network_type == "cell3g":
+    value = "Cellular (3G)"
+  elif network_type == "cell4g":
+    value = "Cellular (LTE)"
+  elif network_type == "cell5g":
+    value = "Cellular (5G)"
+  elif network_type == "ethernet":
+    value = "Ethernet"
+  else:
+    value = _read_active_wifi_ssid() or "No wireless connectivity"
+
+  _NETWORK_STATUS_CACHE["updated_at"] = time.monotonic()
+  _NETWORK_STATUS_CACHE["value"] = value
+  return value
 
 
 def secure_filename(filename):
@@ -2508,12 +2608,14 @@ def _build_device_summary(params_obj):
   uptime_seconds = _read_uptime_seconds()
   cpu_temp_c = _read_cpu_temp_c()
   lan_ip = get_current_lan_ip()
+  network_name = get_current_network_name()
   return {
     "status": "Driving" if is_onroad else "Parked",
     "online": True,
     "uptimeSeconds": uptime_seconds,
     "cpuTempC": cpu_temp_c,
     "lanIp": lan_ip,
+    "networkName": network_name,
   }
 
 

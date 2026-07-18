@@ -51,7 +51,9 @@
   {.msg = {{ 0xaa, 0, 8, 83U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
   {.msg = {{0x260, 0, 8, 50U, .ignore_counter = true, .ignore_quality_flag=!(lta)}, { 0 }, { 0 }}},                           \
   /* StarPilot Variables */                                                                                                   \
-  {.msg = {{0x1D3, 0, 8, 33U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
+  {.msg = {{0x1D3, 0, 8, 33U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true},                  \
+           {0x1D3, 0, 5, 33U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true},                  \
+           {0x365, 0, 7, 10U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}}},                \
 
 #define TOYOTA_RX_CHECKS(lta)                                                                                                               \
   TOYOTA_COMMON_RX_CHECKS(lta)                                                                                                              \
@@ -106,6 +108,12 @@ static bool toyota_get_quality_flag_valid(const CANPacket_t *msg) {
     valid = !GET_BIT(msg, 3U);  // STEER_ANGLE_INITIALIZING
   }
   return valid;
+}
+
+static void toyota_rx_all_hook(const CANPacket_t *msg) {
+  if ((msg->bus == 0U) && (msg->addr == 0x365U) && (GET_LEN(msg) == 7U)) {
+    acc_main_on = GET_BIT(msg, 0U);  // DSU_CRUISE.MAIN_ON
+  }
 }
 
 static void toyota_rx_hook(const CANPacket_t *msg) {
@@ -185,12 +193,8 @@ static void toyota_rx_hook(const CANPacket_t *msg) {
       UPDATE_VEHICLE_SPEED(speed / 4.0 * 0.01 * KPH_TO_MS);
     }
 
-    if (msg->addr == 0x1D3U) {
+    if ((msg->addr == 0x1D3U) && (GET_LEN(msg) == 8U)) {
       acc_main_on = GET_BIT(msg, 15U);
-    }
-
-    if (msg->addr == 0x365U) {
-      acc_main_on = GET_BIT(msg, 0U);
     }
 
     if (enable_gas_interceptor && (msg->addr == 0x201U)) {
@@ -542,6 +546,7 @@ static bool toyota_fwd_hook(int bus_num, int addr) {
 const safety_hooks toyota_hooks = {
   .init = toyota_init,
   .rx = toyota_rx_hook,
+  .rx_all = toyota_rx_all_hook,
   .tx = toyota_tx_hook,
   .fwd = toyota_fwd_hook,
   .get_checksum = toyota_get_checksum,
