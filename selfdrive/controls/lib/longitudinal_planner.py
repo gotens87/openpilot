@@ -359,6 +359,10 @@ MATCHED_FOLLOW_TRANSITION_SIGN_CROSS_STEP = 0.10
 LOW_SPEED_MATCHED_FOLLOW_TRANSITION_MIN_SPEED = 10.0
 LOW_SPEED_MATCHED_FOLLOW_TRANSITION_MAX_SPEED = MATCHED_FOLLOW_TRANSITION_MIN_SPEED
 LOW_SPEED_MATCHED_FOLLOW_TRANSITION_MIN_HEADWAY_MARGIN = 0.45
+LOW_SPEED_MATCHED_FOLLOW_TRANSITION_OPENING_RADAR_MIN_HEADWAY_MARGIN = 0.20
+LOW_SPEED_MATCHED_FOLLOW_TRANSITION_OPENING_RADAR_MIN_LEAD_DELTA = 0.25
+MATCHED_FOLLOW_TRANSITION_STABLE_RADAR_MAX_CLOSING_SPEED = 0.25
+MATCHED_FOLLOW_TRANSITION_STABLE_RADAR_MAX_STEP = 0.05
 LOW_SPEED_MATCHED_FOLLOW_TRANSITION_FULL_HEADWAY_MARGIN = 1.00
 LOW_SPEED_MATCHED_FOLLOW_TRANSITION_MIN_MODEL_PROB = 0.98
 LOW_SPEED_MATCHED_FOLLOW_TRANSITION_MAX_LEAD_BRAKE = 0.08
@@ -2020,18 +2024,27 @@ class LongitudinalPlanner:
     if float(v_ego) < MATCHED_FOLLOW_TRANSITION_MIN_SPEED and not low_speed_extension_active:
       return None
 
+    lead_radar = bool(getattr(lead, "radar", False))
     lead_prob = float(getattr(lead, "modelProb", 0.0))
     min_model_prob = LOW_SPEED_MATCHED_FOLLOW_TRANSITION_MIN_MODEL_PROB if low_speed_extension_active else MATCHED_FOLLOW_TRANSITION_MIN_MODEL_PROB
     if lead_prob < min_model_prob:
       return None
 
-    lead_brake = max(0.0, -float(getattr(lead, "aLeadK", 0.0)))
+    lead_accel = float(getattr(lead, "aLeadK", 0.0))
+    lead_brake = max(0.0, -lead_accel)
     max_lead_brake = LOW_SPEED_MATCHED_FOLLOW_TRANSITION_MAX_LEAD_BRAKE if low_speed_extension_active else MATCHED_FOLLOW_TRANSITION_MAX_LEAD_BRAKE
     if lead_brake > max_lead_brake:
       return None
 
     relative_speed = float(v_ego) - float(lead.vLead)
-    if not (STEADY_FOLLOW_BRAKE_CAP_MIN_REL_SPEED <= relative_speed <= STEADY_FOLLOW_SMOOTHING_MAX_CLOSING_SPEED):
+    opening_radar_transition = bool(
+      lead_radar and
+      -relative_speed >= LOW_SPEED_MATCHED_FOLLOW_TRANSITION_OPENING_RADAR_MIN_LEAD_DELTA and
+      -relative_speed <= CRUISE_TRACKED_LEAD_ACCEL_TRANSITION_MAX_PULLAWAY_SPEED and
+      lead_accel >= 0.0
+    )
+    relative_speed_in_range = STEADY_FOLLOW_BRAKE_CAP_MIN_REL_SPEED <= relative_speed <= STEADY_FOLLOW_SMOOTHING_MAX_CLOSING_SPEED
+    if not relative_speed_in_range and not opening_radar_transition:
       return None
 
     closing_speed = max(0.0, relative_speed)
@@ -2047,6 +2060,13 @@ class LongitudinalPlanner:
     actual_headway = float(lead.dRel) / max(float(v_ego), 1e-3)
     headway_margin = actual_headway - float(base_t_follow)
     min_headway_margin = LOW_SPEED_MATCHED_FOLLOW_TRANSITION_MIN_HEADWAY_MARGIN if low_speed_extension_active else MATCHED_FOLLOW_TRANSITION_MIN_HEADWAY_MARGIN
+    opening_radar_lead = bool(
+      low_speed_extension_active and
+      lead_radar and
+      opening_radar_transition
+    )
+    if opening_radar_lead:
+      min_headway_margin = LOW_SPEED_MATCHED_FOLLOW_TRANSITION_OPENING_RADAR_MIN_HEADWAY_MARGIN
     full_headway_margin = LOW_SPEED_MATCHED_FOLLOW_TRANSITION_FULL_HEADWAY_MARGIN if low_speed_extension_active else MATCHED_FOLLOW_TRANSITION_FULL_HEADWAY_MARGIN
     if headway_margin < min_headway_margin:
       return None
@@ -2089,6 +2109,16 @@ class LongitudinalPlanner:
     # The more space we still have, the less abrupt the comfort path should be.
     positive_step = float(np.interp(headway_factor, [0.0, 1.0], [positive_step, min_positive_step]))
     negative_step = float(np.interp(headway_factor, [0.0, 1.0], [negative_step, min_negative_step]))
+
+    stable_radar_catchup = bool(
+      lead_radar and
+      relative_speed <= MATCHED_FOLLOW_TRANSITION_STABLE_RADAR_MAX_CLOSING_SPEED and
+      lead_accel >= 0.0 and
+      headway_margin >= LOW_SPEED_MATCHED_FOLLOW_TRANSITION_OPENING_RADAR_MIN_HEADWAY_MARGIN
+    )
+    if stable_radar_catchup:
+      positive_step = min(positive_step, MATCHED_FOLLOW_TRANSITION_STABLE_RADAR_MAX_STEP)
+      negative_step = min(negative_step, MATCHED_FOLLOW_TRANSITION_STABLE_RADAR_MAX_STEP)
 
     if float(prev_output_a_target) * float(output_a_target) < 0.0:
       sign_cross_step = LOW_SPEED_MATCHED_FOLLOW_TRANSITION_SIGN_CROSS_STEP if low_speed_extension_active else MATCHED_FOLLOW_TRANSITION_SIGN_CROSS_STEP

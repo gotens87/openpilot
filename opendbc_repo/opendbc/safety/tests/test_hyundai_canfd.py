@@ -610,6 +610,25 @@ class TestHyundaiCanfdLKASteeringLongEV(HyundaiLongitudinalBase, TestHyundaiCanf
     values = {"MainMode_ACC": int(main_on), "ACCMode": 0}
     return self.packer.make_can_msg_safety("SCC_CONTROL", 1, values)
 
+  def test_inactive_accel_resets_controls_before_reengagement(self):
+    self.safety.set_controls_allowed(True)
+
+    for _ in range(9):
+      self.assertTrue(self._tx(self._accel_msg(0)))
+      self.assertTrue(self.safety.get_controls_allowed())
+
+    self.assertTrue(self._tx(self._accel_msg(0)))
+    self.assertFalse(self.safety.get_controls_allowed())
+
+    self._rx(self._button_msg(Buttons.RESUME))
+    self._rx(self._button_msg(Buttons.NONE))
+    self.assertTrue(self.safety.get_controls_allowed())
+
+    # One inactive frame can race the state transition after button release.
+    self.assertTrue(self._tx(self._accel_msg(0)))
+    self.assertTrue(self.safety.get_controls_allowed())
+    self.assertTrue(self._tx(self._accel_msg(-0.1)))
+
 
 class TestHyundaiCanfdLKASteeringAltAngleLongEV(HyundaiLongitudinalBase, TestHyundaiCanfdAngleSteering):
 

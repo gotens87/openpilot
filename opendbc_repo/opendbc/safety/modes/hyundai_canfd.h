@@ -26,6 +26,7 @@
 
 #define HYUNDAI_CANFD_MRR35_RADAR_TRACK_START 0x3A5
 #define HYUNDAI_CANFD_MRR35_RADAR_TRACK_END 0x3C4
+#define HYUNDAI_CANFD_INACTIVE_ACCEL_TX_THRESHOLD 10U
 
 #define HYUNDAI_CANFD_BLINDSPOT_DASH_TX_MSGS(e_can) \
   {0x1BA, e_can, 24, .check_relay = false},  /* BLINDSPOTS_REAR_CORNERS */ \
@@ -61,6 +62,7 @@ static bool hyundai_canfd_lka_steering_alt = false;
 static bool hyundai_canfd_angle_steering = false;
 static bool hyundai_ccnc = false;
 static bool hyundai_canfd_lka_alt_drive_gear = false;
+static uint8_t hyundai_canfd_inactive_accel_tx_count = 0U;
 
 static unsigned int hyundai_canfd_get_lka_addr(void) {
   return hyundai_canfd_lka_steering_alt ? 0x110U : 0x50U;
@@ -130,6 +132,7 @@ static void hyundai_canfd_rx_hook(const CANPacket_t *msg) {
     // cruise buttons
     const unsigned int button_addr = hyundai_canfd_alt_buttons ? 0x1aaU : 0x1cfU;
     if (msg->addr == button_addr) {
+      const bool controls_allowed_prev = controls_allowed;
       bool main_button = false;
       int cruise_button = 0;
       if (msg->addr == 0x1cfU) {
@@ -144,6 +147,9 @@ static void hyundai_canfd_rx_hook(const CANPacket_t *msg) {
         hyundai_lkas_button_check(GET_BIT(msg, 39U));
       }
       hyundai_common_cruise_buttons_check(cruise_button, main_button);
+      if (!controls_allowed_prev && controls_allowed) {
+        hyundai_canfd_inactive_accel_tx_count = 0U;
+      }
     }
 
     // gas press, different for EV, hybrid, and ICE models
@@ -303,6 +309,18 @@ static bool hyundai_canfd_tx_hook(const CANPacket_t *msg) {
     bool violation = false;
 
     if (hyundai_longitudinal) {
+      const int acc_mode = (msg->data[8] >> 4) & 0x7U;
+      const bool inactive_accel = (acc_mode == 0) && (desired_accel_raw == 0) && (desired_accel_val == 0);
+      if (inactive_accel) {
+        hyundai_canfd_inactive_accel_tx_count = SAFETY_MIN(hyundai_canfd_inactive_accel_tx_count + 1U,
+                                                           HYUNDAI_CANFD_INACTIVE_ACCEL_TX_THRESHOLD);
+        if (hyundai_canfd_inactive_accel_tx_count >= HYUNDAI_CANFD_INACTIVE_ACCEL_TX_THRESHOLD) {
+          controls_allowed = false;
+        }
+      } else {
+        hyundai_canfd_inactive_accel_tx_count = 0U;
+      }
+
       violation |= longitudinal_accel_checks(desired_accel_raw, HYUNDAI_LONG_LIMITS);
       violation |= longitudinal_accel_checks(desired_accel_val, HYUNDAI_LONG_LIMITS);
     } else {
@@ -422,6 +440,7 @@ static safety_config hyundai_canfd_init(uint16_t param) {
   hyundai_canfd_angle_steering = GET_FLAG(param, HYUNDAI_PARAM_CANFD_ANGLE_STEERING);
   hyundai_ccnc = GET_FLAG(param, HYUNDAI_PARAM_CCNC);
   hyundai_canfd_lka_alt_drive_gear = false;
+  hyundai_canfd_inactive_accel_tx_count = 0U;
 
   safety_config ret;
   if (hyundai_longitudinal) {

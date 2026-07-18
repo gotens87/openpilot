@@ -2737,6 +2737,102 @@ def test_matched_follow_transition_target_damps_low_speed_tracking_cruise_thrott
   assert smoothed == pytest.approx(0.14, abs=1e-6)
 
 
+def test_route_8bc6_opening_radar_catchup_cap_does_not_stab_out_throttle():
+  v_ego = 15.60
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=24.3, v_lead=16.61, a_lead=0.82, radar=True, model_prob=1.0)
+
+  smoothed = planner.get_matched_follow_transition_target(
+    lead,
+    v_ego,
+    1.25,
+    prev_output_a_target=1.31,
+    output_a_target=0.32,
+    current_source="cruise",
+    tracking_lead_active=True,
+  )
+
+  assert smoothed is not None
+  assert 1.20 < smoothed < 1.31
+
+
+def test_opening_radar_catchup_smoothing_yields_immediately_if_lead_brakes():
+  v_ego = 15.60
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=24.3, v_lead=16.61, a_lead=-0.50, radar=True, model_prob=1.0)
+
+  smoothed = planner.get_matched_follow_transition_target(
+    lead,
+    v_ego,
+    1.25,
+    prev_output_a_target=1.31,
+    output_a_target=0.32,
+    current_source="cruise",
+    tracking_lead_active=True,
+  )
+
+  assert smoothed is None
+
+
+def test_opening_radar_catchup_smoothing_has_no_pullaway_boundary_jump():
+  v_ego = 16.30
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=25.5, v_lead=17.54, a_lead=0.68, radar=True, model_prob=1.0)
+
+  smoothed = planner.get_matched_follow_transition_target(
+    lead,
+    v_ego,
+    1.25,
+    prev_output_a_target=0.51,
+    output_a_target=0.87,
+    current_source="cruise",
+    tracking_lead_active=True,
+  )
+
+  assert smoothed == pytest.approx(0.56, abs=1e-6)
+
+
+def test_route_8bc6_radar_lead_source_handoff_keeps_catchup_transition_smooth():
+  v_ego = 24.44
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=37.1, v_lead=24.46, a_lead=0.33, radar=True, model_prob=1.0)
+
+  smoothed = planner.get_matched_follow_transition_target(
+    lead,
+    v_ego,
+    1.15,
+    prev_output_a_target=0.42,
+    output_a_target=0.26,
+    current_source="lead0",
+    tracking_lead_active=True,
+  )
+
+  assert smoothed == pytest.approx(0.37, abs=1e-6)
+
+
+def test_opening_radar_catchup_smoothing_stays_off_inside_requested_headway():
+  v_ego = 15.60
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=21.0, v_lead=16.61, a_lead=0.82, radar=True, model_prob=1.0)
+
+  smoothed = planner.get_matched_follow_transition_target(
+    lead,
+    v_ego,
+    1.25,
+    prev_output_a_target=1.31,
+    output_a_target=0.32,
+    current_source="cruise",
+    tracking_lead_active=True,
+  )
+
+  assert smoothed is None
+
+
 def test_matched_follow_transition_target_skips_low_speed_without_tracking():
   v_ego = 14.5
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
