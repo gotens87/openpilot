@@ -62,8 +62,13 @@ class CarInterface(CarInterfaceBase):
 
     # A DSU bypass adapter reroutes the stock DSU messages to the camera bus.
     # These messages are normally absent there on pre-TSS2 platforms.
+    # Require the native-bus message to be absent so startup relay mirroring is not mistaken for an adapter.
+    pt_fingerprint = fingerprint.get(0, {})
+    radar_fingerprint = fingerprint.get(1, {})
     camera_fingerprint = fingerprint.get(2, {})
-    if not use_sdsu and candidate not in TSS2_CAR and (0x343 in camera_fingerprint or 0x4CB in camera_fingerprint):
+    has_dsu_bypass = ((0x343 in camera_fingerprint and 0x343 not in radar_fingerprint) or
+                      (0x4CB in camera_fingerprint and 0x4CB not in pt_fingerprint))
+    if not use_sdsu and candidate not in TSS2_CAR and has_dsu_bypass:
       ret.flags |= ToyotaFlags.DSU_BYPASS.value
 
     # In TSS2 cars, the camera does long control

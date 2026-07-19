@@ -113,6 +113,26 @@ class TestToyotaInterfaces:
       assert message not in can_parsers[Bus.pt].vl
       assert message in can_parsers[Bus.cam].vl
 
+  @pytest.mark.parametrize(("native_bus", "message"), [(1, 0x343), (0, 0x4CB)])
+  def test_dsu_bypass_ignores_startup_bus_mirror(self, native_bus, message):
+    fingerprint = {bus: {} for bus in range(8)}
+    fingerprint[native_bus][message] = 8
+    fingerprint[2][message] = 8
+
+    car_params = CarInterface.get_params(
+      CAR.LEXUS_IS,
+      fingerprint,
+      [],
+      alpha_long=False,
+      is_release=False,
+      docs=False,
+      starpilot_toggles=SimpleNamespace(),
+    )
+
+    assert not car_params.flags & ToyotaFlags.DSU_BYPASS.value
+    assert not car_params.openpilotLongitudinalControl
+    assert car_params.safetyConfigs[0].safetyParam & ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
+
   def test_dsu_bypass_does_not_change_tss2_or_smart_dsu(self):
     fingerprint = {bus: {} for bus in range(8)}
     fingerprint[0][0x2FF] = 8
