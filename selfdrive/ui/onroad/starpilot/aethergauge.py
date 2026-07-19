@@ -385,6 +385,13 @@ class AetherGauge:
     self._last_active_time = 0.0
     self._cooldown = 0.5
 
+  def has_active_source(self) -> bool:
+    """Lightweight visibility check — no side effects, no data construction."""
+    for is_active, _ in self._sources:
+      if is_active():
+        return True
+    return False
+
   def get_active_data(self) -> AetherGaugeData | None:
     now = rl.get_time()
     best_priority = 999

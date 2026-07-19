@@ -24,6 +24,7 @@ class DriverStateRenderer(Widget):
     self.position_x: float = 0.0
     self.position_y: float = 0.0
     self.x_shift: float = 0.0
+    self.auto_position = True
     self.is_active = False
     self.is_rhd = False
     self.is_face_detected = False
@@ -112,6 +113,8 @@ class DriverStateRenderer(Widget):
     self._pre_calculate_position()
 
   def _pre_calculate_position(self):
+    if not self.auto_position:
+      return
     width, height = self._rect.width, self._rect.height
     offset = UI_BORDER_SIZE + BTN_SIZE // 2 + 20
     self.position_x = self._rect.x + (width - offset if self.is_rhd else offset) + self.x_shift
