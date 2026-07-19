@@ -475,6 +475,7 @@ class AugmentedRoadView(CameraView):
     self._last_click_time = 0.0
     self._reverse_driver_camera_frames = 0
     self._reverse_driver_camera_active = False
+    self._sidebar_personality_pressed = False
 
     # Bookmark icon with swipe gesture
     self._bookmark_icon = BookmarkIcon(bookmark_callback)
@@ -528,7 +529,59 @@ class AugmentedRoadView(CameraView):
     else:
       self._offroad_label.set_text("start the car to\nuse openpilot")
 
+  def _sidebar_rect(self) -> rl.Rectangle:
+    return rl.Rectangle(
+      self.rect.x + self.rect.width - SIDE_PANEL_WIDTH,
+      self.rect.y,
+      SIDE_PANEL_WIDTH,
+      self.rect.height,
+    )
+
+  def _sidebar_widgets_visible(self) -> bool:
+    return not ui_state.params.get_bool("StockConfidenceBallWidget") or self._sidebar_widgets.demo_active
+
+  def _sidebar_personality_touch_enabled(self) -> bool:
+    return (
+      ui_state.started and
+      self._sidebar_widgets_visible() and
+      not ui_state.params.get_bool("SafeMode")
+    )
+
+  def _touch_in_sidebar(self, mouse_pos: MousePos) -> bool:
+    return rl.check_collision_point_rec(mouse_pos, self._sidebar_rect())
+
+  def _cycle_personality_profile(self) -> None:
+    current = ui_state.params.get_int("LongitudinalPersonality", return_default=True, default=int(log.LongitudinalPersonality.standard))
+    profiles = (
+      int(log.LongitudinalPersonality.aggressive),
+      int(log.LongitudinalPersonality.standard),
+      int(log.LongitudinalPersonality.relaxed),
+    )
+    try:
+      current_idx = profiles.index(int(current))
+    except ValueError:
+      current_idx = 1
+    next_personality = profiles[(current_idx + 1) % len(profiles)]
+    ui_state.params.put_int("LongitudinalPersonality", next_personality)
+    ui_state.personality = next_personality
+
+  def _handle_mouse_press(self, mouse_pos: MousePos):
+    self._sidebar_personality_pressed = (
+      self._sidebar_personality_touch_enabled() and
+      self._touch_in_sidebar(mouse_pos)
+    )
+    if not self._sidebar_personality_pressed:
+      super()._handle_mouse_press(mouse_pos)
+
   def _handle_mouse_release(self, mouse_pos: MousePos):
+    if self._sidebar_personality_pressed:
+      if self._sidebar_personality_touch_enabled() and self._touch_in_sidebar(mouse_pos):
+        self._cycle_personality_profile()
+      self._sidebar_personality_pressed = False
+      return
+
+    self._sidebar_personality_pressed = False
+
     # Don't trigger click callback if bookmark or HUD widgets consumed the tap.
     if not self._bookmark_icon.interacting() and not self._hud_renderer.user_interacting() and not self._favorite_slots.interacting():
       super()._handle_mouse_release(mouse_pos)
