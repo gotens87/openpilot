@@ -132,6 +132,7 @@ class TestToyotaInterfaces:
     assert not car_params.flags & ToyotaFlags.DSU_BYPASS.value
     assert not car_params.openpilotLongitudinalControl
     assert car_params.safetyConfigs[0].safetyParam & ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
+    assert car_params.safetyConfigs[0].safetyParam & ToyotaSafetyFlags.ALT_CRUISE.value
 
   @pytest.mark.parametrize(("native_bus", "message"), [(1, 0x343), (0, 0x4CB)])
   def test_prius_dsu_bypass_allows_native_bus_message(self, native_bus, message):
@@ -152,6 +153,7 @@ class TestToyotaInterfaces:
     assert car_params.flags & ToyotaFlags.DSU_BYPASS.value
     assert car_params.openpilotLongitudinalControl
     assert not car_params.safetyConfigs[0].safetyParam & ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
+    assert not car_params.safetyConfigs[0].safetyParam & ToyotaSafetyFlags.ALT_CRUISE.value
 
   def test_dsu_bypass_does_not_change_tss2_or_smart_dsu(self):
     fingerprint = {bus: {} for bus in range(8)}

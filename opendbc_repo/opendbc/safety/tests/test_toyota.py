@@ -160,7 +160,8 @@ def test_toyota_aol_rx_check_variants():
   safety = libsafety_py.libsafety
 
   for addr, length in ((0x1D3, 8), (0x1D3, 5), (0x365, 7)):
-    safety.set_safety_hooks(CarParams.SafetyModel.toyota, TestToyotaSafetyBase.EPS_SCALE)
+    safety.set_safety_hooks(CarParams.SafetyModel.toyota,
+                            TestToyotaSafetyBase.EPS_SCALE | ToyotaSafetyFlags.ALT_CRUISE)
     safety.init_tests()
 
     messages = (
@@ -177,7 +178,8 @@ def test_toyota_aol_rx_check_variants():
 
 def test_toyota_dsu_cruise_main_bit():
   safety = libsafety_py.libsafety
-  safety.set_safety_hooks(CarParams.SafetyModel.toyota, TestToyotaSafetyBase.EPS_SCALE)
+  safety.set_safety_hooks(CarParams.SafetyModel.toyota,
+                          TestToyotaSafetyBase.EPS_SCALE | ToyotaSafetyFlags.ALT_CRUISE)
   safety.init_tests()
 
   safety.safety_rx_hook(libsafety_py.make_CANPacket(0x1D3, 0, bytes(5)))
@@ -191,6 +193,19 @@ def test_toyota_dsu_cruise_main_bit():
 
   safety.safety_rx_hook(libsafety_py.make_CANPacket(0x365, 0, bytes(7)))
   assert not safety.get_acc_main_on()
+
+
+def test_toyota_standard_cruise_ignores_dsu_main():
+  packer = CANPackerSafety("toyota_nodsu_pt_generated")
+  safety = libsafety_py.libsafety
+  safety.set_safety_hooks(CarParams.SafetyModel.toyota, TestToyotaSafetyBase.EPS_SCALE)
+  safety.init_tests()
+
+  assert safety.safety_rx_hook(packer.make_can_msg_safety("PCM_CRUISE_2", 0, {"MAIN_ON": 1}))
+  assert safety.get_acc_main_on()
+
+  safety.safety_rx_hook(libsafety_py.make_CANPacket(0x365, 0, bytes(7)))
+  assert safety.get_acc_main_on()
 
 
 class TestToyotaSafetyTorque(TestToyotaSafetyBase, common.MotorTorqueSteeringSafetyTest, common.SteerRequestCutSafetyTest):
