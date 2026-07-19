@@ -3226,6 +3226,116 @@ def test_route_8bc6_post_departure_settle_latch_bypasses_mild_closure_catchup_ca
   assert cap_with_latch is None
 
 
+@pytest.mark.parametrize("v_ego,d_rel,v_lead,a_lead", [
+  (8.05, 14.75, 8.56, 0.25),
+  (10.65, 14.35, 11.59, 1.38),
+  (8.34, 11.25, 8.33, 0.97),
+])
+def test_route_8bc6_rolling_departure_arms_settle_latch(v_ego, d_rel, v_lead, a_lead):
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(
+    status=True, d_rel=d_rel, v_lead=v_lead,
+    a_lead=a_lead, radar=True, model_prob=1.0, y_rel=0.0,
+  )
+
+  cap = planner.get_lead_catchup_accel_cap(
+    lead,
+    v_ego,
+    1.25,
+    current_source="lead0",
+    tracking_lead_active=True,
+  )
+
+  assert cap is None
+  assert planner.post_departure_follow_settle_until > time.monotonic()
+
+
+def test_route_8bc6_radar_catchup_cap_enters_continuously_above_min_speed():
+  v_ego = 8.69
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(
+    status=True, d_rel=11.25, v_lead=8.73,
+    a_lead=1.10, radar=True, model_prob=1.0, y_rel=0.0,
+  )
+
+  cap = planner.get_lead_catchup_accel_cap(
+    lead,
+    v_ego,
+    1.25,
+    current_source="lead0",
+    tracking_lead_active=True,
+  )
+
+  assert planner.post_departure_follow_settle_until == 0.0
+  assert 1.20 < cap < 1.30
+
+
+def test_rolling_departure_settle_latch_stays_active_through_headway_hysteresis():
+  v_ego = 10.0
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  departing_lead = make_lead(
+    status=True, d_rel=13.4, v_lead=10.3,
+    a_lead=0.3, radar=True, model_prob=1.0, y_rel=0.0,
+  )
+  settling_lead = make_lead(
+    status=True, d_rel=13.2, v_lead=10.2,
+    a_lead=0.1, radar=True, model_prob=1.0, y_rel=0.0,
+  )
+
+  assert planner.post_departure_follow_settle_active(departing_lead, v_ego, 1.25)
+  assert planner.post_departure_follow_settle_active(settling_lead, v_ego, 1.25)
+
+
+def test_rolling_departure_settle_latch_supports_confident_vision_lead():
+  v_ego = 10.0
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(
+    status=True, d_rel=13.4, v_lead=10.3,
+    a_lead=0.3, radar=False, model_prob=0.95, y_rel=0.0,
+  )
+
+  assert planner.post_departure_follow_settle_active(lead, v_ego, 1.25)
+
+
+def test_rolling_departure_settle_latch_clears_for_stopped_lead():
+  v_ego = 10.0
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  departing_lead = make_lead(
+    status=True, d_rel=13.4, v_lead=10.3,
+    a_lead=0.3, radar=True, model_prob=1.0, y_rel=0.0,
+  )
+  stopped_lead = make_lead(
+    status=True, d_rel=12.0, v_lead=0.0,
+    a_lead=0.0, radar=True, model_prob=1.0, y_rel=0.0,
+  )
+
+  assert planner.post_departure_follow_settle_active(departing_lead, v_ego, 1.25)
+  assert not planner.post_departure_follow_settle_active(stopped_lead, v_ego, 1.25)
+  assert planner.post_departure_follow_settle_until == 0.0
+
+
+@pytest.mark.parametrize("v_ego,d_rel,v_lead,a_lead", [
+  (10.0, 14.0, 10.5, -0.2),
+  (10.0, 12.5, 11.0, 0.5),
+  (20.0, 29.0, 20.5, 0.5),
+])
+def test_rolling_departure_settle_latch_does_not_arm_without_safe_departure(v_ego, d_rel, v_lead, a_lead):
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(
+    status=True, d_rel=d_rel, v_lead=v_lead,
+    a_lead=a_lead, radar=True, model_prob=1.0, y_rel=0.0,
+  )
+
+  assert not planner.post_departure_follow_settle_active(lead, v_ego, 1.25)
+  assert planner.post_departure_follow_settle_until == 0.0
+
+
 def test_route_8bc6_post_departure_settle_latch_bypasses_mild_closure_cruise_cap():
   v_ego = 19.2975330353
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)

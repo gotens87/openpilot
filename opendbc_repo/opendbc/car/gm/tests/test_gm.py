@@ -430,6 +430,19 @@ class TestGMInterface:
     assert high_torque == pytest.approx(linear_high_torque, rel=0.03)
     assert torque_from_lataccel(-low_lataccel, car_params.lateralTuning.torque) == pytest.approx(-low_torque, rel=1e-6)
 
+  @parameterized.expand((CAR.CHEVROLET_VOLT_ASCM, CAR.CHEVROLET_VOLT_CAMERA, CAR.CHEVROLET_VOLT_CC, CAR.CHEVROLET_VOLT_2019))
+  def test_volt_integration_variants_share_nonlinear_torque_curve(self, candidate):
+    assert gm_interface.get_nonlinear_torque_params(candidate) == gm_interface.NON_LINEAR_TORQUE_PARAMS[CAR.CHEVROLET_VOLT]
+
+    CarInterface = interfaces[candidate]
+    car_params = CarInterface.get_non_essential_params(candidate)
+    ci = CarInterface(car_params, custom.StarPilotCarParams.new_message())
+    torque_from_lataccel = ci.torque_from_lateral_accel()
+
+    left_torque = torque_from_lataccel(0.5, car_params.lateralTuning.torque)
+    right_torque = torque_from_lataccel(-0.5, car_params.lateralTuning.torque)
+    assert left_torque > abs(right_torque)
+
 
 class TestGMCarController:
   def test_dash_speed_spoof_respects_live_stock_acc_toggles(self):

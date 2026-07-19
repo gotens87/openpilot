@@ -5813,9 +5813,12 @@ def setup(app):
   @app.route(f"{LEGACY_LATERAL_METHOD_API_PREFIX}/status", methods=["GET"])
   @app.route("/api/flm/status", methods=["GET"])
   def get_flm_status():
+    is_onroad = params.get_bool("IsOnroad")
+    if is_onroad:
+      flm_workspace.cancel_flm_if_onroad()
     workspace = flm_workspace.list_workspace()
     return jsonify({
-      "isOnroad": params.get_bool("IsOnroad"),
+      "isOnroad": is_onroad,
       "status": flm_workspace.read_flm_status(),
       "activeTrial": workspace.get("activeTrial"),
       "reports": workspace.get("reports", [])[:10],

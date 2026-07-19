@@ -252,13 +252,18 @@ LEAD_CATCHUP_ACCEL_MAX_GAP_BUFFER_GAIN = 0.15
 RADAR_MATCHED_FOLLOW_CATCHUP_CAP_BUFFER_MARGIN = 0.75
 RADAR_MATCHED_FOLLOW_CATCHUP_HOLD_CAP = 0.04
 RADAR_MATCHED_FOLLOW_CATCHUP_HOLD_MAX_GAP_ERROR = 0.75
+RADAR_CATCHUP_ACCEL_CAP_ENTRY_FULL_SPEED = 12.0
+RADAR_CATCHUP_ACCEL_CAP_ENTRY_MAX = 1.5
 POST_DEPARTURE_FOLLOW_SETTLE_LATCH_TIME = 75.0
 POST_DEPARTURE_FOLLOW_SETTLE_MIN_SPEED = 8.0
+POST_DEPARTURE_FOLLOW_SETTLE_MAX_ARM_SPEED = 16.0
 POST_DEPARTURE_FOLLOW_SETTLE_MIN_MODEL_PROB = 0.9
 POST_DEPARTURE_FOLLOW_SETTLE_MAX_LATERAL_OFFSET = 1.15
 POST_DEPARTURE_FOLLOW_SETTLE_MAX_CLOSING_SPEED = 0.8
 POST_DEPARTURE_FOLLOW_SETTLE_MAX_LEAD_BRAKE = 0.10
-POST_DEPARTURE_FOLLOW_SETTLE_MIN_HEADWAY_MARGIN = 0.10
+POST_DEPARTURE_FOLLOW_SETTLE_ARM_MIN_LEAD_DELTA = -0.10
+POST_DEPARTURE_FOLLOW_SETTLE_ARM_MIN_LEAD_ACCEL = 0.20
+POST_DEPARTURE_FOLLOW_SETTLE_ARM_MIN_HEADWAY_MARGIN = 0.08
 POST_DEPARTURE_FOLLOW_SETTLE_COMPLETE_HEADWAY_MARGIN = 0.05
 FOLLOW_ACCEL_CAP_ALLOWANCE_MIN_SPEED = 12.0
 FOLLOW_ACCEL_CAP_ALLOWANCE_MIN_HEADWAY_MARGIN = 0.10
@@ -1546,9 +1551,6 @@ class LongitudinalPlanner:
   def post_departure_follow_settle_active(self, lead, v_ego, t_follow):
     if lead is None or not lead.status:
       return False
-    if time.monotonic() > self.post_departure_follow_settle_until:
-      self.post_departure_follow_settle_until = 0.0
-      return False
     if float(v_ego) < POST_DEPARTURE_FOLLOW_SETTLE_MIN_SPEED:
       return False
 
@@ -1562,21 +1564,34 @@ class LongitudinalPlanner:
 
     actual_headway = float(lead.dRel) / max(float(v_ego), 1e-3)
     headway_margin = actual_headway - float(t_follow)
-    if headway_margin <= POST_DEPARTURE_FOLLOW_SETTLE_COMPLETE_HEADWAY_MARGIN:
-      self.post_departure_follow_settle_until = 0.0
-      return False
-
     lead_brake = max(0.0, -float(getattr(lead, "aLeadK", 0.0)))
-    if lead_brake > POST_DEPARTURE_FOLLOW_SETTLE_MAX_LEAD_BRAKE:
-      self.post_departure_follow_settle_until = 0.0
-      return False
-
     closing_speed = max(float(v_ego) - float(lead.vLead), 0.0)
-    if closing_speed > POST_DEPARTURE_FOLLOW_SETTLE_MAX_CLOSING_SPEED:
+    now = time.monotonic()
+    if now > self.post_departure_follow_settle_until:
+      self.post_departure_follow_settle_until = 0.0
+      lead_delta = float(lead.vLead) - float(v_ego)
+      lead_accel = float(getattr(lead, "aLeadK", 0.0))
+      # Rolling launches can miss the standstill release edge that normally arms
+      # this latch. Confirm the same safe pull-away state from lead motion instead.
+      rolling_departure = (
+        float(v_ego) <= POST_DEPARTURE_FOLLOW_SETTLE_MAX_ARM_SPEED and
+        lead_delta >= POST_DEPARTURE_FOLLOW_SETTLE_ARM_MIN_LEAD_DELTA and
+        lead_accel >= POST_DEPARTURE_FOLLOW_SETTLE_ARM_MIN_LEAD_ACCEL and
+        headway_margin >= POST_DEPARTURE_FOLLOW_SETTLE_ARM_MIN_HEADWAY_MARGIN
+      )
+      if not rolling_departure:
+        return False
+      self.post_departure_follow_settle_until = now + POST_DEPARTURE_FOLLOW_SETTLE_LATCH_TIME
+
+    if (
+      headway_margin <= POST_DEPARTURE_FOLLOW_SETTLE_COMPLETE_HEADWAY_MARGIN or
+      lead_brake > POST_DEPARTURE_FOLLOW_SETTLE_MAX_LEAD_BRAKE or
+      closing_speed > POST_DEPARTURE_FOLLOW_SETTLE_MAX_CLOSING_SPEED
+    ):
       self.post_departure_follow_settle_until = 0.0
       return False
 
-    return headway_margin >= POST_DEPARTURE_FOLLOW_SETTLE_MIN_HEADWAY_MARGIN
+    return True
 
   @staticmethod
   def get_follow_accel_cap_allowance(lead, v_ego, t_follow):
@@ -1674,6 +1689,14 @@ class LongitudinalPlanner:
     cap = float(np.interp(gap_factor, [0.0, 1.0], [near_cap, edge_cap]))
     allowance_factor = float(np.clip(gap_error / FOLLOW_ACCEL_CAP_ALLOWANCE_FULL_GAP_MARGIN, 0.0, 1.0))
     cap += allowance_factor * self.get_follow_accel_cap_allowance(lead, v_ego, t_follow)
+    if not low_speed_follow_window:
+      entry_factor = float(np.clip(
+        (float(v_ego) - LEAD_CATCHUP_ACCEL_MIN_EGO) /
+        (RADAR_CATCHUP_ACCEL_CAP_ENTRY_FULL_SPEED - LEAD_CATCHUP_ACCEL_MIN_EGO),
+        0.0,
+        1.0,
+      ))
+      cap = float(np.interp(entry_factor, [0.0, 1.0], [RADAR_CATCHUP_ACCEL_CAP_ENTRY_MAX, cap]))
     return cap
 
   def get_low_speed_follow_transition_brake_cap(self, lead, v_ego, t_follow, prev_output_a_target, output_a_target):

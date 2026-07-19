@@ -66,6 +66,7 @@ def _install_flm_import_stubs(tmp_path):
 
   class FakeSteerControlType:
     torque = 0
+    angle = 1
 
   fake_car_params = SimpleNamespace(SteerControlType=FakeSteerControlType)
   cereal_car = _simple_module("cereal.car", CarParams=fake_car_params)
@@ -116,6 +117,8 @@ def _install_flm_import_stubs(tmp_path):
       "hyundai_ioniq_6.crawl_turn_in_ff_boost_left": {"min": 0.0, "max": 0.5, "precision": 0.001, "defaultValue": 0.18, "profile": "hyundai_ioniq_6"},
       "hyundai_ioniq_6.curvy_turn_in_trim_left": {"min": 0.0, "max": 0.2, "precision": 0.001, "defaultValue": 0.06, "profile": "hyundai_ioniq_6"},
       "hyundai_ioniq_6.curvy_unwind_extra_reduction_left": {"min": 0.0, "max": 0.45, "precision": 0.001, "defaultValue": 0.18, "profile": "hyundai_ioniq_6"},
+      "torque_universal.ff_gain_left": {"min": -0.4, "max": 0.6, "precision": 0.001, "defaultValue": 0.0, "profile": "torque_universal"},
+      "torque_universal.ff_gain_right": {"min": -0.4, "max": 0.6, "precision": 0.001, "defaultValue": 0.0, "profile": "torque_universal"},
     },
     get_gm_base_friction_threshold=lambda v_ego: 0.20 + (0.001 * float(v_ego)),
     get_hkg_canfd_base_friction_threshold=lambda v_ego: 0.39 + (0.001 * float(v_ego)),
@@ -174,6 +177,108 @@ def _sample(module, **kwargs):
   )
   base.update(kwargs)
   return module.FLMSample(**base)
+
+
+def test_effective_control_path_prefers_logged_controller_state(tmp_path):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  pid_cp = SimpleNamespace(
+    steerControlType=module.car.CarParams.SteerControlType.torque,
+    lateralTuning=SimpleNamespace(which=lambda: "pid"),
+  )
+
+  assert module._effective_control_path(pid_cp, {"torqueState": 1200}) == ("torque", "controlsState")
+  assert module._effective_control_path(pid_cp, {"pidState": 1200}) == ("pid", "controlsState")
+  assert module._effective_control_path(pid_cp, {}) == ("pid", "carParams")
+
+
+def test_effective_control_path_keeps_true_angle_and_mixed_routes_diagnostic(tmp_path):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  angle_cp = SimpleNamespace(
+    steerControlType=module.car.CarParams.SteerControlType.angle,
+    lateralTuning=SimpleNamespace(which=lambda: "torque"),
+  )
+
+  assert module._effective_control_path(angle_cp, {}) == ("angle", "carParams")
+  assert module._effective_control_path(angle_cp, {"angleState": 900}) == ("angle", "controlsState")
+  assert module._effective_control_path(angle_cp, {"angleState": 900, "torqueState": 900}) == ("mixed", "controlsState")
+
+
+def test_analysis_is_rejected_while_onroad(tmp_path):
+  module, fake_params_cls = _load_flm_workspace_module(tmp_path)
+  fake_params_cls._store = {"IsOnroad": True}
+
+  with pytest.raises(module.FLMAnalysisCancelled, match="went onroad"):
+    module._require_flm_offroad()
+  assert module.start_flm_background_analysis(["route"], [str(tmp_path)]) is False
+
+
+def test_segment_analysis_stops_on_mid_run_onroad_transition(tmp_path, monkeypatch):
+  module, _ = _load_flm_workspace_module(tmp_path)
+
+  class TransitionParams:
+    calls = 0
+
+    def get_bool(self, key):
+      assert key == "IsOnroad"
+      self.calls += 1
+      return self.calls >= 2
+
+  monkeypatch.setattr(module, "LogReader", lambda *args, **kwargs: iter([SimpleNamespace()]))
+  source = SimpleNamespace(log_path=tmp_path / "rlog")
+
+  with pytest.raises(module.FLMAnalysisCancelled, match="went onroad"):
+    module._segment_samples(source, params=TransitionParams())
+
+
+def test_onroad_stop_terminates_process_group_and_preserves_reason(tmp_path, monkeypatch):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  module.FLM_STATUS_PATH = tmp_path / "flm_status.json"
+  module._write_flm_status({"pid": 4321, "startedAt": 1.0, "running": True, "state": "analyzing"})
+  signals = []
+
+  class FakeProcess:
+    pid = 4321
+
+    @staticmethod
+    def poll():
+      return None
+
+    @staticmethod
+    def wait(timeout):
+      del timeout
+      return 0
+
+  monkeypatch.setattr(module.os, "getpgid", lambda pid: pid)
+  monkeypatch.setattr(module.os, "killpg", lambda pgid, sig: signals.append((pgid, sig)))
+  module.FLM_ANALYZER_PROCESS = FakeProcess()
+
+  assert module.stop_flm_background_analysis(reason="onroad") is True
+  assert signals == [(4321, module.signal.SIGTERM)]
+  assert module.FLM_ANALYZER_PROCESS is None
+  assert module.read_flm_status()["state"] == "cancelled_onroad"
+  assert "went onroad" in module.read_flm_status()["error"]
+
+
+def test_worker_watchdog_exits_immediately_when_vehicle_goes_onroad(tmp_path, monkeypatch):
+  module, fake_params_cls = _load_flm_workspace_module(tmp_path)
+  module.FLM_STATUS_PATH = tmp_path / "flm_status.json"
+  fake_params_cls._store = {"IsOnroad": True}
+  module._write_flm_status({"pid": 4321, "startedAt": 1.0, "running": True, "state": "analyzing"})
+
+  def fake_exit(code):
+    raise SystemExit(code)
+
+  signals = []
+  monkeypatch.setattr(module.os, "getpid", lambda: 4321)
+  monkeypatch.setattr(module.os, "getpgrp", lambda: 4321)
+  monkeypatch.setattr(module.os, "killpg", lambda pgid, sig: signals.append((pgid, sig)))
+  monkeypatch.setattr(module.os, "_exit", fake_exit)
+  with pytest.raises(SystemExit) as exc:
+    module._watch_flm_worker_for_onroad()
+
+  assert exc.value.code == 0
+  assert signals == [(4321, module.signal.SIGTERM)]
+  assert module.read_flm_status()["state"] == "cancelled_onroad"
 
 
 def test_legacy_workspace_is_migrated_to_flm(tmp_path):
@@ -359,6 +464,51 @@ def test_build_suggestions_baseline_respects_asymmetric_nonlinear_map(tmp_path):
   assert adjustment["type"] == "vehicle_knob"
   assert adjustment["symbol"] == "hyundai_ioniq_6.ff_gain_right"
   assert adjustment["suggested"] > adjustment["current"]
+
+
+def test_nonlinear_torque_map_resolves_gm_integration_alias(tmp_path, monkeypatch):
+  module, _ = _load_flm_workspace_module(tmp_path)
+  volt_map = {
+    "left": [1.525, 1.05, 0.155, 0.0],
+    "right": [1.525, 0.95, 0.150, 0.0],
+  }
+  monkeypatch.setitem(sys.modules, "opendbc.car.gm.interface", _simple_module(
+    "opendbc.car.gm.interface",
+    NON_LINEAR_TORQUE_PARAM_ALIASES={"CHEVROLET_VOLT_ASCM": "CHEVROLET_VOLT"},
+    get_nonlinear_torque_params=lambda candidate: volt_map if candidate == "CHEVROLET_VOLT_ASCM" else None,
+  ))
+  cp = SimpleNamespace(brand="gm", carFingerprint="CHEVROLET_VOLT_ASCM")
+
+  nonlinear_map = module._nonlinear_torque_map(cp)
+
+  assert nonlinear_map["type"] == "siglin"
+  assert nonlinear_map["asymmetric"] is True
+  assert nonlinear_map["sourceFingerprint"] == "CHEVROLET_VOLT"
+  assert nonlinear_map["left"] == volt_map["left"]
+  assert nonlinear_map["right"] == volt_map["right"]
+
+  summary = {
+    "bucket": "understeer",
+    "dimensionId": "understeer:right:mid",
+    "direction": "right",
+    "speedBand": "mid",
+    "severity": 1.0,
+    "evidence": {"speedBand": "mid", "directionBias": "right", "eventCount": 3, "segments": [{"label": "route/2"}]},
+    "plotSvg": "",
+  }
+  capabilities = {"richProfileKey": "torque_universal", "frictionFamily": "gm", "nonlinearTorqueMap": nonlinear_map}
+  current = {"SteerLatAccel": 1.8, "SteerFriction": 0.2}
+  adjustment = module.build_suggestions([summary], capabilities, current, strategy="cleanup")[0]["primaryAdjustmentRaw"]
+
+  assert adjustment["type"] == "vehicle_knob"
+  assert adjustment["symbol"] == "torque_universal.ff_gain_right"
+  assert adjustment["suggested"] > adjustment["current"]
+
+  summary["bucket"] = "oversteer"
+  summary["dimensionId"] = "oversteer:right:mid"
+  adjustment = module.build_suggestions([summary], capabilities, current, strategy="cleanup")[0]["primaryAdjustmentRaw"]
+  assert adjustment["symbol"] == "torque_universal.ff_gain_right"
+  assert adjustment["suggested"] < adjustment["current"]
 
 
 def test_build_suggestions_rebases_rich_knob_against_active_override(tmp_path):

@@ -72,6 +72,7 @@ BOLT_2017_CARS = (
 BOLT_CARS = BOLT_2022_2023_CARS + BOLT_2018_2021_CARS + BOLT_2017_CARS
 VOLT_STANDARD_CARS = (
   GM_CAR.CHEVROLET_VOLT,
+  GM_CAR.CHEVROLET_VOLT_2019,
   GM_CAR.CHEVROLET_VOLT_ASCM,
   GM_CAR.CHEVROLET_VOLT_CAMERA,
   GM_CAR.CHEVROLET_VOLT_CC,
@@ -2716,9 +2717,10 @@ def _add_flm_full_surface_profile_knobs(profile_key: str, defaults: dict[str, fl
     symbol = _flm_profile_symbol(profile_key, suffix)
     if symbol in FLM_SUPPORTED_VEHICLE_KNOBS:
       continue
+    minimum = -0.40 if profile_key == FLM_UNIVERSAL_PROFILE_KEY and suffix in ("ff_gain_left", "ff_gain_right") else meta["min"]
     FLM_SUPPORTED_VEHICLE_KNOBS[symbol] = {
       "profile": profile_key,
-      "min": meta["min"],
+      "min": minimum,
       "max": meta["max"],
       "precision": meta["precision"],
       "deltaType": meta["deltaType"],
