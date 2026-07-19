@@ -119,11 +119,40 @@ CURVATURE_HOLD_PLAN_LOOKAHEAD_NEAR = 4.0  # m; reads whether the turn starts NOW
 CURVATURE_HOLD_PLAN_LOOKAHEAD_FAR = 7.0   # m; reads the turn's curvature
 CURVATURE_HOLD_PLAN_SCALE = 0.85
 CURVATURE_HOLD_PLAN_CAP = 0.12       # 1/m
+# Proximity gate on the pre-wind: the 4/7 m probe reads the corner's full curvature the
+# instant the plan bends toward it, which at a stop-line turn is several meters before
+# the car reaches the line — so it wound the wheel hard while still rolling and cut the
+# inside curb (both directions), and on an early blinker it turned in before the corner
+# (RL2 seg1 t=42: corner 2 m ahead, car at 1.2 m/s, pre-wind already at 0.13). The plan
+# itself carries the distance: get_plan_turn_onset_dist is where the path bends. Scale
+# the pre-wind from full at ONSET_NEAR to zero at ONSET_FAR_GATE so it winds only as the
+# corner closes. At a real stop the onset collapses to ~0 m once stopped (model: "turn
+# is here"), so the stop-line pre-wind still reaches full strength — just later, at the
+# line instead of 3 m short of it.
+CURVATURE_HOLD_ONSET_HEADING = 10.0    # deg of plan heading change that marks the corner
+CURVATURE_HOLD_ONSET_NEAR = 1.5        # m; corner this close -> full pre-wind
+CURVATURE_HOLD_ONSET_FAR_GATE = 5.0    # m; corner past this -> no pre-wind yet
+CURVATURE_HOLD_ONSET_FAR = 100.0       # m; sentinel "no corner found"
 # The model counter-steers at every turn exit; an opposite-direction command is the
 # "turn is over" signal at any speed. Without this the floor converted the exit unwind
 # (-0.076) into a stuck +0.012 for 1.4 s and the driver had to unwind by hand
 # (rightturnfail rlog 33.2-34.4s). Deadband rejects the ~0.002 pull-away flickers.
 CURVATURE_HOLD_OPPOSITE_RELEASE = 0.01  # 1/m
+# Nudge-to-commit: creeping toward a rolling left below the release speed, the model
+# often does not commit until the geometry is entered — the driver hauled the wheel
+# 144-260 deg alone with the action at zero (0000087c segs 7/8, +377..+411 driver
+# torque) before the model took over. Forcing the plan probe here instead is what
+# caused the 2026-07-19 fights, and the driver's own torque separates those cases
+# perfectly: they RESISTED the premature machine wind (-117, bracing) but PUSH when
+# the gap is theirs. So the driver's matching push is the "go" signal: capture the
+# curvature they have physically wound into the hold, un-rate-limited (the wheel is
+# already there; holding adds no motion), so the car grabs the turn at a nudge instead
+# of making them wind it all by hand. Allowed anywhere the hold exists (< release
+# speed): a 3 m/s ceiling left the 0000087f seg 1 gap-taken-at-3.5-4.2 m/s haul
+# (40->220 deg at +418) unassisted; the decay/handoff/opposite-release machinery
+# already bounds the captured floor in that band.
+CURVATURE_HOLD_CONFIRM_MIN = 0.003  # 1/m (~7 deg) of wound curvature before capture
+CURVATURE_HOLD_CONFIRM_SWEPT = 0.6  # rad of heading swept this blinker cycle; past this the push is exit-shaping, not initiation
 
 
 def _plan_circle_curvature(xs, ys, lookahead: float) -> float:
@@ -140,18 +169,86 @@ def _plan_circle_curvature(xs, ys, lookahead: float) -> float:
   return 2.0 * py / d2
 
 
-def get_plan_spatial_curvature(model_v2) -> float:
+def _plan_dual_probe(model_v2, d_near: float, d_far: float) -> float:
   # Min-magnitude of a near and a far circle fit. The far probe alone assumes the turn
   # starts immediately, which over-winds wide turns whose arc begins several meters out
   # (wide multi-lane lefts): the near probe reads ~straight there and only grows as the
-  # car creeps up to the arc, so the pre-wind self-scales to the turn geometry. Sign
+  # car approaches the arc, so the readout self-scales to the turn geometry. Sign
   # disagreement means no coherent turn ahead: contribute nothing.
   xs, ys = model_v2.position.x, model_v2.position.y
-  near = _plan_circle_curvature(xs, ys, CURVATURE_HOLD_PLAN_LOOKAHEAD_NEAR)
-  far = _plan_circle_curvature(xs, ys, CURVATURE_HOLD_PLAN_LOOKAHEAD_FAR)
+  near = _plan_circle_curvature(xs, ys, d_near)
+  far = _plan_circle_curvature(xs, ys, d_far)
   if near * far <= 0.0:
     return 0.0
   return near if abs(near) < abs(far) else far
+
+
+def get_plan_spatial_curvature(model_v2) -> float:
+  return _plan_dual_probe(model_v2, CURVATURE_HOLD_PLAN_LOOKAHEAD_NEAR, CURVATURE_HOLD_PLAN_LOOKAHEAD_FAR)
+
+
+def get_plan_turn_onset_dist(model_v2) -> float:
+  # Distance along the plan at which the path first bends past ONSET_HEADING from the
+  # car's current heading — i.e. how far ahead the corner actually starts. The pre-wind
+  # magnitude scales on this so a stop-line turn winds only once the corner is close,
+  # not the instant the plan first shows a turn several meters out (which cut the inside
+  # curb at a stop and turned in early on an over-eager blinker). Returns a large
+  # sentinel when no bend is found, so distant/straight plans read "far" and don't wind.
+  xs, ys = model_v2.position.x, model_v2.position.y
+  n = min(len(xs), len(ys))
+  for i in range(2, n):
+    dx = xs[i] - xs[i - 1]
+    dy = ys[i] - ys[i - 1]
+    if abs(dx) < 1e-3 and abs(dy) < 1e-3:
+      continue
+    if abs(math.degrees(math.atan2(dy, dx))) > CURVATURE_HOLD_ONSET_HEADING:
+      return math.hypot(xs[i], ys[i])
+  return CURVATURE_HOLD_ONSET_FAR
+
+
+# Turn-initiation lead. The model's action and the fixed 4/7 m probes are anchored in
+# METERS, so the seconds of warning they give shrinks with speed — at 12 mph a corner
+# enters the 7 m window only ~1.3 s out, too late to wind the wheel, which is why every
+# turn in the Desktop/new drive initiated only below ~5.5 m/s regardless of approach
+# speed. This lead probes the plan at a constant-TIME distance instead and max-mag
+# blends into the command, so initiation can start while still rolling at 9-12 mph.
+# The engagement fade (authority ramps to zero as measured curvature approaches the
+# lead) limits it to the initiation phase: once the car is tracking the arc, the model
+# owns the turn shape — without it, the blend re-creates the 2026-07-16 rolling-turn
+# front-load (stickyright2 entry: 0.084 commanded vs the model's own 0.041 spiral). A
+# binary gate here limit-cycles: cutting drops demand to a still-small action, the
+# wheel unwinds below the threshold, the lead re-fires — a 5 Hz demand sawtooth felt
+# as wiggle (2026-07-19 drive seg 7 t=49-50). The fade instead settles at a stable
+# ~2/3-of-lead equilibrium until the action takes over via the max-mag blend.
+# Stop-sign approaches stay quiet because the stopping plan compresses to the stop
+# line and reads ~straight until the car is nearly there (probes ~0 for 7 s of
+# blinker-on coasting at 9-12 m/s). Below TURN_LEAD_MIN_SPEED the lead must stay OFF,
+# not just for standstill plan flicker: at creep speed the probe's 4 m distance floor
+# chord-fits a left turn's straight-then-arc entry as "arc now", demanding 3-5x the
+# model's intent. The model fights back — its plan flips to correct the premature yaw,
+# the wheel swings back through center, and the swing trips the stalk auto-cancel,
+# killing the turn (2026-07-19 segs 6/7/8/10, all at 1.5-2.4 m/s; the same drive's
+# completed turns show the model committing on its own below 3 m/s). The model's
+# meter-anchored horizon gives it 2+ s of warning at creep speed — the lead's whole
+# reason to exist (time-warning shrinking with speed) does not apply there.
+TURN_LEAD_T = 1.3          # s of travel the probe looks ahead (~wind-up time + lat delay)
+TURN_LEAD_MIN_M = 4.0
+TURN_LEAD_MAX_M = 14.0
+TURN_LEAD_MIN_SPEED = 3.0   # m/s: authority 0 here, ramps to full at FULL_SPEED
+TURN_LEAD_FULL_SPEED = 4.0  # m/s
+TURN_LEAD_MAX_SPEED = 7.0   # m/s (~15.7 mph)
+TURN_LEAD_SCALE = 0.85
+TURN_LEAD_CAP = 0.12       # 1/m
+TURN_LEAD_ENGAGED_FRAC = 0.5   # engagement fade starts here, zero authority at 1.0
+TURN_LEAD_MODEL_OPPOSE = 0.003  # 1/m: model steering this hard against the blinker vetoes the lead
+# Braking-to-a-stop veto: if sustaining the current decel parks the car within this
+# factor of the probe distance, the driver intends to stop short of the arc — demanding
+# that arc's curvature NOW winds the wheel at a stop approach the model didn't plan
+# (0000087c seg 1: lead wound 30 deg at 6 m/s while braking for a 13 s stop; driver
+# yanked it back with -509 torque). Turn-approach braking releases before this trips;
+# a held brake to standstill keeps it tripped, deferring the turn to the pre-wind.
+TURN_LEAD_STOP_MARGIN = 1.5
+TURN_LEAD_DECEL_GATE = -0.5  # m/s^2: only project a stop when genuinely braking
 
 
 def get_gm_hud_set_speed(set_speed_ms: float, starpilot_toggles) -> float:
@@ -212,6 +309,7 @@ class Controls:
     self.turn_hold_swept = 0.0
     self.turn_hold_handoff_t = 0.0
     self.turn_hold_done = False
+    self.turn_blinker_swept = 0.0
 
     self.pose_calibrator = PoseCalibrator()
     self.calibrated_pose: Pose | None = None
@@ -339,6 +437,12 @@ class Controls:
     # here is positive for RIGHT turns (pauseturn log: left turn at +148 deg steering
     # angle logs desiredCurvature -0.07), so the blinker maps right=+1, left=-1.
     blinker_dir = float(CS.rightBlinker) - float(CS.leftBlinker)
+    # heading swept in the blinker's direction over the whole blinker cycle (any speed):
+    # discriminates a turn not yet made from one being exited (see the re-arm below)
+    if blinker_dir == 0.0:
+      self.turn_blinker_swept = 0.0
+    else:
+      self.turn_blinker_swept += max(CS.vEgo * self.curvature * blinker_dir, 0.0) * DT_CTRL
     if CS.vEgo >= CURVATURE_HOLD_RELEASE_SPEED:
       self.turn_hold_curvature = 0.0
       self.turn_hold_standstill_t = 0.0
@@ -389,6 +493,17 @@ class Controls:
       if blinker_dir == 0.0:
         # blinker cycle over: a fresh turn may engage a fresh hold
         self.turn_hold_done = False
+      elif CC.latActive and CS.steeringPressed and CS.steeringTorque * blinker_dir < 0.0 and \
+           self.curvature * blinker_dir > CURVATURE_HOLD_CONFIRM_MIN and \
+           self.turn_blinker_swept < CURVATURE_HOLD_CONFIRM_SWEPT:
+        # an active driver push into the signaled turn BEFORE the turn is made is fresh
+        # turn intent: re-arm the cycle even after a prior handoff. A long blinker-on
+        # approach can latch done on a trivial micro-handoff and lock out
+        # nudge-to-commit ten seconds later at the real turn (0000087f seg 1: +418 haul
+        # unassisted). The swept gate keeps a light same-direction touch during the
+        # EXIT unwind from re-latching a large hold against the model's recentering
+        # (0000087f seg 4 t=14.5 in replay: floor trailed the exit by 0.07 for 1.5 s).
+        self.turn_hold_done = False
       if blinker_dir != 0.0 and not self.turn_hold_done:
         # Ratchet up on the raw model command, never on the floored/measured value, so
         # the hold can't feed itself and defeat the decay. Below the release speed the
@@ -399,11 +514,30 @@ class Controls:
         if CC.latActive and CS.vEgo < CURVATURE_HOLD_PLAN_SOURCE_SPEED:
           plan_curvature = get_plan_spatial_curvature(model_v2) * CURVATURE_HOLD_PLAN_SCALE
           plan_curvature = max(min(plan_curvature, CURVATURE_HOLD_PLAN_CAP), -CURVATURE_HOLD_PLAN_CAP)
+          # Proximity gate (see CURVATURE_HOLD_ONSET_*): wind only as the corner closes,
+          # so a stop-line turn winds at the line and an early blinker doesn't turn in
+          # early. Full at ONSET_NEAR, zero at ONSET_FAR_GATE.
+          onset = get_plan_turn_onset_dist(model_v2)
+          onset_w = min(max((CURVATURE_HOLD_ONSET_FAR_GATE - onset) /
+                            (CURVATURE_HOLD_ONSET_FAR_GATE - CURVATURE_HOLD_ONSET_NEAR), 0.0), 1.0)
+          plan_curvature *= onset_w
           if plan_curvature * blinker_dir > turn_candidate * blinker_dir:
             turn_candidate = plan_curvature
+        # Nudge-to-commit (see CURVATURE_HOLD_CONFIRM_*): the driver actively pushing in
+        # the blinker direction at creep speed captures what they have wound. Positive
+        # steeringTorque is a LEFT push (negative curvature), so agreement is a negative
+        # product with blinker_dir. Exempt from the ratchet rate limit: latching the
+        # wheel's current position commands no motion, only keeps the driver's progress.
+        driver_confirmed = False
+        if CC.latActive and CS.steeringPressed and \
+           CS.steeringTorque * blinker_dir < 0.0 and self.curvature * blinker_dir > CURVATURE_HOLD_CONFIRM_MIN:
+          wound_curvature = max(min(self.curvature, CURVATURE_HOLD_PLAN_CAP), -CURVATURE_HOLD_PLAN_CAP)
+          if wound_curvature * blinker_dir > turn_candidate * blinker_dir:
+            turn_candidate = wound_curvature
+            driver_confirmed = True
         if turn_candidate * blinker_dir > abs(self.turn_hold_curvature):
           new_mag = turn_candidate * blinker_dir
-          if CS.vEgo > CURVATURE_HOLD_PLAN_SOURCE_SPEED:
+          if CS.vEgo > CURVATURE_HOLD_PLAN_SOURCE_SPEED and not driver_confirmed:
             new_mag = min(new_mag, abs(self.turn_hold_curvature) + CURVATURE_HOLD_RATCHET_RATE * DT_CTRL)
           self.turn_hold_curvature = math.copysign(new_mag, turn_candidate)
         elif self.turn_hold_curvature * blinker_dir < 0.0:
@@ -413,6 +547,38 @@ class Controls:
         hold_dir = math.copysign(1.0, self.turn_hold_curvature)
         if new_desired_curvature * hold_dir < abs(self.turn_hold_curvature):
           new_desired_curvature = self.turn_hold_curvature
+
+    # Turn-initiation lead (see TURN_LEAD_*). Applied AFTER the hold block so the
+    # ratchet/handoff only ever see the raw model action; pure max-magnitude, so it can
+    # never reduce or oppose the model. Lane changes are excluded: that blinker's plan
+    # bend is not a turn. The model-oppose veto is defense-in-depth for the fade-in
+    # edge: a model actively steering against the blinker is correcting something the
+    # lead must not fight (see the constants comment for the 2026-07-19 failures).
+    if (CC.latActive and blinker_dir != 0.0 and
+        model_v2.meta.laneChangeState == LaneChangeState.off and
+        TURN_LEAD_MIN_SPEED <= CS.vEgo < TURN_LEAD_MAX_SPEED and
+        new_desired_curvature * blinker_dir > -TURN_LEAD_MODEL_OPPOSE):
+      d_near = max(min(TURN_LEAD_T * CS.vEgo, TURN_LEAD_MAX_M), TURN_LEAD_MIN_M)
+      stopping_short = CS.aEgo < TURN_LEAD_DECEL_GATE and \
+          CS.vEgo ** 2 / (2.0 * -CS.aEgo) < TURN_LEAD_STOP_MARGIN * d_near
+      lead_curvature = 0.0 if stopping_short else _plan_dual_probe(model_v2, d_near, d_near + 3.0) * TURN_LEAD_SCALE
+      lead_curvature = max(min(lead_curvature, TURN_LEAD_CAP), -TURN_LEAD_CAP)
+      if lead_curvature * blinker_dir > 0.0:
+        speed_w = min(max((CS.vEgo - TURN_LEAD_MIN_SPEED) / (TURN_LEAD_FULL_SPEED - TURN_LEAD_MIN_SPEED), 0.0), 1.0)
+        engaged_ratio = abs(self.curvature) / abs(lead_curvature)
+        engage_w = min(max((1.0 - engaged_ratio) / (1.0 - TURN_LEAD_ENGAGED_FRAC), 0.0), 1.0)
+        lead_curvature *= speed_w * engage_w
+        if lead_curvature * blinker_dir > max(new_desired_curvature * blinker_dir, 0.0):
+          new_desired_curvature = lead_curvature
+          # Capture the applied lead into the hold (rate-limited like any moving-speed
+          # ratchet) so decelerating through the fade floor keeps the initiation
+          # progress: without this, braking mid-wind dumped the lead's demand back to
+          # the still-small action and visibly unwound the wheel 50->15 deg before the
+          # standstill pre-wind had to redo the work (0000087c seg 6 first left).
+          if CS.vEgo < CURVATURE_HOLD_RELEASE_SPEED and not self.turn_hold_done and \
+             lead_curvature * blinker_dir > abs(self.turn_hold_curvature):
+            held_mag = min(lead_curvature * blinker_dir, abs(self.turn_hold_curvature) + CURVATURE_HOLD_RATCHET_RATE * DT_CTRL)
+            self.turn_hold_curvature = math.copysign(held_mag, lead_curvature)
 
     jerk_factor = 1.0
     if self.starpilot_toggles.lane_change_pace < 10:
