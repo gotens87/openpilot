@@ -755,7 +755,11 @@ class AugmentedRoadView(CameraView):
 
   def _calc_frame_matrix(self, rect: rl.Rectangle) -> np.ndarray:
     if self.stream_type == DRIVER_CAM:
-      return CameraView._calc_frame_matrix(self, rect)
+      base = CameraView._calc_frame_matrix(self, rect)
+      driver_view_ratio = 1.5
+      base[0, 0] *= driver_view_ratio
+      base[1, 1] *= driver_view_ratio
+      return base
 
     # Get camera configuration
     # TODO: cache with vEgo?
