@@ -717,7 +717,9 @@ class StarPilotVariables:
 
     advanced_lateral_tuning = self.get_value("AdvancedLateralTune")
     toggle.force_auto_tune = self.get_value("ForceAutoTune", condition=advanced_lateral_tuning and not has_auto_tune and is_torque_car and not is_angle_car)
-    toggle.force_auto_tune_off = self.get_value("ForceAutoTuneOff", condition=advanced_lateral_tuning and has_auto_tune and is_torque_car and not is_angle_car)
+    # Force-off is also meaningful on manually tuned torque cars: it locks the
+    # vehicle-model parameters instead of allowing paramsd to learn over them.
+    toggle.force_auto_tune_off = self.get_value("ForceAutoTuneOff", condition=advanced_lateral_tuning and is_torque_car and not is_angle_car)
     toggle.flm_active_profile_id = self.params.get("FLMActiveProfileId", encoding="utf-8") or ""
     toggle.flm_trial_applied = self.params.get_bool("FLMTrialApplied")
     flm_overrides_raw = self.params.get("FLMActiveOverrides", encoding="utf-8") or ""
@@ -1052,7 +1054,7 @@ class StarPilotVariables:
     # The jerk factor is derived from a sinusoidal lane-change profile: j = pi^3 * W / T^3,
     # with 1.3x headroom. Only jerk (curvature rate) is shaped; lateral accel stays at the
     # stock envelope so the end-of-maneuver arrest is never starved of authority.
-    pace = self.get_value("LaneChangeSmoothing", cast=int, condition=toggle.lane_changes) or 10
+    pace = self.get_value("LaneChangeSmoothing", cast=int, condition=toggle.lane_changes) or 5
     pace = max(1, min(10, pace))
     lane_w = 3.5
     t_target = 3.0 + (10 - pace) * 5.0 / 9.0

@@ -247,12 +247,12 @@ class StarPilotLateralLayout(_SettingsPage):
       ),
       SettingRow(
         "ForceAutoTuneOff", "toggle", tr_noop("Force Auto-Tune Off"),
-        subtitle=tr_noop("Force-disable auto-tuning and use your set values."),
+        subtitle=tr_noop("Force-disable learned lateral values and use your set values."),
         get_state=lambda: p.get_bool("ForceAutoTuneOff"),
         set_state=lambda s: (p.put_bool("ForceAutoTuneOff", s),
                              s and p.put_bool("ForceAutoTune", False),
                              _sync_parent(p, "AdvancedLateralTune", _ADVANCED_LATERAL_KEYS)),
-        enabled=lambda: cs.hasAutoTune and cs.isTorqueCar and not cs.isAngleCar,
+        enabled=lambda: cs.isTorqueCar and not cs.isAngleCar,
         disabled_label=tr_noop("Not Available"),
         visible=alt_on,
       ),
@@ -379,6 +379,6 @@ class StarPilotLateralLayout(_SettingsPage):
     def on_close(res, val):
       if res == DialogResult.CONFIRM:
         self._params.put_int("LaneChangeSmoothing", int(val))
-    current = self._params.get_int("LaneChangeSmoothing") if self._params.get_int("LaneChangeSmoothing") > 0 else 10
+    current = self._params.get_int("LaneChangeSmoothing") if self._params.get_int("LaneChangeSmoothing") > 0 else 5
     gui_app.push_widget(AetherSliderDialog(tr("Lane Change Smoothing"), 1, 10, 1, current, on_close,
                                             color=self.SLIDER_COLOR))

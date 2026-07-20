@@ -554,6 +554,48 @@ class TestGMCarController:
 
     assert [msg[2] for msg in msgs] == [0]
 
+  def test_xt4_cc_redneck_spam_matches_physical_button_burst(self):
+    packer = CANPacker(DBC[CAR.CADILLAC_XT4_CC][Bus.pt])
+    controller = SimpleNamespace(
+      frame=int(0.3 / DT_CTRL),
+      last_button_frame=0,
+      apply_speed=0,
+      malibu_button_phase=0,
+      xt4_cc_button_burst_remaining=0,
+      xt4_cc_button_burst_button=CruiseButtons.INIT,
+      xt4_cc_button_burst_last_counter=-1,
+    )
+    cs = SimpleNamespace(
+      CP=SimpleNamespace(
+        carFingerprint=CAR.CADILLAC_XT4_CC,
+        flags=GMFlags.CC_LONG.value,
+        minEnableSpeed=24 * CV.MPH_TO_MS,
+      ),
+      buttons_counter=0,
+      out=SimpleNamespace(
+        vEgo=25.0,
+        cruiseState=SimpleNamespace(speed=20.0),
+      ),
+    )
+    actuators = SimpleNamespace(accel=1.0)
+
+    dats = []
+    for counter in (0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 0, 0, 0, 1, 1, 1):
+      cs.buttons_counter = counter
+      msgs = gmcan.create_gm_cc_spam_command(packer, controller, cs, actuators, SimpleNamespace(is_metric=False))
+      dats.extend(bytes(msg[1]).hex() for msg in msgs)
+      controller.frame += 1
+
+    assert dats == [
+      "000000010125de",
+      "00000001022acd",
+      "00000001032fbc",
+      "000000010020ef",
+      "000000010125de",
+      "00000001022acd",
+    ]
+    assert controller.xt4_cc_button_burst_remaining == 0
+
   def test_acc_dashboard_command_preserves_raw_fcw_alert_level(self):
     packer = CANPacker(DBC[CAR.CHEVROLET_BOLT_ACC_2022_2023][Bus.pt])
     parser = CANParser(DBC[CAR.CHEVROLET_BOLT_ACC_2022_2023][Bus.pt], [("ASCMActiveCruiseControlStatus", 0)], 0)

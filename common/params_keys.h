@@ -367,7 +367,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"KonikDongleId", {PERSISTENT, STRING, "", "", 0}},
     {"KonikMinutes", {PERSISTENT, INT, "0", "0", 0}},
     {"LaneChanges", {PERSISTENT, BOOL, "1", "1", 0, SETTINGS_SIMPLE}},
-    {"LaneChangeSmoothing", {PERSISTENT, INT, "10", "10", 1, SETTINGS_SIMPLE}},
+    {"LaneChangeSmoothing", {PERSISTENT, INT, "5", "10", 1, SETTINGS_SIMPLE}},
     {"LaneChangeTime", {PERSISTENT, FLOAT, "1.0", "0.0", 1, SETTINGS_SIMPLE}},
     {"LaneDetectionWidth", {PERSISTENT, FLOAT, "0.0", "0.0", 1, SETTINGS_SIMPLE}},
     {"LaneLinesColor", {PERSISTENT, STRING, "", "", 2, SETTINGS_SIMPLE}},

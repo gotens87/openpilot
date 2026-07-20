@@ -75,6 +75,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_kia_carnival_center_taper_scale,
   get_kia_carnival_friction_center_fade_scale,
   get_kia_carnival_friction_threshold,
+  get_tucson_4th_gen_center_taper_scale,
   get_kia_ev6_center_taper_scale,
   get_kia_ev6_ff_scale,
   get_kia_ev6_friction_scale,
@@ -416,6 +417,7 @@ class TestLatControl:
     assert center_taper < turn_taper <= 1.0
     assert center_taper < low_speed_taper <= 1.0
     assert center_taper < highway_taper <= 1.0
+    assert center_taper < 0.84
     assert neighborhood_taper < 0.94
     assert neighborhood_turn_taper > 0.99
 
@@ -425,7 +427,7 @@ class TestLatControl:
 
     center_fade = get_kia_carnival_friction_center_fade_scale(0.04, 8.5)
     turn_fade = get_kia_carnival_friction_center_fade_scale(0.35, 8.5)
-    assert center_fade < turn_fade <= 1.0
+    assert center_fade < 0.75 < turn_fade <= 1.0
 
   def test_genesis_g90_ff_scale_curve(self):
     assert get_genesis_g90_ff_scale(0.0, 0.0, 20.0) == 1.0
@@ -825,6 +827,38 @@ class TestLatControl:
 
     assert controller.is_kia_carnival
     assert lac_log.active
+
+  def test_tucson_4th_gen_low_speed_center_taper_curve(self):
+    low_speed_center = get_tucson_4th_gen_center_taper_scale(0.0, 8.5)
+    low_speed_moderate = get_tucson_4th_gen_center_taper_scale(0.30, 8.5)
+    low_speed_turn = get_tucson_4th_gen_center_taper_scale(0.50, 8.5)
+    high_speed_center = get_tucson_4th_gen_center_taper_scale(0.0, 20.0)
+
+    assert low_speed_center < 0.70
+    assert low_speed_center < low_speed_moderate < low_speed_turn
+    assert low_speed_turn > 0.98
+    assert high_speed_center > 0.98
+
+  def test_tucson_4th_gen_default_update_path(self):
+    controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.HYUNDAI_TUCSON_4TH_GEN)
+    CS.vEgo = 8.5
+
+    _, _, lac_log = controller.update(True, CS, VM, params, False, 0.0025, False, 0.2, None, None, starpilot_toggles)
+
+    assert controller.is_tucson_4th_gen
+    assert lac_log.active
+
+  def test_tucson_4th_gen_tapers_low_speed_output(self, monkeypatch):
+    tapered_controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.HYUNDAI_TUCSON_4TH_GEN)
+    CS.vEgo = 8.5
+    tapered_output, _, _ = tapered_controller.update(True, CS, VM, params, False, 0.0025, False, 0.2, None, None, starpilot_toggles)
+
+    monkeypatch.setattr(latcontrol_torque, "get_tucson_4th_gen_center_taper_scale", lambda *_args: 1.0)
+    base_controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.HYUNDAI_TUCSON_4TH_GEN)
+    CS.vEgo = 8.5
+    base_output, _, _ = base_controller.update(True, CS, VM, params, False, 0.0025, False, 0.2, None, None, starpilot_toggles)
+
+    assert abs(tapered_output) < abs(base_output)
 
   def test_ioniq_6_update_path_does_not_post_taper_output(self, monkeypatch):
     base_controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.HYUNDAI_IONIQ_6)

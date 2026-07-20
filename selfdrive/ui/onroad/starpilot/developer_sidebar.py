@@ -316,12 +316,13 @@ class DeveloperSidebar:
     fallback_use_custom_steer_ratio = force_auto_tune_off or (_setting_changed(self._cached_ratio, self._cached_ratio_stock) and not force_auto_tune)
     use_custom_steer_ratio = self._toggle_bool(toggles, "use_custom_steerRatio", fallback_use_custom_steer_ratio)
     custom_steer_ratio = self._toggle_float(toggles, "steerRatio", self._cached_ratio)
-    if live_parameters:
+    if use_custom_steer_ratio:
+      steer_ratio = custom_steer_ratio
+    elif live_parameters:
       steer_ratio = live_parameters.steerRatio
-      stiff_factor = live_parameters.stiffnessFactor
     else:
-      steer_ratio = custom_steer_ratio if use_custom_steer_ratio else (self._cached_ratio_stock if self._cached_ratio_stock != 0.0 else self._cached_ratio)
-      stiff_factor = 0.0
+      steer_ratio = self._cached_ratio_stock if self._cached_ratio_stock != 0.0 else self._cached_ratio
+    stiff_factor = 1.0 if force_auto_tune_off else (live_parameters.stiffnessFactor if live_parameters else 1.0)
 
     force_auto_tune_flm = self._flm_changed("ForceAutoTune", "ForceAutoTuneOff")
     self._metric_colors = {
@@ -341,7 +342,10 @@ class DeveloperSidebar:
         auto=live_parameters is not None and not use_custom_steer_ratio,
         flm=self._flm_changed("SteerRatio") or (force_auto_tune_flm and use_custom_steer_ratio),
       ),
-      7: self._tuning_color(auto=live_parameters is not None),
+      7: self._tuning_color(
+        auto=live_parameters is not None and not force_auto_tune_off,
+        flm=force_auto_tune_flm and force_auto_tune_off,
+      ),
     }
 
     model_name = ui_state.starpilot_toggles.get("model_name", "N/A")
