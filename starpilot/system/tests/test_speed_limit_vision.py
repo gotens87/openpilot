@@ -78,7 +78,7 @@ def test_published_sign_value_uses_configured_units():
 
 @pytest.mark.parametrize(("confidence", "expected"), ((0.89, None), (0.91, (80, 0.91))))
 def test_extended_classifier_values_require_high_confidence(monkeypatch, confidence, expected):
-  speed_values = (10, 100, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 90)
+  speed_values = (10, 100, 15, 20, 25, 30, 35, 40, 45, 5, 50, 55, 60, 65, 70, 75, 80, 90)
   probabilities = np.zeros(len(speed_values) + 1, dtype=np.float32)
   probabilities[speed_values.index(80)] = confidence
   probabilities[-1] = 1.0 - confidence
@@ -100,6 +100,15 @@ def test_extended_classifier_values_require_high_confidence(monkeypatch, confide
     assert result is None
   else:
     assert result == pytest.approx(expected)
+
+
+def test_five_mph_detection_is_publishable():
+  daemon = SpeedLimitVisionDaemon.__new__(SpeedLimitVisionDaemon)
+
+  detection = daemon._publishable_detection(slv.Detection(5, 0.95))
+
+  assert detection is not None
+  assert detection.speed_limit_mph == 5
 
 
 def test_speed_change_requires_two_matching_reads_below_single_read_threshold():

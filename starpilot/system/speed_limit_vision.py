@@ -157,8 +157,8 @@ SPEED_LIMIT_CLASSES = {
   13: 90,
 }
 
-VALID_SPEED_LIMITS_MPH = set(range(10, 125, 5))
-MIN_PUBLISHABLE_SPEED_LIMIT_MPH = 20
+VALID_SPEED_LIMITS_MPH = set(range(5, 125, 5))
+MIN_PUBLISHABLE_SPEED_LIMIT_MPH = 5
 LEGACY_MODEL_PATH = Path(__file__).resolve().parents[1] / "assets" / "vision_models" / "speed_limit_vision.onnx"
 US_DETECTOR_MODEL_PATH = Path(__file__).resolve().parents[1] / "assets" / "vision_models" / "speed_limit_us_detector.onnx"
 US_CLASSIFIER_MODEL_PATH = Path(__file__).resolve().parents[1] / "assets" / "vision_models" / "speed_limit_us_value_classifier.onnx"
@@ -168,7 +168,7 @@ US_DETECTOR_CLASSES = {
   1: "advisory_speed_limit",
   2: "school_zone_speed_limit",
 }
-US_CLASSIFIER_SPEED_VALUES = (15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75)
+US_CLASSIFIER_SPEED_VALUES = (10, 100, 15, 20, 25, 30, 35, 40, 45, 5, 50, 55, 60, 65, 70, 75, 80, 90)
 EXTENDED_CLASSIFIER_SPEED_VALUES = frozenset((5, 10, 80, 90, 100))
 SCHOOL_ZONE_SPEED_VALUES = frozenset((15, 20, 25))
 US_DETECTOR_MIN_CONFIDENCE = 0.06
