@@ -1,4 +1,6 @@
 from collections import deque
+import gc
+import weakref
 
 import numpy as np
 import pytest
@@ -61,6 +63,34 @@ def test_disconnect_camera_releases_client_state():
   assert daemon.client is None
   assert daemon.stream_type is None
   assert daemon.stream_name == ""
+
+
+def test_receive_frame_does_not_retain_vision_buffer(monkeypatch):
+  buffer_refs = []
+
+  class FakeBuffer:
+    def __init__(self):
+      self.data = np.ones(6, dtype=np.uint8)
+
+  class FakeClient:
+    width = 2
+    height = 2
+    stride = 2
+
+    def recv(self):
+      buffer = FakeBuffer()
+      buffer_refs.append(weakref.ref(buffer))
+      return buffer
+
+  daemon = SpeedLimitVisionDaemon.__new__(SpeedLimitVisionDaemon)
+  daemon.client = FakeClient()
+  monkeypatch.setattr(slv.cv2, "cvtColor", lambda image, _conversion: np.array(image, copy=True))
+
+  frame = daemon._receive_frame_bgr()
+  gc.collect()
+
+  assert frame.shape == (3, 2)
+  assert buffer_refs[0]() is None
 
 
 def test_published_sign_value_uses_configured_units():

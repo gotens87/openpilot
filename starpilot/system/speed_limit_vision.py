@@ -1035,6 +1035,25 @@ class SpeedLimitVisionDaemon:
     self.stream_type = None
     self.stream_name = ""
 
+  def _receive_frame_bgr(self):
+    # Keep VisionBuf and its NumPy view inside this short-lived scope. A local
+    # in run() survives loop iterations and can otherwise retain the old
+    # VisionIpcClient, including all imported camera buffers, while offroad.
+    client = self.client
+    if client is None:
+      return None
+
+    buffer = client.recv()
+    if buffer is None:
+      return None
+
+    data = buffer.data
+    if not data.any():
+      return None
+
+    image = np.frombuffer(data, dtype=np.uint8).reshape((len(data) // client.stride, client.stride))
+    return cv2.cvtColor(image[:client.height * 3 // 2, :client.width], cv2.COLOR_YUV2BGR_NV12)
+
   @staticmethod
   def _letterbox(image, shape=(640, 640), color=(114, 114, 114)):
     image_height, image_width = image.shape[:2]
@@ -2526,7 +2545,7 @@ class SpeedLimitVisionDaemon:
         ratekeeper.keep_time()
         continue
 
-      buffer = self.client.recv() if self.client is not None else None
+      frame_bgr = self._receive_frame_bgr()
       self.inference_count += 1
       inference_started_at = time.monotonic()
       self.last_frame_process_duration_s = 0.0
@@ -2534,7 +2553,7 @@ class SpeedLimitVisionDaemon:
       self.last_detector_forward_duration_s = 0.0
       self.last_classifier_forward_count = 0
       self.last_classifier_forward_duration_s = 0.0
-      if buffer is None or not buffer.data.any():
+      if frame_bgr is None:
         self.empty_frame_count += 1
         stale_cleared = self._clear_published_detection_if_stale(now, "empty_frame")
         if self.published_speed_limit_mph > 0 and not stale_cleared:
@@ -2548,8 +2567,6 @@ class SpeedLimitVisionDaemon:
         ratekeeper.keep_time()
         continue
 
-      image = np.frombuffer(buffer.data, dtype=np.uint8).reshape((len(buffer.data) // self.client.stride, self.client.stride))
-      frame_bgr = cv2.cvtColor(image[:self.client.height * 3 // 2, :self.client.width], cv2.COLOR_YUV2BGR_NV12)
       self.current_frame_bgr = frame_bgr
 
       if detector_due:

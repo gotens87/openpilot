@@ -179,7 +179,12 @@ class HomeLayout(Widget):
 
     version_rect = rl.Rectangle(self.header_rect.x + self.header_rect.width - version_text_width, self.header_rect.y,
                                 version_text_width, self.header_rect.height)
-    gui_label(version_rect, self._version_text, 48, rl.WHITE, alignment=rl.GuiTextAlignment.TEXT_ALIGN_RIGHT)
+    version_font_size = 48
+    version_text_size = measure_text_cached(font, self._version_text, version_font_size)
+    if version_text_size.x > version_rect.width:
+      version_font_size = max(32, int(version_font_size * version_rect.width / version_text_size.x))
+    gui_label(version_rect, self._version_text, version_font_size, rl.WHITE, font_weight=FontWeight.MEDIUM,
+              alignment=rl.GuiTextAlignment.TEXT_ALIGN_RIGHT)
 
   def _render_home_content(self):
     self._render_left_column()
@@ -233,6 +238,17 @@ class HomeLayout(Widget):
     self._prev_alerts_present = alerts_present
 
   def _get_version_text(self) -> str:
-    brand = "openpilot"
+    brand = "StarPilot"
     description = starpilot_display_description(self.params.get("UpdaterCurrentDescription"))
-    return f"{brand} {description}" if description else brand
+    version_text = f"{brand} {description}" if description else brand
+
+    model_name = self.params.get("DrivingModelName", encoding="utf-8") or self.params.get_default_value("DrivingModelName")
+    if isinstance(model_name, bytes):
+      model_name = model_name.decode("utf-8", errors="ignore")
+    model_name = str(model_name or "").replace("_default", "").replace("(Default)", "").strip()
+
+    if not model_name:
+      model_name = (self.params.get("Model", encoding="utf-8") or
+                    self.params.get("DrivingModel", encoding="utf-8") or "").strip()
+
+    return f"{version_text} - {model_name}" if model_name else version_text
