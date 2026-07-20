@@ -359,6 +359,9 @@ def get_starpilot_toggles(sm=messaging.SubMaster(["starpilotPlan"])):
 
   toggles.force_offroad = get_starpilot_toggles._params.get_bool("ForceOffroad")
   toggles.force_onroad = get_starpilot_toggles._params.get_bool("ForceOnroad")
+  # Controller selection happens before the first live StarPilot broadcast. Do
+  # not let a cached CarParams/controller type hide the persisted user request.
+  toggles.force_torque_controller = get_starpilot_toggles._params.get_bool("ForceTorqueController")
   return toggles
 
 @cache
@@ -1064,7 +1067,7 @@ class StarPilotVariables:
     toggle.lane_change_time_max = 10.0 + (10 - pace) * 2.0 / 9.0
 
     lateral_tuning = self.get_value("LateralTune")
-    toggle.force_torque_controller = self.get_value("ForceTorqueController", condition=lateral_tuning and not is_torque_car and not is_angle_car)
+    toggle.force_torque_controller = self.get_value("ForceTorqueController", condition=lateral_tuning and not is_angle_car)
     toggle.nnff = self.get_value("NNFF", condition=lateral_tuning and has_nnff and not is_angle_car)
     toggle.nnff_lite = self.get_value("NNFFLite", condition=not toggle.nnff and lateral_tuning and not is_angle_car)
     toggle.nav_desires_allowed = self.get_value("NavDesiresAllowed")

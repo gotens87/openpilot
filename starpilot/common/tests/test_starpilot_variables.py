@@ -36,6 +36,16 @@ def test_get_starpilot_toggles_uses_last_non_empty_broadcast(monkeypatch):
   assert second.vision_speed_limit_detection is True
 
 
+def test_get_starpilot_toggles_uses_persisted_force_torque_request(monkeypatch):
+  params = SimpleNamespace(get_bool=lambda key: key == "ForceTorqueController")
+  monkeypatch.setattr(spv.get_starpilot_toggles, "_params", params, raising=False)
+
+  payload = '{"force_torque_controller": false}'
+  toggles = spv.get_starpilot_toggles({"starpilotPlan": SimpleNamespace(starpilotToggles=payload)})
+
+  assert toggles.force_torque_controller is True
+
+
 class _FakeParams:
   def __init__(self, floats=None, ints=None, bools=None):
     self.floats = dict(floats or {})

@@ -39,6 +39,21 @@ class TestToyotaInterfaces:
     # At this time, only RAV4 2023 is expected to use LTA/angle control
     assert ANGLE_CONTROL_CAR == {CAR.TOYOTA_RAV4_TSS2_2023}
 
+  def test_rav4_prime_force_torque_controller(self):
+    fingerprint = {bus: {} for bus in range(8)}
+
+    default_params = CarInterface.get_params(
+      CAR.TOYOTA_RAV4_PRIME, fingerprint, [], False, False, False,
+      SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False),
+    )
+    forced_params = CarInterface.get_params(
+      CAR.TOYOTA_RAV4_PRIME, fingerprint, [], False, False, False,
+      SimpleNamespace(force_torque_controller=True, nnff=False, nnff_lite=False),
+    )
+
+    assert default_params.lateralTuning.which() == "pid"
+    assert forced_params.lateralTuning.which() == "torque"
+
   def test_tss2_dbc(self):
     # We make some assumptions about TSS2 platforms,
     # like looking up certain signals only in this DBC
