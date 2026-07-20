@@ -130,7 +130,8 @@ HTML = r"""<!doctype html>
     </aside>
   </main>
 <script>
-const speeds = [10,15,20,25,30,35,40,45,50,55,60,65,70,75,80,90,100];
+const speeds = [5,10,15,20,25,30,35,40,45,50,55,60,65,70,75,80,90,100];
+const shortcutSpeeds = speeds.filter((speed) => speed !== 5 && speed !== 100);
 let rows = [];
 let index = 0;
 let current = null;
@@ -339,7 +340,7 @@ function handleDigitShortcut(digit) {
   }
 
   const speed = Number(speedBuffer);
-  if (speeds.includes(speed)) {
+  if (shortcutSpeeds.includes(speed)) {
     clearSpeedBuffer();
     setSpeed(speed, true);
     return;

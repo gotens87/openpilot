@@ -34,7 +34,9 @@ def link_or_copy(source: Path, destination: Path) -> None:
   try:
     os.link(source, destination)
   except OSError:
-    shutil.copy2(source, destination)
+    # copy2 preserves macOS metadata as AppleDouble `._` files on exFAT. Image
+    # loaders then mistake those sidecars for corrupt training images.
+    shutil.copyfile(source, destination)
 
 
 def main() -> int:

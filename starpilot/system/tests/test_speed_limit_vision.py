@@ -15,6 +15,17 @@ class MemoryParams:
     self.values[key] = value
 
 
+class StaticClassifierNet:
+  def __init__(self, probabilities):
+    self.probabilities = np.array(probabilities, dtype=np.float32)
+
+  def setInput(self, _blob):
+    pass
+
+  def forward(self):
+    return self.probabilities
+
+
 def daemon_with_history(current_speed, entries):
   daemon = SpeedLimitVisionDaemon.__new__(SpeedLimitVisionDaemon)
   daemon.published_speed_limit_mph = current_speed
@@ -63,6 +74,32 @@ def test_published_sign_value_uses_configured_units():
   assert imperial_daemon.published_status == "Vision 50 mph (95%)"
   assert metric_daemon.params_memory.values["VisionSpeedLimit"] == pytest.approx(50 / 3.6)
   assert metric_daemon.published_status == "Vision 50 km/h (95%)"
+
+
+@pytest.mark.parametrize(("confidence", "expected"), ((0.89, None), (0.91, (80, 0.91))))
+def test_extended_classifier_values_require_high_confidence(monkeypatch, confidence, expected):
+  speed_values = (10, 100, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 90)
+  probabilities = np.zeros(len(speed_values) + 1, dtype=np.float32)
+  probabilities[speed_values.index(80)] = confidence
+  probabilities[-1] = 1.0 - confidence
+  method_globals = slv.SpeedLimitVisionDaemon._classify_speed_limit_from_model.__globals__
+  monkeypatch.setitem(method_globals, "US_CLASSIFIER_SPEED_VALUES", speed_values)
+  monkeypatch.setitem(method_globals, "EXTENDED_CLASSIFIER_SPEED_VALUES", frozenset((5, 10, 80, 90, 100)))
+  monkeypatch.setitem(method_globals, "EXTENDED_CLASSIFIER_MIN_CONFIDENCE", 0.90)
+
+  daemon = slv.SpeedLimitVisionDaemon.__new__(slv.SpeedLimitVisionDaemon)
+  daemon.classifier_net = StaticClassifierNet(probabilities)
+  daemon.reject_classifier_net = None
+  daemon.classifier_input_size = 128
+  daemon.last_classifier_forward_count = 0
+  daemon.last_classifier_forward_duration_s = 0.0
+
+  result = daemon._classify_speed_limit_from_model(np.ones((64, 48, 3), dtype=np.uint8))
+
+  if expected is None:
+    assert result is None
+  else:
+    assert result == pytest.approx(expected)
 
 
 def test_speed_change_requires_two_matching_reads_below_single_read_threshold():

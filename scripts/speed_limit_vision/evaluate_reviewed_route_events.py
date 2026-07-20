@@ -59,6 +59,8 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--track-max-age", type=float, help="Override the maximum proposal track lifetime.")
   parser.add_argument("--crop-ocr", action="store_true", help="Evaluate with crop OCR confirmation enabled.")
   parser.add_argument("--classifier-min-confidence", type=float, help="Override the value classifier confidence threshold.")
+  parser.add_argument("--classifier-speed-values", help="Comma-separated classifier classes for a candidate model.")
+  parser.add_argument("--extended-classifier-min-confidence", type=float, help="Override confidence for 5/10/80/90/100.")
   parser.add_argument("--trusted-model-min-confidence", type=float, help="Override tiny-box trusted model confidence.")
   parser.add_argument("--classifier-expansion-limit", type=int, help="Evaluate only the first N detector crop expansions.")
   parser.add_argument("--classifier-expansion-indices", help="Comma-separated detector crop expansion indices to evaluate.")
@@ -232,6 +234,10 @@ def main() -> int:
   slv.DETECTOR_CLASSIFIER_CROP_OCR_ENABLED = args.crop_ocr
   if args.classifier_min_confidence is not None:
     slv.US_CLASSIFIER_MIN_CONFIDENCE = args.classifier_min_confidence
+  if args.classifier_speed_values:
+    slv.US_CLASSIFIER_SPEED_VALUES = tuple(int(value) for value in args.classifier_speed_values.split(","))
+  if args.extended_classifier_min_confidence is not None:
+    slv.EXTENDED_CLASSIFIER_MIN_CONFIDENCE = args.extended_classifier_min_confidence
   if args.trusted_model_min_confidence is not None:
     slv.DETECTOR_CLASSIFIER_TRUSTED_MODEL_MIN_READ_CONFIDENCE = args.trusted_model_min_confidence
   if args.classifier_expansion_indices:

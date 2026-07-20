@@ -169,9 +169,11 @@ US_DETECTOR_CLASSES = {
   2: "school_zone_speed_limit",
 }
 US_CLASSIFIER_SPEED_VALUES = (15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75)
+EXTENDED_CLASSIFIER_SPEED_VALUES = frozenset((5, 10, 80, 90, 100))
 SCHOOL_ZONE_SPEED_VALUES = frozenset((15, 20, 25))
 US_DETECTOR_MIN_CONFIDENCE = 0.06
 US_CLASSIFIER_MIN_CONFIDENCE = 0.60
+EXTENDED_CLASSIFIER_MIN_CONFIDENCE = 0.90
 US_CLASSIFIER_REJECT_MIN_CONFIDENCE = 0.85
 SEPARATE_REJECT_CLASSIFIER_ENABLED = False
 US_REJECT_CLASSIFIER_MIN_CONFIDENCE = 0.85
@@ -1614,12 +1616,16 @@ class SpeedLimitVisionDaemon:
     speed_probabilities = probabilities[:speed_class_count]
     class_index = int(np.argmax(speed_probabilities))
     confidence = float(speed_probabilities[class_index])
+    speed_limit = US_CLASSIFIER_SPEED_VALUES[class_index]
     if has_reject_class and float(probabilities[speed_class_count]) >= max(confidence, US_CLASSIFIER_REJECT_MIN_CONFIDENCE):
       return None
-    if confidence < US_CLASSIFIER_MIN_CONFIDENCE:
+    minimum_confidence = (
+      EXTENDED_CLASSIFIER_MIN_CONFIDENCE if speed_limit in EXTENDED_CLASSIFIER_SPEED_VALUES else US_CLASSIFIER_MIN_CONFIDENCE
+    )
+    if confidence < minimum_confidence:
       return None
 
-    return US_CLASSIFIER_SPEED_VALUES[class_index], confidence
+    return speed_limit, confidence
 
   def _detect_sign_from_detector_classifier(self, frame_bgr):
     frame_height, frame_width = frame_bgr.shape[:2]
