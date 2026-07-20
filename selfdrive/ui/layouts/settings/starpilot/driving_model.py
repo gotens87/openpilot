@@ -59,6 +59,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   draw_interactive_rect,
   resolve_interactive_target,
   wrap_text,
+  with_alpha,
   SECTION_GAP,
   SECTION_HEADER_HEIGHT,
   SECTION_HEADER_GAP,
@@ -75,6 +76,7 @@ TRANSITION_SECONDS = 0.24
 PANEL_STYLE = DEFAULT_PANEL_STYLE
 BANNER_HEIGHT = ROW_HEIGHT
 HEADER_BAR_HEIGHT = 107.0
+MANAGEMENT_STRIP_HEIGHT = 56.0
 
 
 @dataclass
@@ -201,6 +203,10 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
           pad_y = 6 if prefix == "menu:" else 0
           if point_hits(mouse_pos, rect, self._scroll_rect, pad_x=6, pad_y=pad_y):
             return target_id
+    for target_id, rect in self._interactive_rects.items():
+      if target_id.startswith("mgmt:"):
+        if point_hits(mouse_pos, rect, self._shell_rect, pad_x=6, pad_y=6):
+          return target_id
     return None
 
   def _activate_target(self, target: str | None):
@@ -254,6 +260,14 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
         self._controller._on_scores_clicked()
       return
 
+    if target.startswith("mgmt:"):
+      action = target.split(":", 1)[1]
+      if action == "blacklist":
+        self._controller._on_blacklist_clicked()
+      elif action == "ratings":
+        self._controller._on_scores_clicked()
+      return
+
   def _render(self, rect: rl.Rectangle):
     self.set_rect(rect)
     self._interactive_rects.clear()
@@ -273,6 +287,13 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
     self._draw_relocated_header(scroll_rect.x, header_y, content_width)
     scroll_rect = rl.Rectangle(scroll_rect.x, scroll_rect.y + HEADER_BAR_HEIGHT,
                                 scroll_rect.width, scroll_rect.height - HEADER_BAR_HEIGHT)
+
+    randomizer_on = self._controller._params.get_bool("ModelRandomizer")
+    if randomizer_on:
+      mgmt_y = scroll_rect.y
+      self._draw_management_strip(scroll_rect.x, mgmt_y, content_width)
+      scroll_rect = rl.Rectangle(scroll_rect.x, scroll_rect.y + MANAGEMENT_STRIP_HEIGHT,
+                                  scroll_rect.width, scroll_rect.height - MANAGEMENT_STRIP_HEIGHT)
 
     self._scroll_rect = scroll_rect
 
@@ -336,6 +357,33 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
     randomizer_on = self._controller._params.get_bool("ModelRandomizer")
     draw_status_led(rl.Vector2(led_x, led_y), randomizer_on)
 
+  def _draw_management_strip(self, x: float, y: float, width: float):
+    pill_h = 48.0
+    pill_y = y + (MANAGEMENT_STRIP_HEIGHT - pill_h) / 2
+    left = x + 16
+    gap = 14.0
+    usable = width - 32.0
+
+    blacklisted = [m.strip() for m in (self._controller._params.get("BlacklistedModels", encoding="utf-8") or "").split(",") if m.strip()]
+    bl_label = tr(f"Blacklist: {len(blacklisted)} blocked") if blacklisted else tr("Blacklist")
+
+    bl_w = min(420.0, usable * 0.62)
+    rt_w = min(280.0, usable - bl_w - gap)
+
+    bl_pill = rl.Rectangle(left, pill_y, bl_w, pill_h)
+    draw_action_pill(bl_pill, bl_label,
+                     with_alpha(AetherListColors.PRIMARY, 18),
+                     with_alpha(AetherListColors.PRIMARY, 50),
+                     AetherListColors.HEADER, font_size=28, roundness=0.35)
+    self._interactive_rects["mgmt:blacklist"] = bl_pill
+
+    rt_pill = rl.Rectangle(left + bl_w + gap, pill_y, rt_w, pill_h)
+    draw_action_pill(rt_pill, tr("Ratings"),
+                     with_alpha(AetherListColors.PRIMARY, 18),
+                     with_alpha(AetherListColors.PRIMARY, 50),
+                     AetherListColors.HEADER, font_size=28, roundness=0.35)
+    self._interactive_rects["mgmt:ratings"] = rt_pill
+
   def _measure_content_height(self, width: float) -> float:
     sections = self._build_sections(width)
     if not sections:
@@ -347,9 +395,10 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
 
     installed = self._controller.installed_entries()
     available = self._controller.available_entries()
+    utility_rows = self._controller.utility_rows()
     if self._controller._params.get_bool("ModelRandomizer"):
       available = []
-    utility_rows = self._controller.utility_rows()
+      utility_rows = []
 
     if installed:
       installed_count = len(installed)
@@ -372,9 +421,10 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
     if self._controller.current_entry() is not None:
       installed = [e for e in installed if not self._controller.is_current_model(e.key)]
     available = self._controller.available_entries()
+    utility_rows = self._controller.utility_rows()
     if self._controller._params.get_bool("ModelRandomizer"):
       available = []
-    utility_rows = self._controller.utility_rows()
+      utility_rows = []
 
     y = rect.y + self._scroll_offset
 
@@ -967,11 +1017,15 @@ class StarPilotDrivingModelLayout(_SettingsPage):
     return tr("Tap a downloaded model to set it as active.")
 
   def empty_state_title(self) -> str:
+    if self._params.get_bool("ModelRandomizer"):
+      return tr("Model Randomizer Active")
     if self._manifest_fetch_thread is not None and self._manifest_fetch_thread.is_alive():
       return tr("Refreshing model catalog")
     return tr("No models available")
 
   def empty_state_body(self) -> str:
+    if self._params.get_bool("ModelRandomizer"):
+      return tr("Models are selected automatically each drive. Disable Randomizer to choose manually.")
     if self._manifest_fetch_thread is not None and self._manifest_fetch_thread.is_alive():
       return tr("StarPilot is pulling the latest driving model list. This panel will populate automatically when the refresh completes.")
     return tr("Try refreshing the catalog once the device is offroad and connected.")
