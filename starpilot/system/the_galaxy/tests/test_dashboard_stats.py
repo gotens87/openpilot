@@ -140,10 +140,39 @@ def _install_server_import_stubs():
     sync_persist_chill_state=lambda *args, **kwargs: None,
     sync_persist_experimental_state=lambda *args, **kwargs: None,
   )
+  def _trigger_stub_favorite_action(key, params_memory=None):
+    if params_memory is None:
+      return False
+    counter_key = (
+      "FavoriteVirtualAccelCruiseCounter"
+      if str(key or "").endswith("distance_increase")
+      else "FavoriteVirtualDecelCruiseCounter"
+    )
+    params_memory.put_int(counter_key, params_memory.get_int(counter_key) + 1)
+    return True
+
   sys.modules["openpilot.starpilot.common.favorite_slots"] = _simple_module(
     "openpilot.starpilot.common.favorite_slots",
+    FAVORITE_ACTION_OPTIONS=(
+      {
+        "key": "__starpilot_favorite_action__:distance_decrease",
+        "label": "Distance - / SET",
+        "description": "Acts like a short press of the car's SET/- cruise button.",
+        "section": "Actions",
+        "action": "decelCruise",
+      },
+      {
+        "key": "__starpilot_favorite_action__:distance_increase",
+        "label": "Distance + / RES",
+        "description": "Acts like a short press of the car's RES/+ cruise button.",
+        "section": "Actions",
+        "action": "accelCruise",
+      },
+    ),
     FAVORITE_SLOTS_PARAM="FavoriteSlots",
+    is_favorite_action_key=lambda key: str(key or "").startswith("__starpilot_favorite_action__:"),
     normalize_favorite_slots=lambda *args, **kwargs: "",
+    trigger_favorite_action=_trigger_stub_favorite_action,
   )
   sys.modules["openpilot.starpilot.common.starpilot_utilities"] = _simple_module(
     "openpilot.starpilot.common.starpilot_utilities",

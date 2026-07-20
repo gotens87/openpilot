@@ -81,6 +81,9 @@ class UIState:
     self.is_metric: bool = self.params.get_bool("IsMetric")
     self.is_release = self.params.get_bool("IsReleaseBranch")
     self.always_on_dm: bool = self.params.get_bool("AlwaysOnDM")
+    self.usbgpu: bool = self.params.get_bool("UsbGpuPresent")
+    self.usbgpu_compiled: bool = self.params.get_bool("UsbGpuCompiled")
+    self.usbgpu_active: bool = self.params.get_bool("UsbGpuActive")
     self.started: bool = False
     self.ignition: bool = False
     self.recording_audio: bool = False
@@ -182,6 +185,9 @@ class UIState:
 
     self.is_metric = self.params.get_bool("IsMetric")
     self.always_on_dm = self.params.get_bool("AlwaysOnDM")
+    self.usbgpu = self.params.get_bool("UsbGpuPresent")
+    self.usbgpu_compiled = self.params.get_bool("UsbGpuCompiled")
+    self.usbgpu_active = self.params.get_bool("UsbGpuActive")
     self.switchback_mode_enabled = self.params_memory.get_bool("SwitchbackModeEnabled") if self.started else False
     if self.sm.valid.get("starpilotCarState", False):
       starpilot_car_state = self.sm["starpilotCarState"]

@@ -37,6 +37,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"DoShutdown", {CLEAR_ON_MANAGER_START, BOOL}},
     {"DoUninstall", {CLEAR_ON_MANAGER_START, BOOL}},
     {"DriverTooDistracted", {CLEAR_ON_MANAGER_START | CLEAR_ON_IGNITION_ON, BOOL}},
+    {"DriverLockoutCount", {CLEAR_ON_MANAGER_START | CLEAR_ON_IGNITION_ON, INT, "0"}},
     {"EcuDisableFailed", {CLEAR_ON_MANAGER_START, BOOL}},
     {"AlphaLongitudinalEnabled", {PERSISTENT, BOOL}},
     {"ExperimentalLongitudinalEnabled", {PERSISTENT, BOOL}},
@@ -148,6 +149,9 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"UpdaterLastFetchTime", {PERSISTENT, TIME}},
     {"UptimeOffroad", {PERSISTENT, FLOAT, "0.0"}},
     {"UptimeOnroad", {PERSISTENT, FLOAT, "0.0"}},
+    {"UsbGpuActive", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, BOOL}},
+    {"UsbGpuCompiled", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, BOOL}},
+    {"UsbGpuPresent", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, BOOL}},
     {"Version", {PERSISTENT, STRING}},
 
     // StarPilot variables
@@ -457,6 +461,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"OneLaneChange", {PERSISTENT, BOOL, "1", "0", 2, SETTINGS_SIMPLE}},
     {"OnroadDistanceButton", {PERSISTENT, BOOL, "0", "0", 0, SETTINGS_SIMPLE}},
     {"OnroadDistanceButtonPressed", {CLEAR_ON_MANAGER_START, BOOL, "0", "0"}},
+    {"FavoriteVirtualAccelCruiseCounter", {CLEAR_ON_MANAGER_START, INT, "0", "0"}},
+    {"FavoriteVirtualDecelCruiseCounter", {CLEAR_ON_MANAGER_START, INT, "0", "0"}},
     {"WheelButtonBookmarkCounter", {CLEAR_ON_MANAGER_START, INT, "0", "0"}},
     {"openpilotMinutes", {PERSISTENT, INT, "0", "0", 0}},
     {"OverpassRequests", {PERSISTENT, JSON, "{}", "{}"}},

@@ -86,6 +86,13 @@ def parse_read(text: str) -> tuple[str, str]:
   return (speed, confidence) if separator else ("", "")
 
 
+def nonzero_value(text: str) -> str:
+  try:
+    return text if float(text) > 0.0 else ""
+  except (TypeError, ValueError):
+    return ""
+
+
 def queue_row(row: dict[str, str]) -> dict[str, str]:
   key = record_key(row)
   route, dongle_id, log_id = route_identity(row)
@@ -99,8 +106,17 @@ def queue_row(row: dict[str, str]) -> dict[str, str]:
     read_sources += ";logged_vision_publish"
 
   review_reasons = ["corrected_source_timing"]
+  review_priority = float(row.get("score") or 0.0)
   if row.get("event_type", "") == "visionPublish":
-    review_reasons.extend(("route_vision_publish", f"published_{row.get('published_speed', '')}"))
+    published_speed = row.get("published_speed", "")
+    review_reasons.extend(("route_vision_publish", f"published_{published_speed}"))
+    if published_speed and candidate_speed and published_speed != candidate_speed:
+      review_reasons.append("logged_current_value_disagreement")
+      review_priority += 5.0
+    map_speed = nonzero_value(row.get("map_speed", ""))
+    if map_speed and published_speed and map_speed != published_speed:
+      review_reasons.append("logged_map_disagreement")
+      review_priority += 3.0
   else:
     review_reasons.append("route_bookmark")
 
@@ -129,9 +145,9 @@ def queue_row(row: dict[str, str]) -> dict[str, str]:
     "read_sources": read_sources,
     "read_support_count": "1",
     "is_regulatory": row.get("is_regulatory", ""),
-    "map_current_speed_limit_mph": row.get("map_speed", ""),
-    "map_next_speed_limit_mph": row.get("next_speed", ""),
-    "review_priority": row.get("score", ""),
+    "map_current_speed_limit_mph": nonzero_value(row.get("map_speed", "")),
+    "map_next_speed_limit_mph": nonzero_value(row.get("next_speed", "")),
+    "review_priority": f"{review_priority:.4f}",
     "review_reasons": ";".join(review_reasons),
   })
   return item

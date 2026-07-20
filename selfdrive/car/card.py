@@ -29,6 +29,10 @@ from openpilot.selfdrive.car.cruise import (
 from openpilot.selfdrive.car.redneck_cruise import RedneckCruise, select_redneck_target_speed
 from openpilot.selfdrive.car.car_specific import MockCarState
 
+from openpilot.starpilot.common.favorite_slots import (
+  FAVORITE_ACTION_ACCEL_COUNTER,
+  FAVORITE_ACTION_DECEL_COUNTER,
+)
 from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles, update_starpilot_toggles
 from openpilot.starpilot.controls.starpilot_card import StarPilotCard
 
@@ -93,6 +97,9 @@ class Car:
 
     self.params = Params()
     self.params_memory = Params(memory=True)
+    self._favorite_virtual_accel_counter = self.params_memory.get_int(FAVORITE_ACTION_ACCEL_COUNTER)
+    self._favorite_virtual_decel_counter = self.params_memory.get_int(FAVORITE_ACTION_DECEL_COUNTER)
+    self._favorite_virtual_releases = []
 
     self.can_callbacks = can_comm_callbacks(self.can_sock, self.pm.sock['sendcan'])
 
@@ -205,6 +212,27 @@ class Car:
     self.sm = self.sm.extend(['starpilotOnroadEvents', 'starpilotPlan', 'starpilotSelfdriveState', 'liveCalibration', 'selfdriveState'])
     self.pm = self.pm.extend(['starpilotCarState'])
 
+  def _inject_favorite_virtual_cruise_events(self, CS: car.CarState) -> None:
+    virtual_events = [
+      structs.CarState.ButtonEvent(pressed=False, type=button_type)
+      for button_type in self._favorite_virtual_releases
+    ]
+    self._favorite_virtual_releases = []
+
+    for counter_key, counter_attr, button_type in (
+      (FAVORITE_ACTION_ACCEL_COUNTER, "_favorite_virtual_accel_counter", ButtonType.accelCruise),
+      (FAVORITE_ACTION_DECEL_COUNTER, "_favorite_virtual_decel_counter", ButtonType.decelCruise),
+    ):
+      counter = self.params_memory.get_int(counter_key)
+      if counter == getattr(self, counter_attr):
+        continue
+      setattr(self, counter_attr, counter)
+      virtual_events.append(structs.CarState.ButtonEvent(pressed=True, type=button_type))
+      self._favorite_virtual_releases.append(button_type)
+
+    if virtual_events:
+      CS.buttonEvents = list(CS.buttonEvents) + virtual_events
+
   def state_update(self) -> tuple[car.CarState, structs.RadarDataT | None]:
     """carState update loop, driven by can"""
 
@@ -215,6 +243,7 @@ class Car:
     CS, FPCS = self.CI.update(can_list, self.starpilot_toggles)
     if self.CP.brand == 'mock':
       CS, FPCS = self.mock_carstate.update(CS, FPCS)
+    self._inject_favorite_virtual_cruise_events(CS)
 
     # Update radar tracks from CAN
     RD: structs.RadarDataT | None = self.RI.update(can_list)

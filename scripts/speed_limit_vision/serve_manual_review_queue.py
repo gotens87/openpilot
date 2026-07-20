@@ -321,18 +321,31 @@ function setSpeed(speed, shouldSave) {
 
 function handleDigitShortcut(digit) {
   speedBuffer += digit;
-  if (speedBuffer.length > 2) speedBuffer = speedBuffer.slice(-2);
+  if (speedBuffer.length > 3) speedBuffer = digit;
   if (speedBufferTimer) clearTimeout(speedBufferTimer);
   speedBufferTimer = setTimeout(clearSpeedBuffer, 1000);
 
   if (speedBuffer.length < 2) return;
 
+  if (speedBuffer === "10") {
+    clearTimeout(speedBufferTimer);
+    speedBufferTimer = setTimeout(() => {
+      if (speedBuffer === "10") {
+        clearSpeedBuffer();
+        setSpeed(10, true);
+      }
+    }, 400);
+    return;
+  }
+
   const speed = Number(speedBuffer);
-  clearSpeedBuffer();
   if (speeds.includes(speed)) {
+    clearSpeedBuffer();
     setSpeed(speed, true);
     return;
   }
+
+  if (speedBuffer.length < 3) return;
 
   speedBuffer = digit;
   speedBufferTimer = setTimeout(clearSpeedBuffer, 1000);

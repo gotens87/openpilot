@@ -96,12 +96,18 @@ class MiciHomeLayout(Widget):
     self._current_model_name = "default"
 
     self._experimental_icon = IconWidget("icons_mici/experimental_mode.png", (48, 48))
+    self._egpu_label = UnifiedLabel("eGPU", font_size=30, text_color=rl.Color(0, 255, 96, 255),
+                                    font_weight=FontWeight.SEMI_BOLD, max_width=76, wrap_text=False)
+    self._egpu_label_gray = UnifiedLabel("eGPU", font_size=30, text_color=rl.GRAY,
+                                         font_weight=FontWeight.SEMI_BOLD, max_width=76, wrap_text=False)
     self._mic_icon = IconWidget("icons_mici/microphone.png", (32, 46))
 
     self._status_bar_layout = HBoxLayout([
       IconWidget("icons_mici/settings.png", (48, 48), opacity=0.9),
       NetworkIcon(),
       self._experimental_icon,
+      self._egpu_label,
+      self._egpu_label_gray,
       self._mic_icon,
     ], spacing=18)
 
@@ -211,6 +217,8 @@ class MiciHomeLayout(Widget):
 
     # ***** Center-aligned bottom section icons *****
     self._experimental_icon.set_visible(self._experimental_mode)
+    self._egpu_label.set_visible(ui_state.usbgpu_active)
+    self._egpu_label_gray.set_visible(ui_state.usbgpu and not ui_state.usbgpu_active)
     self._mic_icon.set_visible(ui_state.recording_audio)
 
     footer_rect = rl.Rectangle(self.rect.x + HOME_PADDING, self.rect.y + self.rect.height - 48, self.rect.width - HOME_PADDING, 48)

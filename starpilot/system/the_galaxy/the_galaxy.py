@@ -62,7 +62,13 @@ from openpilot.starpilot.common.maps_catalog import (
   schedule_param_value,
 )
 from openpilot.starpilot.common.experimental_state import sync_persist_chill_state, sync_persist_experimental_state
-from openpilot.starpilot.common.favorite_slots import FAVORITE_SLOTS_PARAM, normalize_favorite_slots
+from openpilot.starpilot.common.favorite_slots import (
+  FAVORITE_ACTION_OPTIONS,
+  FAVORITE_SLOTS_PARAM,
+  is_favorite_action_key,
+  normalize_favorite_slots,
+  trigger_favorite_action,
+)
 from openpilot.starpilot.common.lateral_delay import full_lateral_delay
 from openpilot.starpilot.common.starpilot_utilities import delete_file, get_lock_status, run_cmd
 from openpilot.starpilot.common.starpilot_variables import ACTIVE_THEME_PATH, ERROR_LOGS_PATH, EXCLUDED_KEYS, LEGACY_STARPILOT_PARAM_RENAMES, MAPS_PATH, MODELS_PATH, RESOURCES_REPO, SCREEN_RECORDINGS_PATH, STOCK_THEME_PATH, THEME_SAVE_PATH,\
@@ -2380,6 +2386,7 @@ def _get_favorite_slot_options():
 
   allowed_keys, value_types = _get_param_type_info()
   options = []
+  options.extend(dict(option) for option in FAVORITE_ACTION_OPTIONS)
   try:
     layout_path = os.path.join(os.path.dirname(__file__), "assets", "components", "tools", "device_settings_layout.json")
     with open(layout_path) as f:
@@ -2415,14 +2422,14 @@ def _favorite_slot_values(options):
   return {
     option["key"]: _safe_params_get_bool(option["key"])
     for option in options
-    if option.get("key")
+    if option.get("key") and not is_favorite_action_key(option.get("key"))
   }
 
 def _configured_favorite_slot_values(slots):
   return {
     slot["key"]: _safe_params_get_bool(slot["key"])
     for slot in slots
-    if slot.get("key")
+    if slot.get("key") and not is_favorite_action_key(slot.get("key"))
   }
 
 _cached_allowed_keys = None
@@ -4211,7 +4218,7 @@ def setup(app):
           continue
         key = str(raw_slot.get("key") or "").strip()
         if key and key not in eligible_keys:
-          return jsonify(error=f"Favorite #{idx + 1} must use a Galaxy-exposed boolean toggle."), 400
+          return jsonify(error=f"Favorite #{idx + 1} must use a Galaxy-exposed toggle or action."), 400
 
       slots = normalize_favorite_slots(raw_slots, params=params, eligible_keys=eligible_keys)
 
@@ -4248,6 +4255,16 @@ def setup(app):
     eligible_keys = {option["key"] for option in options}
     slots = normalize_favorite_slots(params.get(FAVORITE_SLOTS_PARAM), params=params, eligible_keys=eligible_keys)
     return jsonify({"values": _configured_favorite_slot_values(slots)}), 200
+
+  @app.route("/api/favorites/action", methods=["POST"])
+  def favorite_action():
+    data = request.get_json() or {}
+    key = str(data.get("key") or "").strip()
+    if not is_favorite_action_key(key):
+      return jsonify({"error": "Unknown favorite action."}), 400
+    if not trigger_favorite_action(key, params_memory):
+      return jsonify({"error": "Favorite action failed."}), 400
+    return jsonify({"message": "Favorite action sent."}), 200
 
   @app.route("/api/params", methods=["GET", "PUT"])
   def get_param():

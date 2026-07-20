@@ -3,7 +3,11 @@ from types import SimpleNamespace
 from opendbc.car.chrysler.values import CAR as CHRYSLER_CAR
 
 from openpilot.common.params import ParamKeyType
-from openpilot.starpilot.common.favorite_slots import FAVORITE_SLOTS_PARAM
+from openpilot.starpilot.common.favorite_slots import (
+  FAVORITE_ACTION_ACCEL_COUNTER,
+  FAVORITE_ACTION_DISTANCE_INCREASE,
+  FAVORITE_SLOTS_PARAM,
+)
 from openpilot.starpilot.controls import starpilot_card as spc
 
 
@@ -659,3 +663,18 @@ def test_favorite_wheel_action_toggles_hidden_onroad_slot(monkeypatch, tmp_path)
 
   assert card.params.get_bool("RedneckCruise") is True
   assert card.params_memory.get_bool("StarPilotTogglesUpdated") is True
+
+
+def test_favorite_wheel_action_can_press_virtual_resume(monkeypatch, tmp_path):
+  monkeypatch.setattr(spc, "Params", FakeParams)
+  monkeypatch.setattr(spc, "is_FrogsGoMoo", lambda: False)
+  monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
+
+  card = spc.StarPilotCard(SimpleNamespace(brand="gm"), SimpleNamespace(alternativeExperience=0))
+  card.params.put(FAVORITE_SLOTS_PARAM, [
+    {"enabled": True, "show_onroad": False, "key": FAVORITE_ACTION_DISTANCE_INCREASE, "label": "Distance + / RES"},
+  ])
+
+  card.handle_button_event("lkas", make_sm(), make_toggles(favorite_1_via_lkas=True))
+
+  assert card.params_memory.get_int(FAVORITE_ACTION_ACCEL_COUNTER) == 1

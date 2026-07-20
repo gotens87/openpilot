@@ -8,6 +8,7 @@ const COLOR_UI_DEFAULTS = {
   PathColor: "#30ff9c",
 }
 const FAVORITE_OPTION_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" })
+const FAVORITE_ACTION_PREFIX = "__starpilot_favorite_action__:"
 const GALAXY_DEVELOPER_MODE_KEY = "GalaxyDeveloperMode"
 const HIDDEN_SECTION_NAMES = new Set(["Model & Customization"])
 const HIDDEN_SETTING_KEYS = new Set(["DisableWideRoad", "HumanAcceleration", "ReverseCruise"])
@@ -566,6 +567,14 @@ function favoriteOptionMatchesFilter(option, filter) {
     .some(value => String(value || "").toLowerCase().includes(q))
 }
 
+function isFavoriteActionKey(key) {
+  return String(key || "").startsWith(FAVORITE_ACTION_PREFIX)
+}
+
+function isFavoriteActionOption(option) {
+  return isFavoriteActionKey(option?.key) || !!option?.action
+}
+
 function filteredFavoriteOptions(index) {
   const filter = state.favoriteFilters[index] || ""
   return normalizeFavoriteOptions(state.favoriteOptions).filter(opt => favoriteOptionMatchesFilter(opt, filter))
@@ -734,6 +743,25 @@ async function updateFavoriteValue(key, checked, sourceEl = null) {
   } catch (e) {
     state.values = { ...state.values, [key]: current }
     state.favoriteValues = { ...state.favoriteValues, [key]: current }
+    showParamSnackbar("Network error — is the device reachable?", "error")
+  }
+}
+
+async function activateFavoriteAction(key) {
+  try {
+    const res = await fetch("/api/favorites/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key }),
+    })
+    const data = await res.json()
+
+    if (res.ok) {
+      showParamSnackbar(data.message || "Favorite action sent.")
+    } else {
+      showParamSnackbar(data.error || "Failed to send favorite action", "error")
+    }
+  } catch (e) {
     showParamSnackbar("Network error — is the device reachable?", "error")
   }
 }
@@ -1248,15 +1276,31 @@ function renderFavoriteSlotsPanel() {
             const selectedOption = favorite.selectedOption
             const selectedKey = favorite.selectedKey
             const selectedValue = favorite.selectedValue
+            const isAction = isFavoriteActionOption(selectedOption)
+            const quickCopy = html`
+              <div class="ds-favorite-quick-copy">
+                <span class="ds-favorite-quick-slot">Favorite #${favorite.index + 1}</span>
+                <span class="ds-favorite-quick-title">${selectedOption.label || favorite.slot.label || selectedKey}</span>
+                ${selectedOption.section ? html`<span class="ds-favorite-quick-section">${selectedOption.section}</span>` : ""}
+                ${selectedOption.description ? html`<span class="ds-favorite-quick-desc">${selectedOption.description}</span>` : ""}
+              </div>
+            `
+
+            if (isAction) {
+              return html`
+                <button
+                  type="button"
+                  class="ds-favorite-quick-card ds-favorite-action-card"
+                  @click="${() => activateFavoriteAction(selectedKey)}">
+                  ${quickCopy}
+                  <span class="ds-favorite-action-chip">Press</span>
+                </button>
+              `
+            }
 
             return html`
               <label class="ds-favorite-quick-card">
-                <div class="ds-favorite-quick-copy">
-                  <span class="ds-favorite-quick-slot">Favorite #${favorite.index + 1}</span>
-                  <span class="ds-favorite-quick-title">${selectedOption.label || favorite.slot.label || selectedKey}</span>
-                  ${selectedOption.section ? html`<span class="ds-favorite-quick-section">${selectedOption.section}</span>` : ""}
-                  ${selectedOption.description ? html`<span class="ds-favorite-quick-desc">${selectedOption.description}</span>` : ""}
-                </div>
+                ${quickCopy}
                 <input
                   type="checkbox"
                   class="ds-toggle ds-favorite-quick-toggle"

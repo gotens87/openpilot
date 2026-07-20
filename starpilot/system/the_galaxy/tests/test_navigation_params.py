@@ -67,6 +67,13 @@ class WritableFakeParams:
     self.writes.append((key, bool(value)))
     self.values[key] = bool(value)
 
+  def get_int(self, key, default=0):
+    return int(self.values.get(key, default))
+
+  def put_int(self, key, value):
+    self.writes.append((key, int(value)))
+    self.values[key] = int(value)
+
   def remove(self, key):
     self.removals.append(key)
     self.values.pop(key, None)
@@ -223,6 +230,28 @@ def test_favorite_values_endpoint_returns_current_selected_value(monkeypatch):
 
   assert response.status_code == 200
   assert response.get_json() == {"values": {"UseOldUI": False}}
+
+
+def test_favorite_slot_options_include_virtual_cruise_actions(monkeypatch):
+  monkeypatch.setattr(the_galaxy, "_favorite_slot_options", None)
+  monkeypatch.setattr(the_galaxy, "_get_param_type_info", lambda: (set(), {}))
+
+  options = the_galaxy._get_favorite_slot_options()
+  option_keys = {option["key"] for option in options}
+
+  assert "__starpilot_favorite_action__:distance_decrease" in option_keys
+  assert "__starpilot_favorite_action__:distance_increase" in option_keys
+
+
+def test_favorite_action_endpoint_increments_virtual_button_counter(monkeypatch):
+  client, _ = _params_client(monkeypatch, {}, "tici")
+  fake_memory = WritableFakeParams()
+  monkeypatch.setattr(the_galaxy, "params_memory", fake_memory)
+
+  response = client.post("/api/favorites/action", json={"key": "__starpilot_favorite_action__:distance_increase"})
+
+  assert response.status_code == 200
+  assert fake_memory.get_int("FavoriteVirtualAccelCruiseCounter") == 1
 
 
 def test_use_old_ui_is_noop_on_c4_mici(monkeypatch):

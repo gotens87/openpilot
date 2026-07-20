@@ -21,7 +21,7 @@ VIDEO_SUFFIXES = {".hevc", ".mp4", ".mov", ".mkv", ".avi"}
 
 def iter_source_files(paths: list[Path]):
   for input_path in paths:
-    if input_path.is_file():
+    if input_path.is_file() and not input_path.name.startswith("._"):
       yield input_path
       continue
 
@@ -29,7 +29,7 @@ def iter_source_files(paths: list[Path]):
       continue
 
     for path in sorted(input_path.rglob("*")):
-      if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES | VIDEO_SUFFIXES:
+      if path.is_file() and not path.name.startswith("._") and path.suffix.lower() in IMAGE_SUFFIXES | VIDEO_SUFFIXES:
         yield path
 
 

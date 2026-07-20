@@ -222,7 +222,11 @@ def save_classifier_crop(base_dir: Path, split: str, speed_value: int, image_bgr
 def collect_backgrounds(background_dir: Path) -> list[Path]:
   if not background_dir.is_dir():
     return []
-  return sorted(path for path in background_dir.iterdir() if path.suffix.lower() in {".jpg", ".jpeg", ".png"})
+  return sorted(
+    path
+    for path in background_dir.iterdir()
+    if not path.name.startswith("._") and path.suffix.lower() in {".jpg", ".jpeg", ".png"}
+  )
 
 
 def main():
@@ -233,6 +237,7 @@ def main():
   parser.add_argument("--val-count", type=int, default=1200, help="Number of synthetic validation detector images.")
   parser.add_argument("--negative-ratio", type=float, default=0.18, help="Share of detector images with no sign.")
   parser.add_argument("--speed-values", nargs="+", type=int, default=list(DEFAULT_SPEED_VALUES), help="Posted values to synthesize.")
+  parser.add_argument("--regulatory-only", action="store_true", help="Generate only regulatory signs for the requested values.")
   parser.add_argument("--seed", type=int, default=20260330, help="Random seed.")
   args = parser.parse_args()
 
@@ -265,7 +270,11 @@ def main():
       detector_lines: list[str] = []
 
       if rng.random() >= args.negative_ratio:
-        sign_spec = choose_sign_spec(rng, speed_values)
+        sign_spec = (
+          SignSpec(detector_class=0, style="regulatory", speed_value=rng.choice(speed_values))
+          if args.regulatory_only
+          else choose_sign_spec(rng, speed_values)
+        )
         if sign_spec.style == "advisory":
           sign_image = render_advisory_sign(sign_spec.speed_value or 25, seed=rng.randint(0, 1_000_000))
         else:
