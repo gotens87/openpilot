@@ -30,11 +30,11 @@ PENDING_BLINK_MS = 500
 
 # Source display metadata: title, abbreviation, raw-value key (display order).
 SOURCE_DEFS = [
-  ("Dashboard", "Dash", "dashboard_sl"),
-  ("Map Data",  "MapD", "map_sl"),
-  ("Vision",    "Vis",  "vision_sl"),
-  ("Mapbox",    "MapB", "mapbox_sl"),
-  ("Upcoming",  "Next", "next_sl"),
+  ("Dashboard", "Dash",   "dashboard_sl"),
+  ("Map Data",  "Maps",    "map_sl"),
+  ("Vision",    "Vision", "vision_sl"),
+  ("Mapbox",    "Mapbox", "mapbox_sl"),
+  ("Upcoming",  "Next",   "next_sl"),
 ]
 
 # Fonts
@@ -353,23 +353,29 @@ def _draw_sign(state: dict, rect: rl.Rectangle, *, pending: bool = False):
 # ── Active Source Label (single-line mode when sources panel is off) ──
 
 _SOURCE_ABBREV = {"Dashboard": "DASH", "Map Data": "MAPS", "Vision": "VISION",
-                  "Mapbox": "MAPB", "Upcoming": "NAV"}
+                  "Mapbox": "MAPBOX", "Upcoming": "NEXT"}
 
-def _draw_active_source_label(state: dict, cx: float, bottom_y: float, expanded: bool = False) -> Optional[rl.Rectangle]:
+def _draw_active_source_label(state: dict, cx: float, bottom_y: float, sign_width: float, expanded: bool = False) -> Optional[rl.Rectangle]:
   """Draw the single active-source pill below the sign. Returns pill rect for hit-testing."""
   source = state.get('speed_limit_source')
   if not source or source == "None" or source == "":
     return None
   label = _SOURCE_ABBREV.get(source, source.upper())
-  indicator = " \u25bc" if expanded else " \u25b6"
+  indicator = " \u25c0" if expanded else " \u25b6"
   full_label = label + indicator
   font = _get_semi_bold()
-  font_size = 20
+  font_size = 24
   sz = measure_text_cached(font, full_label, font_size)
-  rect = rl.Rectangle(cx - sz.x / 2 - 8, bottom_y + 8, sz.x + 16, font_size + 8)
+  
+  pill_w = sign_width
+  pill_h = 32
+  rect = rl.Rectangle(cx - pill_w / 2, bottom_y + 8, pill_w, pill_h)
+  
   rl.draw_rectangle_rounded(rect, 0.4, 8, rl.Color(0, 0, 0, 180))
   rl.draw_rectangle_rounded_lines_ex(rect, 0.4, 8, 1, rl.Color(255, 255, 255, 100))
-  rl.draw_text_ex(font, full_label, rl.Vector2(cx - sz.x / 2, bottom_y + 12), font_size, 0, rl.WHITE)
+  
+  text_y = bottom_y + 8 + (pill_h - font_size) / 2
+  rl.draw_text_ex(font, full_label, rl.Vector2(cx - sz.x / 2, text_y), font_size, 0, rl.WHITE)
   return rect
 
 
@@ -385,13 +391,13 @@ def _draw_text_outlined(font, text: str, pos: rl.Vector2, font_size: int, fill: 
 
 _BUBBLE_PAD_X = 24
 _BUBBLE_ROW_H = 48
-_BUBBLE_GAP = 8
-_BUBBLE_FONT = 28
+_BUBBLE_GAP = 2
+_BUBBLE_FONT = 30
 _BUBBLE_BG = rl.Color(0, 0, 0, 200)
 _BUBBLE_BORDER = rl.Color(255, 255, 255, 80)
 _BUBBLE_ACCENT = rl.Color(201, 34, 49, 255)
 
-def _draw_sources_bubble(state: dict, anchor_rect: rl.Rectangle, sign_right: float):
+def _draw_sources_bubble(state: dict, anchor_rect: rl.Rectangle, sign_rect: rl.Rectangle):
   """Draw the expanded sources bubble to the right of the anchor pill."""
   font_bold = _get_bold()
   font_semi = _get_semi_bold()
@@ -407,18 +413,11 @@ def _draw_sources_bubble(state: dict, anchor_rect: rl.Rectangle, sign_right: flo
   if not rows:
     return
 
-  max_w = 0
-  for _, abbrev, value, _ in rows:
-    label = f"{abbrev}  {int(round(value))}"
-    needed = measure_text_cached(font_bold, label, _BUBBLE_FONT).x + _BUBBLE_PAD_X
-    if needed > max_w:
-      max_w = needed
+  bubble_w = sign_rect.width
+  bubble_h = sign_rect.height
 
-  bubble_w = max_w
-  bubble_h = len(rows) * _BUBBLE_ROW_H + (len(rows) - 1) * _BUBBLE_GAP + 16
-
-  bubble_x = max(anchor_rect.x + anchor_rect.width + 12, sign_right + 6)
-  bubble_y = anchor_rect.y + anchor_rect.height / 2 - bubble_h / 2
+  bubble_x = sign_rect.x + sign_rect.width + 12
+  bubble_y = sign_rect.y
 
   bg_rect = rl.Rectangle(bubble_x, bubble_y, bubble_w, bubble_h)
   rl.draw_rectangle_rounded(bg_rect, 0.25, 8, _BUBBLE_BG)
@@ -432,10 +431,13 @@ def _draw_sources_bubble(state: dict, anchor_rect: rl.Rectangle, sign_right: flo
     _BUBBLE_BG,
   )
 
-  y = bubble_y + 8
+  row_h = min(40.0, (bubble_h - 8 - (len(rows) - 1) * _BUBBLE_GAP) / len(rows))
+  total_content_h = len(rows) * row_h + (len(rows) - 1) * _BUBBLE_GAP
+  y = bubble_y + (bubble_h - total_content_h) / 2
+
   for title, abbrev, value, is_active in rows:
     if is_active:
-      rl.draw_rectangle(int(bubble_x), int(y), 4, _BUBBLE_ROW_H, _BUBBLE_ACCENT)
+      rl.draw_rectangle(int(bubble_x), int(y), 4, int(row_h), _BUBBLE_ACCENT)
 
     text_font = font_bold if is_active else font_semi
     abbrev_text = abbrev
@@ -444,19 +446,27 @@ def _draw_sources_bubble(state: dict, anchor_rect: rl.Rectangle, sign_right: flo
     abbrev_size = measure_text_cached(text_font, abbrev_text, _BUBBLE_FONT)
     value_size = measure_text_cached(text_font, value_text, _BUBBLE_FONT)
 
-    abbrev_pos = rl.Vector2(bubble_x + 16, y + (_BUBBLE_ROW_H - _BUBBLE_FONT) / 2)
-    value_pos = rl.Vector2(bubble_x + bubble_w - 12 - value_size.x, y + (_BUBBLE_ROW_H - _BUBBLE_FONT) / 2)
+    font_size = _BUBBLE_FONT
+    available_w = bubble_w - 16
+    needed_w = abbrev_size.x + value_size.x + 8
+    if needed_w > available_w:
+      font_size = int(_BUBBLE_FONT * (available_w / needed_w))
+      abbrev_size = measure_text_cached(text_font, abbrev_text, font_size)
+      value_size = measure_text_cached(text_font, value_text, font_size)
+
+    abbrev_pos = rl.Vector2(bubble_x + 8, y + (row_h - font_size) / 2)
+    value_pos = rl.Vector2(bubble_x + bubble_w - 8 - value_size.x, y + (row_h - font_size) / 2)
 
     text_color = rl.WHITE if is_active else rl.Color(255, 255, 255, 180)
 
     if is_active:
-      _draw_text_outlined(text_font, abbrev_text, abbrev_pos, _BUBBLE_FONT, text_color, rl.Color(0, 0, 0, 255))
-      _draw_text_outlined(text_font, value_text, value_pos, _BUBBLE_FONT, text_color, rl.Color(0, 0, 0, 255))
+      _draw_text_outlined(text_font, abbrev_text, abbrev_pos, font_size, text_color, rl.Color(0, 0, 0, 255))
+      _draw_text_outlined(text_font, value_text, value_pos, font_size, text_color, rl.Color(0, 0, 0, 255))
     else:
-      rl.draw_text_ex(text_font, abbrev_text, abbrev_pos, _BUBBLE_FONT, 0, text_color)
-      rl.draw_text_ex(text_font, value_text, value_pos, _BUBBLE_FONT, 0, text_color)
+      rl.draw_text_ex(text_font, abbrev_text, abbrev_pos, font_size, 0, text_color)
+      rl.draw_text_ex(text_font, value_text, value_pos, font_size, 0, text_color)
 
-    y += _BUBBLE_ROW_H + _BUBBLE_GAP
+    y += row_h + _BUBBLE_GAP
 
 
 # ── Public API ────────────────────────────────────────────────────────
@@ -479,10 +489,15 @@ def render_speed_limit_at(state: dict, rect: rl.Rectangle, expanded: bool = Fals
   cx_center = rect.x + rect.width / 2
   sign_h = EU_SIGN_SIZE if use_vienna else US_SIGN_HEIGHT
   bottom_y = rect.y + sign_h
-  pill_rect = _draw_active_source_label(state, cx_center, bottom_y, expanded)
+  
+  visual_w = EU_SIGN_SIZE if use_vienna else rect.width - 2 * US_INSET
+  visual_x = rect.x if use_vienna else rect.x + US_INSET
+  visual_rect = rl.Rectangle(visual_x, rect.y, visual_w, sign_h)
+
+  pill_rect = _draw_active_source_label(state, cx_center, bottom_y, visual_w, expanded)
 
   if expanded and pill_rect:
-    _draw_sources_bubble(state, pill_rect, rect.x + rect.width)
+    _draw_sources_bubble(state, pill_rect, visual_rect)
 
   return pill_rect
 

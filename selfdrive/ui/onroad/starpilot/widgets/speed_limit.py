@@ -15,7 +15,6 @@ class SpeedLimitWidget(LayoutWidget):
     super().__init__("speed_limit", priority=2)
     self._slc_state: dict | None = None
     self._pill_rect: Optional[rl.Rectangle] = None
-    self._expanded = False
 
   @property
   def is_visible(self) -> bool:
@@ -48,12 +47,21 @@ class SpeedLimitWidget(LayoutWidget):
   def _render(self, rect: rl.Rectangle) -> None:
     if self._slc_state is None:
       return
-    self._pill_rect = render_speed_limit_at(self._slc_state, rect, self._expanded)
+    expanded = ui_state.params.get_bool("SpeedLimitSources")
+    self._pill_rect = render_speed_limit_at(self._slc_state, rect, expanded)
 
   def _handle_mouse_press(self, mouse_pos) -> None:
-    if self._pill_rect and rl.check_collision_point_rec(mouse_pos, self._pill_rect):
-      self._expanded = not self._expanded
-      return
+    if self._pill_rect:
+      hit_rect = rl.Rectangle(
+        self._pill_rect.x - 20,
+        self._pill_rect.y - 20,
+        self._pill_rect.width + 40,
+        self._pill_rect.height + 40
+      )
+      if rl.check_collision_point_rec(mouse_pos, hit_rect):
+        current = ui_state.params.get_bool("SpeedLimitSources")
+        Params().put_bool("SpeedLimitSources", not current)
+        return
 
     state = _get_slc_state()
     if state is None or not (state['speed_limit_changed'] and state['unconfirmed_valid']):
