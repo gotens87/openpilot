@@ -73,6 +73,8 @@ DRIVING_MODEL_METRICS = replace(AETHER_LIST_METRICS, header_height=0)
 CONFIRM_TIMEOUT_SECONDS = 3.0
 TRANSITION_SECONDS = 0.24
 PANEL_STYLE = DEFAULT_PANEL_STYLE
+BANNER_HEIGHT = ROW_HEIGHT
+HEADER_BAR_HEIGHT = 107.0
 
 
 @dataclass
@@ -250,8 +252,6 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
         self._controller._on_blacklist_clicked()
       elif action == "ratings":
         self._controller._on_scores_clicked()
-      elif action == "recovery_power":
-        self._controller._on_recovery_power_clicked()
       return
 
   def _render(self, rect: rl.Rectangle):
@@ -260,11 +260,21 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
 
     frame, scroll_rect, content_width = init_list_panel(rect, PANEL_STYLE, metrics=DRIVING_MODEL_METRICS)
     self._shell_rect = frame.shell
-    self._scroll_rect = scroll_rect
 
-    self._primary_header_button.set_parent_rect(scroll_rect)
-    self._secondary_header_button.set_parent_rect(scroll_rect)
-    self._random_model_button.set_parent_rect(scroll_rect)
+    current_entry = self._controller.current_entry()
+    use_banner = current_entry is not None
+    if use_banner:
+      banner_rect = rl.Rectangle(scroll_rect.x, scroll_rect.y, scroll_rect.width, BANNER_HEIGHT)
+      scroll_rect = rl.Rectangle(scroll_rect.x, scroll_rect.y + BANNER_HEIGHT,
+                                  scroll_rect.width, scroll_rect.height - BANNER_HEIGHT)
+      self._draw_current_banner(banner_rect, current_entry)
+
+    header_y = scroll_rect.y
+    self._draw_relocated_header(scroll_rect.x, header_y, content_width)
+    scroll_rect = rl.Rectangle(scroll_rect.x, scroll_rect.y + HEADER_BAR_HEIGHT,
+                                scroll_rect.width, scroll_rect.height - HEADER_BAR_HEIGHT)
+
+    self._scroll_rect = scroll_rect
 
     self._draw_header(frame.header)
     self._content_height = self._measure_content_height(content_width)
@@ -282,6 +292,30 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
 
   def _draw_header(self, rect: rl.Rectangle):
     pass
+
+  def _draw_current_banner(self, rect: rl.Rectangle, entry: ModelCatalogEntry):
+    draw_list_row_shell(
+      rect,
+      current=True,
+      hovered=False,
+      pressed=False,
+      is_last=False,
+      alpha=255,
+      row_bg=AetherListColors.ROW_BG,
+      row_border=AetherListColors.ROW_BORDER,
+      row_separator=AetherListColors.ROW_SEPARATOR,
+      row_hover=AetherListColors.ROW_HOVER,
+      current_bg=AetherListColors.CURRENT_BG,
+      current_border=AetherListColors.CURRENT_BORDER,
+      row_radius=ROW_RADIUS,
+      separator_inset=22,
+    )
+
+    info_rect = rl.Rectangle(rect.x + 24, rect.y + 18, rect.width - ACTION_WIDTH - 42, rect.height - 36)
+    self._draw_model_info(info_rect, entry, current=True)
+
+    chip_rect = rl.Rectangle(rect.x + rect.width - ACTION_WIDTH + 35, rect.y + (rect.height - 61) / 2, ACTION_WIDTH - 70, 61)
+    AetherChip(tr("Current"), PANEL_STYLE.current_fill, PANEL_STYLE.current_border, AetherListColors.HEADER, font_size=26).render(chip_rect)
 
   def _draw_relocated_header(self, x: float, y: float, width: float):
     # Buttons placed horizontally
@@ -304,20 +338,24 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
 
   def _measure_content_height(self, width: float) -> float:
     sections = self._build_sections(width)
-    RELOCATED_HEADER_HEIGHT = 107.0
     if not sections:
-      return 260 + RELOCATED_HEADER_HEIGHT
-    return max(sum(height for _key, height in sections) - SECTION_GAP, 0.0) + RELOCATED_HEADER_HEIGHT
+      return 260.0
+    return max(sum(height for _key, height in sections) - SECTION_GAP, 0.0)
 
   def _build_sections(self, width: float) -> list[tuple[str, float]]:
     sections: list[tuple[str, float]] = []
 
     installed = self._controller.installed_entries()
     available = self._controller.available_entries()
+    if self._controller._params.get_bool("ModelRandomizer"):
+      available = []
     utility_rows = self._controller.utility_rows()
 
     if installed:
-      sections.append(("installed", SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP + len(installed) * ROW_HEIGHT))
+      installed_count = len(installed)
+      if self._controller.current_entry() is not None:
+        installed_count = max(installed_count - 1, 0)
+      sections.append(("installed", SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP + installed_count * ROW_HEIGHT))
     if available:
       sections.append(("available", SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP + len(available) * ROW_HEIGHT))
     if utility_rows:
@@ -331,13 +369,14 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
 
   def _draw_scroll_content(self, rect: rl.Rectangle, width: float):
     installed = self._controller.installed_entries()
+    if self._controller.current_entry() is not None:
+      installed = [e for e in installed if not self._controller.is_current_model(e.key)]
     available = self._controller.available_entries()
+    if self._controller._params.get_bool("ModelRandomizer"):
+      available = []
     utility_rows = self._controller.utility_rows()
 
     y = rect.y + self._scroll_offset
-    RELOCATED_HEADER_HEIGHT = 107.0
-    self._draw_relocated_header(rect.x, y, width)
-    y += RELOCATED_HEADER_HEIGHT
 
     if not installed and not available and not utility_rows:
       self._draw_empty_state(rl.Rectangle(rect.x, y + 36, width, 200))
@@ -368,7 +407,10 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
   def _draw_model_section(self, x: float, y: float, width: float, title: str, entries: list[ModelCatalogEntry]) -> float:
     trailing = ""
     if title == tr("On Device"):
-      trailing = tr("Current: {}").format(self._controller._current_model_name)
+      if self._controller._params.get_bool("ModelRandomizer"):
+        trailing = tr("Disable Randomizer to select")
+      else:
+        trailing = tr("Current: {}").format(self._controller._current_model_name)
     draw_section_header(rl.Rectangle(x, y, width, SECTION_HEADER_HEIGHT), title, trailing_text=trailing, style=PANEL_STYLE)
     y += SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
 
@@ -422,7 +464,8 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
     self._draw_model_info(info_rect, entry, current)
 
     if entry.installed:
-      if current:
+      randomizer_on = self._controller._params.get_bool("ModelRandomizer")
+      if current and not randomizer_on:
         self._draw_current_action(action_rect)
       elif not removable:
         self._draw_protected_action(action_rect)
@@ -451,7 +494,9 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
     gui_label(meta_rect, " • ".join(meta_parts), 32, AetherListColors.SUBTEXT, FontWeight.NORMAL)
 
     badge_parts: list[str] = []
-    if current:
+    if self._controller._params.get_bool("ModelRandomizer"):
+      badge_parts.append(tr("In Pool"))
+    elif current:
       badge_parts.append(tr("Active"))
     elif entry.builtin:
       badge_parts.append(tr("Built-in"))
@@ -856,6 +901,9 @@ class StarPilotDrivingModelLayout(_SettingsPage):
   def is_current_model(self, model_key: str) -> bool:
     return canonical_model_key(model_key) == self._current_model_key
 
+  def current_entry(self) -> ModelCatalogEntry | None:
+    return self._catalog_entries.get(self._current_model_key)
+
   def is_model_removable(self, model_key: str) -> bool:
     key = canonical_model_key(model_key)
     if not key:
@@ -951,18 +999,6 @@ class StarPilotDrivingModelLayout(_SettingsPage):
           },
         ]
       )
-
-    rows.extend(
-      [
-        {
-          "id": "recovery_power",
-          "title": tr("Recovery Power"),
-          "subtitle": tr("How assertively the model recenters after disturbances."),
-          "type": "value",
-          "value": f"{self._params.get_float('RecoveryPower'):.1f}x",
-        },
-      ]
-    )
 
     return rows
 
@@ -1088,8 +1124,6 @@ class StarPilotDrivingModelLayout(_SettingsPage):
     self._params.put("UserFavorites", ",".join(sorted(current_favorites)))
     self._update_model_metadata()
 
-  def _on_recovery_power_clicked(self):
-    self._show_slider("RecoveryPower", 0.5, 2.0, step=0.1, unit="x", value_type="float", title="Recovery Power", color=PANEL_STYLE.accent)
 
   def _on_blacklist_clicked(self):
     blacklisted = [m.strip() for m in (self._params.get("BlacklistedModels", encoding="utf-8") or "").split(",") if m.strip()]
@@ -1132,7 +1166,19 @@ class StarPilotDrivingModelLayout(_SettingsPage):
     self._update_model_metadata()
 
   def toggle_model_randomizer(self):
-    self._on_model_randomizer_toggled(not self._params.get_bool("ModelRandomizer"))
+    currently = self._params.get_bool("ModelRandomizer")
+    if not currently:
+      def on_confirm(result):
+        if result == DialogResult.CONFIRM:
+          self._on_model_randomizer_toggled(True)
+      gui_app.push_widget(ConfirmDialog(
+        tr("Model Randomizer will change your driving model each drive."),
+        tr("Enable"),
+        tr("Cancel"),
+        callback=on_confirm,
+      ))
+    else:
+      self._on_model_randomizer_toggled(False)
 
   def random_model_button_label(self) -> str:
     return tr("Model Randomizer")
