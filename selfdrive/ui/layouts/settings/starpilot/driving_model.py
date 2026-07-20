@@ -381,16 +381,29 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
     left = x + 16
     gap = 8.0
     usable = width - 32.0
-    sort_mode = self._controller._get_sort_mode()
-    n = len(_SORT_PILLS)
 
     if randomizer_on:
-      half = (usable - gap) / 2.0
-      seg_w = (half - gap * (n - 1)) / n
-      mgmt_left = left + half + gap
-    else:
-      seg_w = (usable - gap * (n - 1)) / n
-      mgmt_left = None
+      blacklisted = [m.strip() for m in (self._controller._params.get("BlacklistedModels", encoding="utf-8") or "").split(",") if m.strip()]
+      bl_label = tr(f"Blacklist: {len(blacklisted)} blocked") if blacklisted else tr("Blacklist")
+      bl_w = (usable - gap) / 2
+      rt_w = (usable - gap) / 2
+      bl_pill = rl.Rectangle(left, pill_y, bl_w, pill_h)
+      draw_action_pill(bl_pill, bl_label,
+                       with_alpha(AetherListColors.PRIMARY, 18),
+                       with_alpha(AetherListColors.PRIMARY, 50),
+                       AetherListColors.HEADER, font_size=28, roundness=0.35)
+      self._interactive_rects["mgmt:blacklist"] = bl_pill
+      rt_pill = rl.Rectangle(left + bl_w + gap, pill_y, rt_w, pill_h)
+      draw_action_pill(rt_pill, tr("Ratings"),
+                       with_alpha(AetherListColors.PRIMARY, 18),
+                       with_alpha(AetherListColors.PRIMARY, 50),
+                       AetherListColors.HEADER, font_size=28, roundness=0.35)
+      self._interactive_rects["mgmt:ratings"] = rt_pill
+      return
+
+    sort_mode = self._controller._get_sort_mode()
+    n = len(_SORT_PILLS)
+    seg_w = (usable - gap * (n - 1)) / n
 
     for i, mode in enumerate(_SORT_PILLS):
       seg_x = left + i * (seg_w + gap)
@@ -413,25 +426,6 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
       border = with_alpha(AetherListColors.PRIMARY, 80) if is_active else rl.Color(255, 255, 255, 24)
       draw_action_pill(seg_rect, label, fill, border, AetherListColors.HEADER, font_size=28, roundness=0.3)
       self._interactive_rects[f"sortopt:{mode}"] = seg_rect
-
-    if randomizer_on:
-      blacklisted = [m.strip() for m in (self._controller._params.get("BlacklistedModels", encoding="utf-8") or "").split(",") if m.strip()]
-      bl_label = tr(f"Blacklist: {len(blacklisted)} blocked") if blacklisted else tr("Blacklist")
-      mgmt_w = usable - half - gap
-      bl_w = min(420.0, mgmt_w * 0.62)
-      rt_w = min(280.0, mgmt_w - bl_w - gap)
-      bl_pill = rl.Rectangle(mgmt_left, pill_y, bl_w, pill_h)
-      draw_action_pill(bl_pill, bl_label,
-                       with_alpha(AetherListColors.PRIMARY, 18),
-                       with_alpha(AetherListColors.PRIMARY, 50),
-                       AetherListColors.HEADER, font_size=28, roundness=0.35)
-      self._interactive_rects["mgmt:blacklist"] = bl_pill
-      rt_pill = rl.Rectangle(mgmt_left + bl_w + gap, pill_y, rt_w, pill_h)
-      draw_action_pill(rt_pill, tr("Ratings"),
-                       with_alpha(AetherListColors.PRIMARY, 18),
-                       with_alpha(AetherListColors.PRIMARY, 50),
-                       AetherListColors.HEADER, font_size=28, roundness=0.35)
-      self._interactive_rects["mgmt:ratings"] = rt_pill
 
   def _measure_content_height(self, width: float) -> float:
     sections = self._build_sections(width)
@@ -531,13 +525,7 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
     )
 
   def _draw_model_section(self, x: float, y: float, width: float, title: str, entries: list[ModelCatalogEntry]) -> float:
-    trailing = ""
-    if title == tr("On Device"):
-      if self._controller._params.get_bool("ModelRandomizer"):
-        trailing = tr("Disable Randomizer to select")
-      else:
-        trailing = tr("Current: {}").format(self._controller._current_model_name)
-    draw_section_header(rl.Rectangle(x, y, width, SECTION_HEADER_HEIGHT), title, trailing_text=trailing, style=PANEL_STYLE)
+    draw_section_header(rl.Rectangle(x, y, width, SECTION_HEADER_HEIGHT), title, style=PANEL_STYLE)
     y += SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP
 
     group_rect = rl.Rectangle(x, y, width, len(entries) * ROW_HEIGHT)
