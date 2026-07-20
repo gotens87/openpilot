@@ -23,6 +23,11 @@ DETECTOR_CLASS_NAMES = (
   "school_zone_speed_limit",
 )
 DEFAULT_SPEED_VALUES = (15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75)
+# Values the review and dataset tooling can accept. Keep DEFAULT_SPEED_VALUES
+# aligned with the currently deployed classifier until an expanded model is
+# promoted; adding a class changes every output index after it.
+SUPPORTED_SPEED_VALUES = (10, *DEFAULT_SPEED_VALUES, 80, 90, 100)
+EXTENDED_CLASSIFIER_SPEED_VALUES = tuple(sorted(SUPPORTED_SPEED_VALUES, key=str))
 
 DETECTOR_EXPORT_NAME = "speed_limit_us_detector.onnx"
 CLASSIFIER_EXPORT_NAME = "speed_limit_us_value_classifier.onnx"

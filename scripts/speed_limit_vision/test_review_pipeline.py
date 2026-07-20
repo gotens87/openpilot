@@ -33,6 +33,16 @@ def test_raw_comma_camera_uses_real_frame_rate():
   assert common.source_video_fps(Path("clip.mp4"), 0.0) == 20.0
 
 
+def test_extended_classifier_order_matches_lexical_dataset_classes():
+  assert common.SUPPORTED_SPEED_VALUES == (10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 90, 100)
+  assert common.EXTENDED_CLASSIFIER_SPEED_VALUES == (10, 100, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 90)
+
+
+@pytest.mark.parametrize("speed", (10, 80, 90, 100))
+def test_manual_import_accepts_extended_speed_values(speed):
+  assert import_queue.parse_speed(str(speed)) == speed
+
+
 def test_localized_bookmark_source_position_normalizes_previous_segment():
   previous = {"segment": "26", "relative_time_s": "-18.950"}
   current = {"segment": "26", "relative_time_s": "12.500"}

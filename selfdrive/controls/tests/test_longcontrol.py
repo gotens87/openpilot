@@ -726,3 +726,92 @@ def test_gm_stock_truck_positive_i_trim_preserves_low_speed_launch():
   lc._trim_gm_truck_positive_hold_integrator(0.05, 0.05, CS)
 
   assert lc.pid.i == pytest.approx(0.25, abs=1e-9)
+
+
+def test_gm_stock_truck_negative_i_unwinds_when_already_overbraking():
+  CP = make_longcontrol_cp(
+    brand="gm",
+    carFingerprint=CAR.CHEVROLET_SILVERADO,
+    enableGasInterceptorDEPRECATED=False,
+  )
+  lc = LongControl(CP)
+  lc.pid.i = -0.22
+  lc.last_output_accel = -0.66
+  CS = car.CarState.new_message(vEgo=29.6, aEgo=-0.49, brakePressed=False)
+
+  lc._trim_gm_truck_negative_hold_integrator(-0.44, 0.05, CS)
+
+  assert -0.22 < lc.pid.i < 0.0
+
+
+def test_gm_stock_truck_negative_i_stays_when_decel_is_not_achieved():
+  CP = make_longcontrol_cp(
+    brand="gm",
+    carFingerprint=CAR.CHEVROLET_SILVERADO,
+    enableGasInterceptorDEPRECATED=False,
+  )
+  lc = LongControl(CP)
+  lc.pid.i = -0.22
+  lc.last_output_accel = -0.66
+  CS = car.CarState.new_message(vEgo=29.6, aEgo=0.05, brakePressed=False)
+
+  lc._trim_gm_truck_negative_hold_integrator(-0.44, -0.49, CS)
+
+  assert lc.pid.i == pytest.approx(-0.22, abs=1e-9)
+
+
+def test_gm_stock_truck_negative_i_stays_for_urgent_braking():
+  CP = make_longcontrol_cp(
+    brand="gm",
+    carFingerprint=CAR.CHEVROLET_SILVERADO,
+    enableGasInterceptorDEPRECATED=False,
+  )
+  lc = LongControl(CP)
+  lc.pid.i = -0.22
+  lc.last_output_accel = -1.30
+  CS = car.CarState.new_message(vEgo=29.6, aEgo=-1.20, brakePressed=False)
+
+  lc._trim_gm_truck_negative_hold_integrator(-1.00, 0.20, CS)
+
+  assert lc.pid.i == pytest.approx(-0.22, abs=1e-9)
+
+
+def test_gm_stock_truck_negative_i_trim_does_not_affect_other_gm_cars():
+  CP = make_longcontrol_cp(
+    brand="gm",
+    carFingerprint=CAR.CHEVROLET_BOLT_ACC_2022_2023,
+    enableGasInterceptorDEPRECATED=False,
+  )
+  lc = LongControl(CP)
+  lc.pid.i = -0.22
+  lc.last_output_accel = -0.66
+  CS = car.CarState.new_message(vEgo=29.6, aEgo=-0.49, brakePressed=False)
+
+  lc._trim_gm_truck_negative_hold_integrator(-0.44, 0.05, CS)
+
+  assert lc.pid.i == pytest.approx(-0.22, abs=1e-9)
+
+
+def test_gm_stock_truck_update_gradually_releases_stale_brake_integral():
+  CP = make_longcontrol_cp(
+    brand="gm",
+    carFingerprint=CAR.CHEVROLET_SILVERADO,
+    enableGasInterceptorDEPRECATED=False,
+  )
+  lc = LongControl(CP)
+  lc.pid.i = -0.22
+  lc.last_output_accel = -0.66
+  CS = car.CarState.new_message(vEgo=29.6, aEgo=-0.49, brakePressed=False)
+  CS.cruiseState.standstill = False
+
+  output_accel = lc.update(
+    active=True,
+    CS=CS,
+    a_target=-0.44,
+    should_stop=False,
+    accel_limits=(-3.5, 2.0),
+    starpilot_toggles=make_toggles(),
+    has_lead=True,
+  )
+
+  assert -0.66 < output_accel < -0.44

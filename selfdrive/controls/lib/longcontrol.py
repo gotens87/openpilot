@@ -346,6 +346,25 @@ class LongControl:
       target_factor *= 0.75
     self.pid.i *= target_factor
 
+  def _trim_gm_truck_negative_hold_integrator(self, a_target, error, CS):
+    if not self.is_gm_stock_truck or self.pid.i >= -0.02:
+      return
+    if CS.vEgo < 12.0 or a_target <= -0.85:
+      return
+    if error <= 0.04:
+      return
+
+    authority_mismatch = float(a_target) - float(self.last_output_accel)
+    if authority_mismatch <= 0.10:
+      return
+
+    release = float(interp(
+      max(authority_mismatch, error),
+      [0.10, 0.25, 0.50],
+      [0.0008, 0.0020, 0.0040],
+    ))
+    self.pid.i = min(0.0, self.pid.i + release)
+
   def _apply_pedal_long_brake_bias(self, output_accel, a_target, CS):
     if not self.is_gm_pedal_long:
       return output_accel
@@ -431,6 +450,7 @@ class LongControl:
       self._shape_volt_test_tune_integrator(error, CS.vEgo)
       self._trim_positive_overshoot_integrator(a_target, error, CS)
       self._trim_gm_truck_positive_hold_integrator(a_target, error, CS)
+      self._trim_gm_truck_negative_hold_integrator(a_target, error, CS)
       feedforward = self._get_longitudinal_feedforward(a_target, CS.vEgo)
       freeze_integrator = self._get_pedal_long_freeze(a_target, error, CS.vEgo, accel_limits)
       raw_output_accel = self.pid.update(error, speed=CS.vEgo, feedforward=feedforward,
