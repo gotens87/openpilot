@@ -55,6 +55,8 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   draw_settings_panel_header,
   draw_status_led,
   draw_overflow_dots,
+  draw_rounded_fill,
+  draw_rounded_stroke,
   init_list_panel,
   draw_interactive_rect,
   resolve_interactive_target,
@@ -77,6 +79,15 @@ PANEL_STYLE = DEFAULT_PANEL_STYLE
 BANNER_HEIGHT = ROW_HEIGHT
 HEADER_BAR_HEIGHT = 107.0
 MANAGEMENT_STRIP_HEIGHT = 56.0
+_SORT_MODES = ("alphabetical", "date", "date_oldest", "favorites", "community_picks")
+_SORT_LABELS = {
+  "alphabetical":     "Alphabetical",
+  "date":             "Date (Newest)",
+  "date_oldest":      "Date (Oldest)",
+  "favorites":        "Favorites",
+  "community_picks":  "Community Picks",
+}
+_SORT_PILLS = ("alphabetical", "date", "favorites", "community_picks")
 
 
 @dataclass
@@ -204,7 +215,7 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
           if point_hits(mouse_pos, rect, self._scroll_rect, pad_x=6, pad_y=pad_y):
             return target_id
     for target_id, rect in self._interactive_rects.items():
-      if target_id.startswith("mgmt:"):
+      if target_id.startswith("sortopt:") or target_id.startswith("mgmt:"):
         if point_hits(mouse_pos, rect, self._shell_rect, pad_x=6, pad_y=6):
           return target_id
     return None
@@ -268,6 +279,14 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
         self._controller._on_scores_clicked()
       return
 
+    if target.startswith("sortopt:"):
+      mode = target.split(":", 1)[1]
+      if mode == "date":
+        current = self._controller._get_sort_mode()
+        mode = "date_oldest" if current == "date" else "date"
+      self._controller._params.put("ModelSortMode", mode)
+      return
+
   def _render(self, rect: rl.Rectangle):
     self.set_rect(rect)
     self._interactive_rects.clear()
@@ -289,11 +308,10 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
                                 scroll_rect.width, scroll_rect.height - HEADER_BAR_HEIGHT)
 
     randomizer_on = self._controller._params.get_bool("ModelRandomizer")
-    if randomizer_on:
-      mgmt_y = scroll_rect.y
-      self._draw_management_strip(scroll_rect.x, mgmt_y, content_width)
-      scroll_rect = rl.Rectangle(scroll_rect.x, scroll_rect.y + MANAGEMENT_STRIP_HEIGHT,
-                                  scroll_rect.width, scroll_rect.height - MANAGEMENT_STRIP_HEIGHT)
+    mgmt_y = scroll_rect.y
+    self._draw_sort_strip(scroll_rect.x, mgmt_y, content_width, randomizer_on)
+    scroll_rect = rl.Rectangle(scroll_rect.x, scroll_rect.y + MANAGEMENT_STRIP_HEIGHT,
+                                scroll_rect.width, scroll_rect.height - MANAGEMENT_STRIP_HEIGHT)
 
     self._scroll_rect = scroll_rect
 
@@ -357,32 +375,63 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
     randomizer_on = self._controller._params.get_bool("ModelRandomizer")
     draw_status_led(rl.Vector2(led_x, led_y), randomizer_on)
 
-  def _draw_management_strip(self, x: float, y: float, width: float):
+  def _draw_sort_strip(self, x: float, y: float, width: float, randomizer_on: bool):
     pill_h = 48.0
     pill_y = y + (MANAGEMENT_STRIP_HEIGHT - pill_h) / 2
     left = x + 16
-    gap = 14.0
+    gap = 8.0
     usable = width - 32.0
+    sort_mode = self._controller._get_sort_mode()
+    n = len(_SORT_PILLS)
 
-    blacklisted = [m.strip() for m in (self._controller._params.get("BlacklistedModels", encoding="utf-8") or "").split(",") if m.strip()]
-    bl_label = tr(f"Blacklist: {len(blacklisted)} blocked") if blacklisted else tr("Blacklist")
+    if randomizer_on:
+      half = (usable - gap) / 2.0
+      seg_w = (half - gap * (n - 1)) / n
+      mgmt_left = left + half + gap
+    else:
+      seg_w = (usable - gap * (n - 1)) / n
+      mgmt_left = None
 
-    bl_w = min(420.0, usable * 0.62)
-    rt_w = min(280.0, usable - bl_w - gap)
+    for i, mode in enumerate(_SORT_PILLS):
+      seg_x = left + i * (seg_w + gap)
+      seg_rect = rl.Rectangle(seg_x, pill_y, seg_w, pill_h)
+      if mode == "date":
+        is_active = sort_mode in ("date", "date_oldest")
+        label = tr("Date (Oldest)") if sort_mode == "date_oldest" else tr("Date (Newest)")
+      else:
+        is_active = (mode == sort_mode)
+        label = tr(_SORT_LABELS[mode])
+      pressed = self._pressed_target == f"sortopt:{mode}"
+      if pressed and is_active:
+        fill = with_alpha(AetherListColors.PRIMARY, 80)
+      elif pressed:
+        fill = rl.Color(255, 255, 255, 18)
+      elif is_active:
+        fill = with_alpha(AetherListColors.PRIMARY, 28)
+      else:
+        fill = rl.Color(255, 255, 255, 8)
+      border = with_alpha(AetherListColors.PRIMARY, 80) if is_active else rl.Color(255, 255, 255, 24)
+      draw_action_pill(seg_rect, label, fill, border, AetherListColors.HEADER, font_size=28, roundness=0.3)
+      self._interactive_rects[f"sortopt:{mode}"] = seg_rect
 
-    bl_pill = rl.Rectangle(left, pill_y, bl_w, pill_h)
-    draw_action_pill(bl_pill, bl_label,
-                     with_alpha(AetherListColors.PRIMARY, 18),
-                     with_alpha(AetherListColors.PRIMARY, 50),
-                     AetherListColors.HEADER, font_size=28, roundness=0.35)
-    self._interactive_rects["mgmt:blacklist"] = bl_pill
-
-    rt_pill = rl.Rectangle(left + bl_w + gap, pill_y, rt_w, pill_h)
-    draw_action_pill(rt_pill, tr("Ratings"),
-                     with_alpha(AetherListColors.PRIMARY, 18),
-                     with_alpha(AetherListColors.PRIMARY, 50),
-                     AetherListColors.HEADER, font_size=28, roundness=0.35)
-    self._interactive_rects["mgmt:ratings"] = rt_pill
+    if randomizer_on:
+      blacklisted = [m.strip() for m in (self._controller._params.get("BlacklistedModels", encoding="utf-8") or "").split(",") if m.strip()]
+      bl_label = tr(f"Blacklist: {len(blacklisted)} blocked") if blacklisted else tr("Blacklist")
+      mgmt_w = usable - half - gap
+      bl_w = min(420.0, mgmt_w * 0.62)
+      rt_w = min(280.0, mgmt_w - bl_w - gap)
+      bl_pill = rl.Rectangle(mgmt_left, pill_y, bl_w, pill_h)
+      draw_action_pill(bl_pill, bl_label,
+                       with_alpha(AetherListColors.PRIMARY, 18),
+                       with_alpha(AetherListColors.PRIMARY, 50),
+                       AetherListColors.HEADER, font_size=28, roundness=0.35)
+      self._interactive_rects["mgmt:blacklist"] = bl_pill
+      rt_pill = rl.Rectangle(mgmt_left + bl_w + gap, pill_y, rt_w, pill_h)
+      draw_action_pill(rt_pill, tr("Ratings"),
+                       with_alpha(AetherListColors.PRIMARY, 18),
+                       with_alpha(AetherListColors.PRIMARY, 50),
+                       AetherListColors.HEADER, font_size=28, roundness=0.35)
+      self._interactive_rects["mgmt:ratings"] = rt_pill
 
   def _measure_content_height(self, width: float) -> float:
     sections = self._build_sections(width)
@@ -392,24 +441,34 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
 
   def _build_sections(self, width: float) -> list[tuple[str, float]]:
     sections: list[tuple[str, float]] = []
+    sort_mode = self._controller._get_sort_mode()
 
-    installed = self._controller.installed_entries()
-    available = self._controller.available_entries()
-    utility_rows = self._controller.utility_rows()
-    if self._controller._params.get_bool("ModelRandomizer"):
-      available = []
-      utility_rows = []
-
-    if installed:
-      installed_count = len(installed)
-      if self._controller.current_entry() is not None:
-        installed_count = max(installed_count - 1, 0)
-      sections.append(("installed", SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP + installed_count * ROW_HEIGHT))
-    if available:
-      sections.append(("available", SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP + len(available) * ROW_HEIGHT))
-    if utility_rows:
-      utility_height = SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP + len(utility_rows) * UTILITY_ROW_HEIGHT
-      sections.append(("utility", utility_height))
+    if sort_mode == "favorites":
+      fav = self._controller.favorites_entries()
+      if fav:
+        count = len(fav)
+        if self._controller.current_entry() is not None and self._controller.current_entry().user_favorite:
+          count = max(count - 1, 0)
+        sections.append(("favorites", SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP + count * ROW_HEIGHT))
+    elif sort_mode == "community_picks":
+      community = self._controller.community_picks_entries()
+      if community:
+        count = len(community)
+        if self._controller.current_entry() is not None and self._controller.current_entry().community_favorite:
+          count = max(count - 1, 0)
+        sections.append(("community_picks", SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP + count * ROW_HEIGHT))
+    else:
+      installed = self._controller.installed_entries()
+      available = self._controller.available_entries()
+      if self._controller._params.get_bool("ModelRandomizer"):
+        available = []
+      if installed:
+        installed_count = len(installed)
+        if self._controller.current_entry() is not None:
+          installed_count = max(installed_count - 1, 0)
+        sections.append(("installed", SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP + installed_count * ROW_HEIGHT))
+      if available:
+        sections.append(("available", SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP + len(available) * ROW_HEIGHT))
 
     if not sections:
       sections.append(("empty", 240))
@@ -417,18 +476,37 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
     return [(key, height + SECTION_GAP) for key, height in sections]
 
   def _draw_scroll_content(self, rect: rl.Rectangle, width: float):
+    sort_mode = self._controller._get_sort_mode()
+    y = rect.y + self._scroll_offset
+
+    if sort_mode == "favorites":
+      entries = self._controller.favorites_entries()
+      if self._controller.current_entry() is not None:
+        entries = [e for e in entries if not self._controller.is_current_model(e.key)]
+      if entries:
+        y = self._draw_model_section(rect.x, y, width, tr("Favorites"), entries)
+      else:
+        self._draw_empty_state(rl.Rectangle(rect.x, y + 36, width, 200))
+      return
+
+    if sort_mode == "community_picks":
+      entries = self._controller.community_picks_entries()
+      if self._controller.current_entry() is not None:
+        entries = [e for e in entries if not self._controller.is_current_model(e.key)]
+      if entries:
+        y = self._draw_model_section(rect.x, y, width, tr("Community Picks"), entries)
+      else:
+        self._draw_empty_state(rl.Rectangle(rect.x, y + 36, width, 200))
+      return
+
     installed = self._controller.installed_entries()
     if self._controller.current_entry() is not None:
       installed = [e for e in installed if not self._controller.is_current_model(e.key)]
     available = self._controller.available_entries()
-    utility_rows = self._controller.utility_rows()
     if self._controller._params.get_bool("ModelRandomizer"):
       available = []
-      utility_rows = []
 
-    y = rect.y + self._scroll_offset
-
-    if not installed and not available and not utility_rows:
+    if not installed and not available:
       self._draw_empty_state(rl.Rectangle(rect.x, y + 36, width, 200))
       return
 
@@ -438,8 +516,6 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
     if available:
       y = self._draw_model_section(rect.x, y, width, tr("Available to Download"), available)
       y += SECTION_GAP
-    if utility_rows:
-      self._draw_utility_section(rect.x, y, width, utility_rows)
 
   def _draw_empty_state(self, rect: rl.Rectangle):
     draw_empty_state_card(
@@ -447,7 +523,7 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
       self._controller.empty_state_title(),
       self._controller.empty_state_body(),
       title_size=46,
-      body_size=35,
+      body_size=36,
       body_inset_x=48,
       title_top_padding=42,
       body_height=72,
@@ -584,7 +660,7 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
     gui_label(
       rl.Rectangle(rect.x + 16, rect.y + rect.height - 58, rect.width - 32, 32),
       label,
-      24,
+      28,
       AetherListColors.SUBTEXT,
       FontWeight.MEDIUM,
       alignment=rl.GuiTextAlignment.TEXT_ALIGN_CENTER,
@@ -924,35 +1000,49 @@ class StarPilotDrivingModelLayout(_SettingsPage):
 
   def installed_entries(self) -> list[ModelCatalogEntry]:
     entries = [entry for entry in self._catalog_entries.values() if entry.installed]
-    return sorted(
-      entries,
-      key=lambda entry: (
-        0 if self.is_current_model(entry.key) else 1,
-        0 if entry.builtin else 1,
-        0 if entry.user_favorite else 1,
-        0 if entry.community_favorite else 1,
-        self._model_file_to_name_processed.get(entry.key, entry.name).lower(),
-        entry.key,
-      ),
-    )
+    sort_mode = self._get_sort_mode()
+    if sort_mode == "date":
+      return sorted(entries, key=lambda e: (e.released or "0000-00-00", self._model_file_to_name_processed.get(e.key, e.name).lower(), e.key), reverse=True)
+    if sort_mode == "date_oldest":
+      return sorted(entries, key=lambda e: (e.released or "0000-00-00", self._model_file_to_name_processed.get(e.key, e.name).lower(), e.key))
+    return sorted(entries, key=lambda e: (0 if e.builtin else 1, self._model_file_to_name_processed.get(e.key, e.name).lower(), e.key))
 
   def available_entries(self) -> list[ModelCatalogEntry]:
     entries = [entry for entry in self._catalog_entries.values() if not entry.installed]
-    return sorted(
-      entries,
-      key=lambda entry: (
-        0 if entry.user_favorite else 1,
-        0 if entry.community_favorite else 1,
-        self._model_file_to_name_processed.get(entry.key, entry.name).lower(),
-        entry.key,
-      ),
-    )
+    sort_mode = self._get_sort_mode()
+    if sort_mode == "date":
+      return sorted(entries, key=lambda e: (e.released or "0000-00-00", self._model_file_to_name_processed.get(e.key, e.name).lower(), e.key), reverse=True)
+    if sort_mode == "date_oldest":
+      return sorted(entries, key=lambda e: (e.released or "0000-00-00", self._model_file_to_name_processed.get(e.key, e.name).lower(), e.key))
+    return sorted(entries, key=lambda e: (self._model_file_to_name_processed.get(e.key, e.name).lower(), e.key))
+
+  def community_picks_entries(self) -> list[ModelCatalogEntry]:
+    entries = [entry for entry in self._catalog_entries.values() if entry.community_favorite]
+    if self._params.get_bool("ModelRandomizer"):
+      entries = [e for e in entries if e.installed]
+    return sorted(entries, key=lambda e: (
+      self._model_file_to_name_processed.get(e.key, e.name).lower(),
+      e.key
+    ))
+
+  def favorites_entries(self) -> list[ModelCatalogEntry]:
+    entries = [entry for entry in self._catalog_entries.values() if entry.user_favorite]
+    if self._params.get_bool("ModelRandomizer"):
+      entries = [e for e in entries if e.installed]
+    return sorted(entries, key=lambda e: (
+      self._model_file_to_name_processed.get(e.key, e.name).lower(),
+      e.key
+    ))
 
   def is_current_model(self, model_key: str) -> bool:
     return canonical_model_key(model_key) == self._current_model_key
 
   def current_entry(self) -> ModelCatalogEntry | None:
     return self._catalog_entries.get(self._current_model_key)
+
+  def _get_sort_mode(self) -> str:
+    mode = (self._params.get("ModelSortMode", encoding="utf-8") or "").strip()
+    return mode if mode in _SORT_MODES else _SORT_MODES[0]
 
   def is_model_removable(self, model_key: str) -> bool:
     key = canonical_model_key(model_key)

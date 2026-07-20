@@ -196,7 +196,7 @@ def draw_text_fit_common(
   size = measure_text_cached(font, text, base_font_size, spacing=spacing)
   actual_font_size = base_font_size
   if size.x > max_width:
-    MIN_FONT = 8
+    MIN_FONT = 16
     hi = max(MIN_FONT, int(round(font_size * (max_width / size.x))))
     lo = MIN_FONT
     actual_font_size = hi
