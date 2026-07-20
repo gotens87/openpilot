@@ -4,6 +4,7 @@ from cereal import car
 import pytest
 
 import openpilot.selfdrive.controls.lib.longcontrol as longcontrol
+import openpilot.selfdrive.controls.lib.longcontrol_vehicle_tunes as vehicle_tunes
 from opendbc.car.gm.values import CAR, GMFlags
 from openpilot.selfdrive.controls.lib.longcontrol import (
   LongControl,
@@ -396,13 +397,15 @@ def test_volt_testing_ground_handoff_freezes_integrator(monkeypatch):
   CP.longitudinalTuning.kiBP = [0.0]
   CP.longitudinalTuning.kiV = [0.03]
 
-  monkeypatch.setattr(longcontrol, "testing_ground", SimpleNamespace(use_2=True))
+  monkeypatch.setattr(vehicle_tunes, "testing_ground", SimpleNamespace(use_2=True))
 
   lc = LongControl(CP)
-  freeze = lc._get_pedal_long_freeze(a_target=0.7, error=0.7, v_ego=8.0, accel_limits=(-3.0, 2.0))
+  freeze = lc.vehicle_tuning.get_integrator_freeze(
+    lc.last_output_accel, a_target=0.7, error=0.7, v_ego=8.0, accel_limits=(-3.0, 2.0),
+  )
 
   assert freeze
-  assert lc.integrator_hold_frames > 0
+  assert lc.vehicle_tuning.integrator_hold_frames > 0
 
 
 def test_non_interceptor_volt_testing_ground_handoff_freezes_integrator(monkeypatch):
@@ -415,13 +418,15 @@ def test_non_interceptor_volt_testing_ground_handoff_freezes_integrator(monkeypa
   CP.longitudinalTuning.kiBP = [0.0]
   CP.longitudinalTuning.kiV = [0.03]
 
-  monkeypatch.setattr(longcontrol, "testing_ground", SimpleNamespace(use_2=True))
+  monkeypatch.setattr(vehicle_tunes, "testing_ground", SimpleNamespace(use_2=True))
 
   lc = LongControl(CP)
-  freeze = lc._get_pedal_long_freeze(a_target=0.7, error=0.7, v_ego=8.0, accel_limits=(-3.0, 2.0))
+  freeze = lc.vehicle_tuning.get_integrator_freeze(
+    lc.last_output_accel, a_target=0.7, error=0.7, v_ego=8.0, accel_limits=(-3.0, 2.0),
+  )
 
   assert freeze
-  assert lc.integrator_hold_frames > 0
+  assert lc.vehicle_tuning.integrator_hold_frames > 0
 
 
 def test_negative_target_unwinds_positive_accel_command_after_sign_flip():
@@ -502,7 +507,7 @@ def test_pedal_long_brake_bias_adds_small_negative_nudge_for_strong_decel_reques
   lc = LongControl(CP)
   CS = car.CarState.new_message(vEgo=20.0, aEgo=0.0, brakePressed=False)
 
-  biased = lc._apply_pedal_long_brake_bias(-1.0, -3.0, CS)
+  biased = lc.vehicle_tuning.apply_pedal_long_brake_bias(-1.0, -3.0, CS)
 
   assert biased < -1.0
   assert biased == pytest.approx(-1.15, abs=0.03)
@@ -521,8 +526,8 @@ def test_pedal_long_brake_bias_does_not_touch_non_pedal_or_mild_decel():
   lc = LongControl(CP)
   CS = car.CarState.new_message(vEgo=20.0, aEgo=0.0, brakePressed=False)
 
-  assert lc._apply_pedal_long_brake_bias(-1.0, -3.0, CS) == -1.0
-  assert lc._apply_pedal_long_brake_bias(-0.4, -0.6, CS) == -0.4
+  assert lc.vehicle_tuning.apply_pedal_long_brake_bias(-1.0, -3.0, CS) == -1.0
+  assert lc.vehicle_tuning.apply_pedal_long_brake_bias(-0.4, -0.6, CS) == -0.4
 
 
 def test_bolt_acc_pedal_friction_feedforward_preserves_regen_scaling_within_envelope():
@@ -536,7 +541,9 @@ def test_bolt_acc_pedal_friction_feedforward_preserves_regen_scaling_within_enve
 
   lc = LongControl(CP)
 
-  assert lc._get_longitudinal_feedforward(-1.8, 4.73) == pytest.approx(-0.36)
+  assert lc.vehicle_tuning.get_longitudinal_feedforward(
+    lc.feedforward_gain, lc.last_output_accel, -1.8, 4.73,
+  ) == pytest.approx(-0.36)
 
 
 def test_bolt_acc_pedal_friction_feedforward_restores_full_gain_beyond_regen_envelope():
@@ -550,7 +557,9 @@ def test_bolt_acc_pedal_friction_feedforward_restores_full_gain_beyond_regen_env
 
   lc = LongControl(CP)
 
-  assert lc._get_longitudinal_feedforward(-3.22, 4.73) == pytest.approx(-3.22)
+  assert lc.vehicle_tuning.get_longitudinal_feedforward(
+    lc.feedforward_gain, lc.last_output_accel, -3.22, 4.73,
+  ) == pytest.approx(-3.22)
 
 
 def test_bolt_acc_pedal_friction_feedforward_blends_back_in_for_small_friction_request():
@@ -563,19 +572,21 @@ def test_bolt_acc_pedal_friction_feedforward_blends_back_in_for_small_friction_r
   CP.longitudinalTuning.kfDEPRECATED = 0.20
 
   lc = LongControl(CP)
-  pedal_regen_limit = float(longcontrol.interp(20.0, longcontrol.BOLT_ACC_PEDAL_REGEN_LIMIT_BP,
-                                               longcontrol.BOLT_ACC_PEDAL_REGEN_LIMIT_V))
+  pedal_regen_limit = float(vehicle_tunes.interp(20.0, vehicle_tunes.BOLT_ACC_PEDAL_REGEN_LIMIT_BP,
+                                                 vehicle_tunes.BOLT_ACC_PEDAL_REGEN_LIMIT_V))
   a_target = pedal_regen_limit - 0.10
-  expected_gain = longcontrol.get_bolt_acc_pedal_feedforward_gain(0.20, a_target, 20.0, pedal_regen_limit, 0.0)
+  expected_gain = vehicle_tunes.get_bolt_acc_pedal_feedforward_gain(0.20, a_target, 20.0, pedal_regen_limit, 0.0)
   expected = a_target * expected_gain
 
-  assert lc._get_longitudinal_feedforward(a_target, 20.0) == pytest.approx(expected)
+  assert lc.vehicle_tuning.get_longitudinal_feedforward(
+    lc.feedforward_gain, lc.last_output_accel, a_target, 20.0,
+  ) == pytest.approx(expected)
 
 
 def test_bolt_acc_pedal_friction_floor_holds_friction_only_authority():
-  pedal_regen_limit = float(longcontrol.interp(9.85, longcontrol.BOLT_ACC_PEDAL_REGEN_LIMIT_BP,
-                                               longcontrol.BOLT_ACC_PEDAL_REGEN_LIMIT_V))
-  floor = longcontrol.get_bolt_acc_pedal_friction_floor(-3.47, 9.85, pedal_regen_limit)
+  pedal_regen_limit = float(vehicle_tunes.interp(9.85, vehicle_tunes.BOLT_ACC_PEDAL_REGEN_LIMIT_BP,
+                                                 vehicle_tunes.BOLT_ACC_PEDAL_REGEN_LIMIT_V))
+  floor = vehicle_tunes.get_bolt_acc_pedal_friction_floor(-3.47, 9.85, pedal_regen_limit)
 
   assert floor is not None
   assert floor < pedal_regen_limit
@@ -600,32 +611,32 @@ def test_bolt_acc_pedal_friction_bias_applies_floor_only_on_experimental_fingerp
   bolt_cc_lc = LongControl(bolt_cc_cp)
   CS = car.CarState.new_message(vEgo=9.85, aEgo=-2.0, brakePressed=False)
 
-  pedal_regen_limit = float(longcontrol.interp(CS.vEgo, longcontrol.BOLT_ACC_PEDAL_REGEN_LIMIT_BP,
-                                               longcontrol.BOLT_ACC_PEDAL_REGEN_LIMIT_V))
-  floor = longcontrol.get_bolt_acc_pedal_friction_floor(-3.47, CS.vEgo, pedal_regen_limit)
+  pedal_regen_limit = float(vehicle_tunes.interp(CS.vEgo, vehicle_tunes.BOLT_ACC_PEDAL_REGEN_LIMIT_BP,
+                                                 vehicle_tunes.BOLT_ACC_PEDAL_REGEN_LIMIT_V))
+  floor = vehicle_tunes.get_bolt_acc_pedal_friction_floor(-3.47, CS.vEgo, pedal_regen_limit)
   assert floor is not None
 
-  pedal_biased = pedal_lc._apply_pedal_long_brake_bias(-1.85, -3.47, CS)
-  bolt_cc_biased = bolt_cc_lc._apply_pedal_long_brake_bias(-1.85, -3.47, CS)
+  pedal_biased = pedal_lc.vehicle_tuning.apply_pedal_long_brake_bias(-1.85, -3.47, CS)
+  bolt_cc_biased = bolt_cc_lc.vehicle_tuning.apply_pedal_long_brake_bias(-1.85, -3.47, CS)
 
   assert pedal_biased == pytest.approx(floor)
   assert bolt_cc_biased > pedal_biased + 0.5
 
 
 def test_bolt_acc_pedal_feedforward_gain_stays_base_for_mild_regen():
-  gain = longcontrol.get_bolt_acc_pedal_feedforward_gain(0.2, -1.0, 10.0, -2.75, -0.4)
+  gain = vehicle_tunes.get_bolt_acc_pedal_feedforward_gain(0.2, -1.0, 10.0, -2.75, -0.4)
 
   assert gain == pytest.approx(0.2)
 
 
 def test_bolt_acc_pedal_feedforward_gain_restores_for_authority_gap():
-  gain = longcontrol.get_bolt_acc_pedal_feedforward_gain(0.2, -1.83, 12.38, -2.79, -0.70)
+  gain = vehicle_tunes.get_bolt_acc_pedal_feedforward_gain(0.2, -1.83, 12.38, -2.79, -0.70)
 
   assert gain > 0.55
 
 
 def test_bolt_acc_pedal_feedforward_gain_restores_near_friction_handoff():
-  gain = longcontrol.get_bolt_acc_pedal_feedforward_gain(0.2, -2.63, 9.35, -2.69, -1.30)
+  gain = vehicle_tunes.get_bolt_acc_pedal_feedforward_gain(0.2, -2.63, 9.35, -2.69, -1.30)
 
   assert gain > 0.45
 
@@ -641,7 +652,9 @@ def test_bolt_cc_pedal_friction_feedforward_remains_fully_scaled_by_kf():
 
   lc = LongControl(CP)
 
-  assert lc._get_longitudinal_feedforward(-3.22, 4.73) == pytest.approx(-0.644)
+  assert lc.vehicle_tuning.get_longitudinal_feedforward(
+    lc.feedforward_gain, lc.last_output_accel, -3.22, 4.73,
+  ) == pytest.approx(-0.644)
 
 
 def test_gm_stock_truck_positive_i_bleeds_on_coast_request():
@@ -660,7 +673,9 @@ def test_gm_stock_truck_positive_i_bleeds_on_coast_request():
   CS = car.CarState.new_message(vEgo=20.0, aEgo=0.0, brakePressed=False)
   CS.cruiseState.standstill = False
 
-  lc._trim_gm_truck_positive_hold_integrator(-0.02, -0.02, CS)
+  lc.vehicle_tuning.trim_gm_truck_positive_hold_integrator(
+    lc.pid, lc.last_output_accel, -0.02, -0.02, CS,
+  )
 
   assert lc.pid.i < 0.25
 
@@ -681,7 +696,9 @@ def test_gm_stock_truck_positive_i_bleeds_during_light_highway_accel_request():
   CS = car.CarState.new_message(vEgo=20.0, aEgo=0.0, brakePressed=False)
   CS.cruiseState.standstill = False
 
-  lc._trim_gm_truck_positive_hold_integrator(0.05, 0.05, CS)
+  lc.vehicle_tuning.trim_gm_truck_positive_hold_integrator(
+    lc.pid, lc.last_output_accel, 0.05, 0.05, CS,
+  )
 
   assert lc.pid.i < 0.25
 
@@ -702,7 +719,9 @@ def test_gm_stock_truck_positive_i_trim_keeps_meaningful_accel_request():
   CS = car.CarState.new_message(vEgo=20.0, aEgo=0.0, brakePressed=False)
   CS.cruiseState.standstill = False
 
-  lc._trim_gm_truck_positive_hold_integrator(0.12, 0.12, CS)
+  lc.vehicle_tuning.trim_gm_truck_positive_hold_integrator(
+    lc.pid, lc.last_output_accel, 0.12, 0.12, CS,
+  )
 
   assert lc.pid.i == pytest.approx(0.25, abs=1e-9)
 
@@ -723,7 +742,9 @@ def test_gm_stock_truck_positive_i_trim_preserves_low_speed_launch():
   CS = car.CarState.new_message(vEgo=5.0, aEgo=0.0, brakePressed=False)
   CS.cruiseState.standstill = False
 
-  lc._trim_gm_truck_positive_hold_integrator(0.05, 0.05, CS)
+  lc.vehicle_tuning.trim_gm_truck_positive_hold_integrator(
+    lc.pid, lc.last_output_accel, 0.05, 0.05, CS,
+  )
 
   assert lc.pid.i == pytest.approx(0.25, abs=1e-9)
 
@@ -739,7 +760,9 @@ def test_gm_stock_truck_negative_i_unwinds_when_already_overbraking():
   lc.last_output_accel = -0.66
   CS = car.CarState.new_message(vEgo=29.6, aEgo=-0.49, brakePressed=False)
 
-  lc._trim_gm_truck_negative_hold_integrator(-0.44, 0.05, CS)
+  lc.vehicle_tuning.trim_gm_truck_negative_hold_integrator(
+    lc.pid, lc.last_output_accel, -0.44, 0.05, CS,
+  )
 
   assert -0.22 < lc.pid.i < 0.0
 
@@ -755,7 +778,9 @@ def test_gm_stock_truck_negative_i_stays_when_decel_is_not_achieved():
   lc.last_output_accel = -0.66
   CS = car.CarState.new_message(vEgo=29.6, aEgo=0.05, brakePressed=False)
 
-  lc._trim_gm_truck_negative_hold_integrator(-0.44, -0.49, CS)
+  lc.vehicle_tuning.trim_gm_truck_negative_hold_integrator(
+    lc.pid, lc.last_output_accel, -0.44, -0.49, CS,
+  )
 
   assert lc.pid.i == pytest.approx(-0.22, abs=1e-9)
 
@@ -771,7 +796,9 @@ def test_gm_stock_truck_negative_i_stays_for_urgent_braking():
   lc.last_output_accel = -1.30
   CS = car.CarState.new_message(vEgo=29.6, aEgo=-1.20, brakePressed=False)
 
-  lc._trim_gm_truck_negative_hold_integrator(-1.00, 0.20, CS)
+  lc.vehicle_tuning.trim_gm_truck_negative_hold_integrator(
+    lc.pid, lc.last_output_accel, -1.00, 0.20, CS,
+  )
 
   assert lc.pid.i == pytest.approx(-0.22, abs=1e-9)
 
@@ -787,7 +814,9 @@ def test_gm_stock_truck_negative_i_trim_does_not_affect_other_gm_cars():
   lc.last_output_accel = -0.66
   CS = car.CarState.new_message(vEgo=29.6, aEgo=-0.49, brakePressed=False)
 
-  lc._trim_gm_truck_negative_hold_integrator(-0.44, 0.05, CS)
+  lc.vehicle_tuning.trim_gm_truck_negative_hold_integrator(
+    lc.pid, lc.last_output_accel, -0.44, 0.05, CS,
+  )
 
   assert lc.pid.i == pytest.approx(-0.22, abs=1e-9)
 

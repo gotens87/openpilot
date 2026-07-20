@@ -95,6 +95,14 @@ def queue_row(row: dict[str, str]) -> dict[str, str]:
   read_sources = "model"
   if row.get("full_detection", ""):
     read_sources += ";full_detection"
+  if row.get("event_type", "") == "visionPublish":
+    read_sources += ";logged_vision_publish"
+
+  review_reasons = ["corrected_source_timing"]
+  if row.get("event_type", "") == "visionPublish":
+    review_reasons.extend(("route_vision_publish", f"published_{row.get('published_speed', '')}"))
+  else:
+    review_reasons.append("route_bookmark")
 
   item = dict.fromkeys(FIELDNAMES, "")
   item.update({
@@ -121,8 +129,10 @@ def queue_row(row: dict[str, str]) -> dict[str, str]:
     "read_sources": read_sources,
     "read_support_count": "1",
     "is_regulatory": row.get("is_regulatory", ""),
+    "map_current_speed_limit_mph": row.get("map_speed", ""),
+    "map_next_speed_limit_mph": row.get("next_speed", ""),
     "review_priority": row.get("score", ""),
-    "review_reasons": "route_bookmark;corrected_source_timing",
+    "review_reasons": ";".join(review_reasons),
   })
   return item
 

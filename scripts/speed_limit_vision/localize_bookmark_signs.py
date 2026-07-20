@@ -56,19 +56,23 @@ def configure_models(models_dir: Path | None):
   slv.US_CLASSIFIER_MODEL_PATH = classifier_path
 
 
-def iter_video_samples(clip_path: Path, start_s: float, end_s: float, sample_every: float):
+def iter_video_samples(clip_path: Path, start_s: float, end_s: float, sample_every: float, seek: bool = False):
   capture = cv2.VideoCapture(str(clip_path))
   fps = common.source_video_fps(clip_path, capture.get(cv2.CAP_PROP_FPS))
   start_frame = max(int(start_s * fps), 0)
   end_frame = max(int(end_s * fps), start_frame)
 
   frame_index = 0
-  while frame_index < start_frame:
-    ok, _ = capture.read()
-    if not ok:
-      capture.release()
-      return
-    frame_index += 1
+  if seek:
+    capture.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+    frame_index = max(round(capture.get(cv2.CAP_PROP_POS_FRAMES)), 0)
+  else:
+    while frame_index < start_frame:
+      ok, _ = capture.read()
+      if not ok:
+        capture.release()
+        return
+      frame_index += 1
 
   next_sample_s = start_s
   while frame_index <= end_frame:
@@ -86,7 +90,14 @@ def iter_video_samples(clip_path: Path, start_s: float, end_s: float, sample_eve
   capture.release()
 
 
-def iter_context_frames(clip_root: Path, window: ebl.BookmarkWindow, search_before: float, search_after: float, sample_every: float):
+def iter_context_frames(
+  clip_root: Path,
+  window: ebl.BookmarkWindow,
+  search_before: float,
+  search_after: float,
+  sample_every: float,
+  seek: bool = False,
+):
   ranges: list[tuple[Path, float, float]] = []
   start_s = window.segment_offset_s - search_before
   end_s = window.segment_offset_s + search_after
@@ -102,7 +113,7 @@ def iter_context_frames(clip_root: Path, window: ebl.BookmarkWindow, search_befo
     ranges.append((current_clip, max(start_s, 0.0), min(end_s, 60.0)))
 
   for clip_path, range_start_s, range_end_s in ranges:
-    for source_time_s, frame_bgr in iter_video_samples(clip_path, range_start_s, range_end_s, sample_every):
+    for source_time_s, frame_bgr in iter_video_samples(clip_path, range_start_s, range_end_s, sample_every, seek=seek):
       if clip_path.parent.name.endswith(f"--{window.segment - 1}"):
         relative_time_s = source_time_s - 60.0
       else:
