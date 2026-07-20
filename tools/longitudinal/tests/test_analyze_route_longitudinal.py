@@ -131,6 +131,6 @@ def test_anomaly_episodes_group_nearby_points():
 
 
 def test_parse_settings_keeps_only_longitudinal_context():
-  settings = parse_settings('{"FollowDistance": 1.5, "AccelerationProfile": "eco", "LaneWidth": 3.5}')
+  settings = parse_settings('{"standard_follow": [1.5, 1.2], "acceleration_profile": "eco", "LaneWidth": 3.5}')
 
-  assert settings == {"AccelerationProfile": "eco", "FollowDistance": 1.5}
+  assert settings == {"acceleration_profile": "eco", "standard_follow": [1.5, 1.2]}

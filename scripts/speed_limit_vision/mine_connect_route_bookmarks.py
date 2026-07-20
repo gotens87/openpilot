@@ -89,14 +89,18 @@ def load_route_bookmarks(clip_root: Path, log_id: str, event_types: str = "bookm
       if event_types == "vision"
       else ("rlog.zst", "rlog.bz2", "qlog.zst", "qlog.bz2")
     )
-    log_path = next((segment_dir / name for name in log_names if (segment_dir / name).exists()), None)
-    if log_path is None:
+    log_paths = [segment_dir / name for name in log_names if (segment_dir / name).exists()]
+    if not log_paths:
       continue
 
-    try:
-      events = list(log.Event.read_multiple_bytes(read_log_bytes(log_path)))
-    except Exception as exc:
-      print(f"{segment_dir.name}: skipping unreadable log {log_path.name}: {exc}")
+    events = None
+    for log_path in log_paths:
+      try:
+        events = list(log.Event.read_multiple_bytes(read_log_bytes(log_path)))
+        break
+      except Exception as exc:
+        print(f"{segment_dir.name}: skipping unreadable log {log_path.name}: {exc}")
+    if events is None:
       continue
     if not events:
       continue
@@ -229,7 +233,7 @@ def main() -> int:
     session_id = f"connect_{dongle_id}_{log_id}"
     bookmarks = load_route_bookmarks(clip_root, log_id, args.event_types)
     if not bookmarks:
-      print(f"{raw_route}: no bookmark events found in downloaded rlogs")
+      print(f"{raw_route}: no {args.event_types} events found in downloaded logs")
       continue
 
     print(f"{raw_route}: found {len(bookmarks)} event(s)")

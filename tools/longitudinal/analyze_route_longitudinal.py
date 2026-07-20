@@ -7,6 +7,7 @@ import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import numpy as np
 
@@ -59,6 +60,7 @@ class LongitudinalSample:
   curve_controller_active: bool = False
   cruise_target: float = 0.0
   desired_follow_distance: float = 0.0
+  personality: str = "unknown"
 
 
 @dataclass
@@ -89,6 +91,7 @@ class SegmentData:
   bookmarks: list[float]
   car_params: dict[str, Any] | None
   settings: dict[str, Any]
+  software: dict[str, Any] | None
 
 
 def safe_float(value: Any, default: float = 0.0) -> float:
@@ -305,6 +308,7 @@ def analyze_samples(samples: list[LongitudinalSample], label: str, event_time_s:
       round(max(sample.lead_distance for sample in lead_samples if sample.lead_distance is not None), 3),
     ],
     "sources": sorted(set(sources)),
+    "personalities": sorted({sample.personality for sample in relevant}),
     "minimumTtc": None if minimum_ttc is None else round(minimum_ttc, 3),
     "maxPlanJerk": round(max_plan_jerk, 3),
     "maxCommandJerk": round(max_command_jerk, 3),
@@ -331,10 +335,22 @@ def parse_settings(serialized: str) -> dict[str, Any]:
   if not isinstance(settings, dict):
     return {}
 
-  keywords = ("accel", "decel", "follow", "jerk", "longitudinal", "personality", "smooth", "truck")
+  exact_keys = {
+    "acceleration_profile",
+    "custom_accel_profile",
+    "deceleration_profile",
+    "longitudinalActuatorDelay",
+    "startAccel",
+    "stopAccel",
+    "stoppingDecelRate",
+    "taco_tune",
+    "truck_tuning",
+  }
   return {
     key: value for key, value in sorted(settings.items())
-    if any(keyword in key.lower() for keyword in keywords)
+    if key in exact_keys or key.endswith("_follow") or (
+      key.startswith(("aggressive_jerk_", "relaxed_jerk_", "standard_jerk_")) and not key.endswith("_via")
+    )
   }
 
 
@@ -353,6 +369,17 @@ def snapshot_car_params(CP: Any) -> dict[str, Any]:
   }
 
 
+def snapshot_software(init_data: Any) -> dict[str, Any]:
+  return {
+    "version": str(safe_attr(init_data, "version", "unknown")),
+    "gitCommit": str(safe_attr(init_data, "gitCommit", "unknown")),
+    "gitSrcCommit": str(safe_attr(init_data, "gitSrcCommit", "")),
+    "gitBranch": str(safe_attr(init_data, "gitBranch", "unknown")),
+    "gitRemote": str(safe_attr(init_data, "gitRemote", "unknown")),
+    "dirty": bool(safe_attr(init_data, "dirty", False)),
+  }
+
+
 def make_sample(segment: int, segment_start_ns: int, mono_time: int, latest: dict[str, Any]) -> LongitudinalSample | None:
   required = ("carState", "carControl", "controlsState", "radarState", "starpilotPlan", "longitudinalPlan")
   if not all(service in latest for service in required):
@@ -365,6 +392,7 @@ def make_sample(segment: int, segment_start_ns: int, mono_time: int, latest: dic
   starpilot_plan = latest["starpilotPlan"]
   long_plan = latest["longitudinalPlan"]
   car_output = latest.get("carOutput")
+  selfdrive_state = latest.get("selfdriveState")
   lead = radar_state.leadOne
   lead_two = radar_state.leadTwo
   command_accel = safe_float(safe_attr(safe_attr(car_control, "actuators"), "accel", 0.0))
@@ -410,33 +438,38 @@ def make_sample(segment: int, segment_start_ns: int, mono_time: int, latest: dic
     curve_controller_active=bool(safe_attr(starpilot_plan, "cscControllingSpeed", False)),
     cruise_target=safe_float(safe_attr(starpilot_plan, "vCruise", 0.0)),
     desired_follow_distance=safe_float(safe_attr(starpilot_plan, "desiredFollowDistance", 0.0)),
+    personality=str(safe_attr(selfdrive_state, "personality", "unknown")),
   )
 
 
 def analyze_segment(identifier: str, segment: int, mode: ReadMode) -> SegmentData:
   reader = LogReader(identifier, default_mode=mode, sort_by_time=True)
-  source = ",".join(Path(path).name or path.rsplit("/", 1)[-1] for path in reader.logreader_identifiers)
+  source = ",".join(Path(urlparse(path).path).name or path.rsplit("/", 1)[-1] for path in reader.logreader_identifiers)
   latest: dict[str, Any] = {}
   samples: list[LongitudinalSample] = []
-  bookmarks: list[float] = []
+  bookmark_mono_times: list[int] = []
   car_params = None
   settings: dict[str, Any] = {}
+  software = None
   segment_start_ns: int | None = None
 
   for msg in reader:
     mono_time = int(msg.logMonoTime)
-    if segment_start_ns is None:
-      segment_start_ns = mono_time
     which = msg.which()
+    if segment_start_ns is None and which in ("carState", "longitudinalPlan"):
+      segment_start_ns = mono_time
 
     if which in ("userBookmark", "bookmarkButton"):
-      bookmark_time = (mono_time - segment_start_ns) / 1e9
-      if not bookmarks or bookmark_time - bookmarks[-1] > 0.5:
-        bookmarks.append(bookmark_time)
+      if not bookmark_mono_times or (mono_time - bookmark_mono_times[-1]) / 1e9 > 0.5:
+        bookmark_mono_times.append(mono_time)
       continue
     if which == "carParams" and car_params is None:
       car_params = snapshot_car_params(msg.carParams)
-    if which in ("carState", "carControl", "carOutput", "controlsState", "radarState", "starpilotPlan", "longitudinalPlan"):
+    if which == "initData" and software is None:
+      software = snapshot_software(msg.initData)
+    if which in (
+      "carState", "carControl", "carOutput", "controlsState", "radarState", "selfdriveState", "starpilotPlan", "longitudinalPlan",
+    ):
       latest[which] = getattr(msg, which)
     if which == "starpilotPlan":
       settings = parse_settings(str(safe_attr(msg.starpilotPlan, "starpilotToggles", ""))) or settings
@@ -445,6 +478,10 @@ def analyze_segment(identifier: str, segment: int, mode: ReadMode) -> SegmentDat
       if sample is not None:
         samples.append(sample)
 
+  bookmarks = [] if segment_start_ns is None else [
+    (mono_time - segment_start_ns) / 1e9 for mono_time in bookmark_mono_times
+  ]
+
   return SegmentData(
     segment=segment,
     source=source,
@@ -452,6 +489,7 @@ def analyze_segment(identifier: str, segment: int, mode: ReadMode) -> SegmentDat
     bookmarks=bookmarks,
     car_params=car_params,
     settings=settings,
+    software=software,
   )
 
 
@@ -514,29 +552,34 @@ def resolve_segments(identifier: str, mode: ReadMode) -> tuple[str, list[tuple[i
 def analyze_route(identifier: str, mode: ReadMode, before: float, after: float, top: int) -> dict[str, Any]:
   route, segment_requests = resolve_segments(identifier, mode)
   segments = [analyze_segment(request, segment, mode) for segment, request in segment_requests]
-  reports: list[WindowReport] = []
+  bookmark_reports: list[WindowReport] = []
+  anomaly_reports: list[WindowReport] = []
 
   for segment_data in segments:
     for bookmark_number, bookmark_time in enumerate(segment_data.bookmarks, start=1):
       samples = window_samples(segment_data.samples, bookmark_time, before, after)
       if samples:
-        reports.append(analyze_samples(samples, f"bookmark {bookmark_number}", bookmark_time))
+        bookmark_reports.append(analyze_samples(samples, f"bookmark {bookmark_number}", bookmark_time))
 
     episode_times = anomaly_episode_times(segment_data.samples, top)
     for episode_number, event_time in enumerate(episode_times, start=1):
-      if any(abs(event_time - bookmark) <= before for bookmark in segment_data.bookmarks):
+      if any(bookmark - before <= event_time <= bookmark + after for bookmark in segment_data.bookmarks):
         continue
       samples = window_samples(segment_data.samples, event_time, min(before, 5.0), min(after, 2.0))
       if samples:
-        reports.append(analyze_samples(samples, f"route anomaly {episode_number}", event_time))
+        anomaly_reports.append(analyze_samples(samples, f"route anomaly {episode_number}", event_time))
 
+  anomaly_reports.sort(key=lambda report: report.findings[0].score if report.findings else 0.0, reverse=True)
+  reports = bookmark_reports + anomaly_reports[:top]
   reports.sort(key=lambda report: (report.segment, report.event_time_s, report.label))
   car_params = next((segment.car_params for segment in segments if segment.car_params), None)
   settings = next((segment.settings for segment in reversed(segments) if segment.settings), {})
+  software = next((segment.software for segment in segments if segment.software), None)
   return {
     "route": route,
     "carParams": car_params,
     "settings": settings,
+    "software": software,
     "segments": [
       {
         "segment": segment.segment,
@@ -552,6 +595,13 @@ def analyze_route(identifier: str, mode: ReadMode, before: float, after: float, 
 
 def print_report(payload: dict[str, Any]) -> None:
   print(f"route={payload['route']}")
+  software = payload.get("software")
+  if software:
+    source_commit = software["gitSrcCommit"] or software["gitCommit"]
+    print(
+      f"software={source_commit[:10]} branch={software['gitBranch']} version={software['version']} "
+      + f"dirty={software['dirty']}"
+    )
   car_params = payload.get("carParams")
   if car_params:
     vehicle_line = f"vehicle={car_params['carFingerprint']} brand={car_params['brand']}"
@@ -583,10 +633,14 @@ def print_report(payload: dict[str, Any]) -> None:
       f"speed={report['summary']['speedRangeMps']}m/s plan={report['summary']['planAccelRange']} "
       + f"cmd={report['summary']['commandAccelRange']} actual={report['summary']['actualAccelRange']}"
     )
-    lead_line = f"  leadRange={report['summary']['leadDistanceRange']}m sources={report['summary']['sources']}"
+    lead_line = (
+      f"  leadRange={report['summary']['leadDistanceRange']}m sources={report['summary']['sources']} "
+      + f"personalities={report['summary']['personalities']}"
+    )
     print(event_line)
     print(f"{window_line} {accel_line}")
-    print(f"{lead_line} minTTC={report['summary']['minimumTtc']}s")
+    minimum_ttc = report["summary"]["minimumTtc"]
+    print(f"{lead_line} minTTC={'n/a' if minimum_ttc is None else f'{minimum_ttc}s'}")
     for finding in report["findings"][:3]:
       print(f"  {finding['kind']}: {finding['severity']} score={finding['score']:.2f}")
       for item in finding["evidence"]:
@@ -599,7 +653,7 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--mode", choices=("auto", "qlog", "rlog"), default="auto")
   parser.add_argument("--before", type=float, default=DEFAULT_BOOKMARK_BEFORE, help="Seconds before each bookmark to inspect")
   parser.add_argument("--after", type=float, default=DEFAULT_BOOKMARK_AFTER, help="Seconds after each bookmark to inspect")
-  parser.add_argument("--top", type=int, default=5, help="Maximum route-wide anomaly episodes per segment")
+  parser.add_argument("--top", type=int, default=5, help="Maximum route-wide anomaly episodes across the route")
   parser.add_argument("--json-out", type=Path, help="Optional JSON report path")
   return parser.parse_args()
 
