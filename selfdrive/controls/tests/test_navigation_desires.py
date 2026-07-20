@@ -448,6 +448,53 @@ def test_nav_desires_nudgeless_only_when_engaged_blocks_keep_when_aol_only():
   assert helper.desire == log.Desire.none
 
 
+def test_turn_desire_fires_below_lane_change_speed_when_no_stop():
+  helper = DesireHelper()
+
+  helper.update(
+    make_car_state(vEgo=5.0, rightBlinker=True),
+    True,
+    0.0,
+    make_plan(),
+    make_toggles(use_turn_desires=True, minimum_lane_change_speed=10.0),
+  )
+
+  assert helper.desire == log.Desire.turnRight
+
+
+def test_turn_desire_held_while_stopping_for_red_light():
+  helper = DesireHelper()
+
+  helper.update(
+    make_car_state(vEgo=5.0, rightBlinker=True),
+    True,
+    0.0,
+    make_plan(redLight=True),
+    make_toggles(use_turn_desires=True, minimum_lane_change_speed=10.0),
+  )
+
+  # A turn desire here would extend the model past the stop line, so it is withheld.
+  assert helper.turn_stop_hold
+  assert helper.desire == log.Desire.none
+
+
+def test_turn_desire_released_after_stop_completes():
+  helper = DesireHelper()
+  toggles = make_toggles(use_turn_desires=True, minimum_lane_change_speed=10.0)
+
+  # Approaching the stop with the blinker on -> desire held.
+  helper.update(make_car_state(vEgo=5.0, rightBlinker=True), True, 0.0, make_plan(redLight=True), toggles)
+  assert helper.desire == log.Desire.none
+
+  # Car reaches the stop line -> hold clears (still standstill, so no desire yet).
+  helper.update(make_car_state(vEgo=0.0, rightBlinker=True, standstill=True), True, 0.0, make_plan(redLight=True), toggles)
+  assert not helper.turn_stop_hold
+
+  # Pulling away through the turn, blinker still on, stop cleared -> turn desire resumes.
+  helper.update(make_car_state(vEgo=2.0, rightBlinker=True), True, 0.0, make_plan(), toggles)
+  assert helper.desire == log.Desire.turnRight
+
+
 def test_nav_desires_disabled_leave_desire_unchanged():
   helper = DesireHelper()
   helper.nav_desires_allowed = False

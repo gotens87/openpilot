@@ -61,6 +61,11 @@ class DesireHelper:
     self.prev_one_blinker = False
     self.desire = log.Desire.none
 
+    # Suppress the turn desire while stopping for a light/sign so the model keeps its
+    # stop plan (a turn desire extends model_length and rolls the car past the stop
+    # line). Released once the car has actually stopped: "stop first, then turn."
+    self.turn_stop_hold = False
+
     self.lane_change_completed = False
 
     self.lane_change_wait_timer = 0.0
@@ -237,6 +242,18 @@ class DesireHelper:
     v_ego = carstate.vEgo
     one_blinker = carstate.leftBlinker != carstate.rightBlinker
     below_lane_change_speed = v_ego < starpilot_toggles.minimum_lane_change_speed
+
+    # Hold the turn desire while a stop is in progress, release it once stopped. The
+    # plan message is a cycle behind the model, so its stop flags reflect the model's
+    # stop intent from before this frame's desire could inflate model_length.
+    stop_imminent = (bool(getattr(starpilotPlan, "redLight", False))
+                     or bool(getattr(starpilotPlan, "forcingStop", False))
+                     or bool(getattr(starpilotPlan, "stopSignConfirmed", False)))
+    if carstate.standstill or not one_blinker:
+      self.turn_stop_hold = False
+    elif stop_imminent:
+      self.turn_stop_hold = True
+
     cruise_state = getattr(carstate, "cruiseState", None)
     controls_enabled = bool(getattr(cruise_state, "enabled", False)) if controls_enabled is None else bool(controls_enabled)
     nudgeless_enabled = self._nudgeless_enabled(starpilot_toggles, controls_enabled)
@@ -316,7 +333,8 @@ class DesireHelper:
 
     self.prev_one_blinker = one_blinker
 
-    if lateral_active and one_blinker and below_lane_change_speed and not carstate.standstill and starpilot_toggles.use_turn_desires:
+    if lateral_active and one_blinker and below_lane_change_speed and not carstate.standstill \
+        and starpilot_toggles.use_turn_desires and not self.turn_stop_hold:
       self.turn_direction = TurnDirection.turnLeft if carstate.leftBlinker else TurnDirection.turnRight
       self.desire = TURN_DESIRES[self.turn_direction]
     else:
