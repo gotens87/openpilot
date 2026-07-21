@@ -14,7 +14,8 @@ from opendbc.car.hyundai.carcontroller import CarController, Ioniq6LongitudinalT
                                              update_ioniq_6_longitudinal_tuning, \
                                              update_genesis_g90_longitudinal_tuning, egmp_dynamic_longitudinal_tuning, \
                                              should_reset_ev6_gt_line_longitudinal_tuning, reset_ev6_gt_line_longitudinal_tuning, \
-                                             get_angle_smoothing_alpha, should_use_ev6_gt_line_stop_direct_tracking
+                                             direct_angle_request_allowed, get_angle_smoothing_alpha, \
+                                             should_use_ev6_gt_line_stop_direct_tracking
 from opendbc.car.hyundai.carstate import CarState, decode_canfd_camera_lead, decode_ioniq_6_blindspot_radar_state
 from opendbc.car.hyundai.interface import CarInterface
 from opendbc.car.hyundai import hyundaican, hyundaicanfd
@@ -298,6 +299,14 @@ class TestHyundaiFingerprint:
     assert get_angle_smoothing_alpha(ev9_cp, 13.8) == pytest.approx(get_angle_smoothing_alpha(other_cp, 13.8))
     assert get_angle_smoothing_alpha(ev9_cp, 20.0) == pytest.approx(get_angle_smoothing_alpha(other_cp, 20.0))
     assert get_angle_smoothing_alpha(other_cp, 20.0) == pytest.approx(0.0)
+
+  def test_ev9_direct_angle_waits_for_safety_envelope(self):
+    CP = CarInterface.get_params(CAR.KIA_EV9, gen_empty_fingerprint(), [], True, False, False, None)
+    controller = CarController(DBC[CP.carFingerprint], CP)
+
+    assert not direct_angle_request_allowed(8.47, 155.5, 155.6, True, controller.BASELINE_VM, controller.params)
+    assert direct_angle_request_allowed(8.47, 140.0, 140.0, True, controller.BASELINE_VM, controller.params)
+    assert not direct_angle_request_allowed(8.47, 140.0, 140.0, False, controller.BASELINE_VM, controller.params)
 
   def test_ev9_matches_other_angle_platform_standstill_behavior(self):
     ev9_cp = CarInterface.get_params(CAR.KIA_EV9, gen_empty_fingerprint(), [], False, False, False, None)

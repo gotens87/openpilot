@@ -752,6 +752,21 @@ class TestHyundaiCanfdLKASteeringAltAngleLongEV(HyundaiLongitudinalBase, TestHyu
       with self.subTest(address=address):
         self.assertFalse(self._tx(common.make_msg(1 if address != 0x51 else 0, address, length)))
 
+  def test_ccnc_angle_long_uses_second_mdps_angle(self):
+    self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCanfd, self.SAFETY_PARAM | HyundaiSafetyFlags.CCNC)
+    self.safety.init_tests()
+
+    angle = -38.5
+    for _ in range(common.MAX_SAMPLE_VALS):
+      self._rx(self.packer.make_can_msg_safety("MDPS", self.PT_BUS, {
+        "STEERING_ANGLE": 0.0,
+        "STEERING_ANGLE_2": angle,
+      }))
+
+    expected = round(angle * self.DEG_TO_CAN)
+    self.assertEqual(self.safety.get_angle_meas_min(), expected)
+    self.assertEqual(self.safety.get_angle_meas_max(), expected)
+
   def _accel_msg(self, accel, aeb_req=False, aeb_decel=0):
     values = {
       "aReqRaw": accel,
