@@ -87,6 +87,7 @@ DASHBOARD_TIME_SOURCE_FILESYSTEM = "filesystem"
 DASHBOARD_MIN_VALID_ROUTE_TIME = datetime(2026, 1, 1)
 DASHBOARD_ROUTE_FUTURE_GRACE_SECONDS = 6 * 60 * 60
 DASHBOARD_LOCAL_ROUTE_MAX_AGE_SECONDS = 45 * 24 * 60 * 60
+DASHBOARD_ROUTE_TIME_REPAIR_THRESHOLD_SECONDS = 5 * 60
 
 XOR_KEY = "s8#pL3*Xj!aZ@dWq"
 
@@ -992,6 +993,19 @@ def _select_dashboard_segment_candidate(candidates):
   return next((candidate for candidate in candidates if _segment_has_dashboard_log(candidate)), candidates[0])
 
 
+def _estimate_route_started_at(segments):
+  estimates = []
+  for segment in segments:
+    segment_num = max(0, _safe_int(segment.get("num", 0), 0))
+    # Segment directory mtimes normally land at the end of their one-minute segment.
+    estimate = _segment_mtime(segment.get("path")) - (segment_num + 1) * 60
+    parsed = _timestamp_to_dashboard_time(estimate, require_recent=True)
+    if parsed is not None:
+      estimates.append(parsed.timestamp())
+  # Dashboard analysis can touch a segment directory later, but cannot make it older.
+  return datetime.fromtimestamp(min(estimates)) if estimates else None
+
+
 def _list_dashboard_routes(footage_paths, limit=DASHBOARD_ROUTE_SCAN_LIMIT):
   routes = {}
 
@@ -1034,11 +1048,7 @@ def _list_dashboard_routes(footage_paths, limit=DASHBOARD_ROUTE_SCAN_LIMIT):
     if not segments:
       continue
 
-    first_segment = next((segment for segment in segments if segment["num"] == 0), segments[0])
-    try:
-      started_at = _timestamp_to_dashboard_time(first_segment["path"].stat().st_mtime, require_recent=True)
-    except OSError:
-      started_at = None
+    started_at = _estimate_route_started_at(segments)
 
     route_infos.append({
       "name": route["name"],
@@ -1418,14 +1428,16 @@ def _public_drive(drive, is_metric):
 def _route_time_range(route_info, duration_seconds):
   modified_at = _safe_float(route_info.get("modifiedAt", 0.0), 0.0)
   duration_seconds = max(0.0, _safe_float(duration_seconds, 0.0))
+  started_at = route_info.get("startedAt")
+  if _dashboard_time_is_valid(started_at, require_recent=True):
+    end_time = started_at + timedelta(seconds=duration_seconds) if duration_seconds > 0.0 else None
+    return _jsonable_time(started_at), _jsonable_time(end_time)
+
   modified_time = _timestamp_to_dashboard_time(modified_at, require_recent=True)
   if modified_time is not None and duration_seconds > 0.0:
     end_time = modified_time
     start_time = end_time - timedelta(seconds=duration_seconds)
     return _jsonable_time(start_time), _jsonable_time(end_time)
-  started_at = route_info.get("startedAt")
-  if _dashboard_time_is_valid(started_at, require_recent=True):
-    return _jsonable_time(started_at), _jsonable_time(modified_time) if modified_time is not None else ""
   return "", ""
 
 
@@ -2414,6 +2426,19 @@ def _drive_time_reliable_for_persistence(drive):
   return bool(date_text)
 
 
+def _filesystem_route_time_changed(existing_entry, next_entry):
+  if (
+    str(existing_entry.get("timeSource", "") or "") != DASHBOARD_TIME_SOURCE_FILESYSTEM
+    or str(next_entry.get("timeSource", "") or "") != DASHBOARD_TIME_SOURCE_FILESYSTEM
+  ):
+    return False
+  existing_date = _coerce_dashboard_time(existing_entry.get("date", ""))
+  next_date = _coerce_dashboard_time(next_entry.get("date", ""))
+  if existing_date is None or next_date is None:
+    return False
+  return abs((next_date - existing_date).total_seconds()) > DASHBOARD_ROUTE_TIME_REPAIR_THRESHOLD_SECONDS
+
+
 def _update_dashboard_persistent_stats(params_obj, drives, wall_now):
   stats = _load_dashboard_persistent_stats(params_obj)
   before = json.dumps(stats, sort_keys=True, separators=(",", ":"))
@@ -2453,6 +2478,7 @@ def _update_dashboard_persistent_stats(params_obj, drives, wall_now):
       next_entry["analysisVersion"] = DASHBOARD_ROUTE_ANALYSIS_VERSION
     existing_entry = routes.get(route_name)
     if isinstance(existing_entry, dict):
+      replace_filesystem_time = _filesystem_route_time_changed(existing_entry, next_entry)
       existing_distance = max(0.0, _safe_float(existing_entry.get("distanceMeters", 0.0), 0.0))
       next_distance = max(0.0, _safe_float(next_entry.get("distanceMeters", 0.0), 0.0))
       existing_current = _safe_float(existing_entry.get("modifiedAt", 0.0), 0.0) >= _safe_float(next_entry.get("modifiedAt", 0.0), 0.0)
@@ -2471,11 +2497,14 @@ def _update_dashboard_persistent_stats(params_obj, drives, wall_now):
         next_entry["distanceMeters"] = existing_distance
         existing_duration = _safe_int(existing_entry.get("duration", 0), 0)
         next_entry["duration"] = existing_duration if existing_attention_known else max(existing_duration, next_entry["duration"])
-        if existing_attention_known and str(existing_entry.get("date", "")).strip():
+        if existing_attention_known and str(existing_entry.get("date", "")).strip() and not replace_filesystem_time:
           next_entry["date"] = str(existing_entry.get("date", "")).strip()
           next_entry["timeSource"] = str(existing_entry.get("timeSource", "") or next_entry["timeSource"])
-        if str(existing_entry.get("endDate", "")).strip():
+        if str(existing_entry.get("endDate", "")).strip() and not replace_filesystem_time:
           next_entry["endDate"] = str(existing_entry.get("endDate", "")).strip()
+        elif replace_filesystem_time:
+          corrected_start = _coerce_dashboard_time(next_entry.get("date", ""))
+          next_entry["endDate"] = _jsonable_time(corrected_start + timedelta(seconds=next_entry["duration"])) if corrected_start else ""
         next_entry["engagedSeconds"] = max(0.0, _safe_float(existing_entry.get("engagedSeconds", 0.0), 0.0))
         next_entry["distractedMoments"] = max(0, _safe_int(existing_entry.get("distractedMoments", 0), 0))
         next_entry["unresponsiveMoments"] = max(0, _safe_int(existing_entry.get("unresponsiveMoments", 0), 0))

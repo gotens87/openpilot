@@ -113,6 +113,60 @@ def test_drive_stats_falls_back_to_local_totals_and_computed_records():
   assert data.records[5].value == "2 drives"
 
 
+def test_drive_stats_repairs_touched_filesystem_routes_without_moving_them_to_today():
+  params = FakeParams({
+    "ApiCache_DriveStats": {
+      "week": {"distance": 302.9, "routes": 31, "minutes": 467},
+    },
+    "GalaxyDashboardStats": {
+      "routes": {
+        "000011e4--2ed59ee965": {
+          "date": "2026-07-18T08:59:31",
+          "distanceMeters": 1609.344,
+          "duration": 600,
+          "timeSource": "log",
+        },
+        "000011e5--92dc4759b2": {
+          "date": "2026-07-20T11:33:49",
+          "distanceMeters": 16093.44,
+          "duration": 1800,
+          "timeSource": "filesystem",
+        },
+        "000011e6--8b54c54356": {
+          "date": "2026-07-19T07:03:36",
+          "distanceMeters": 3218.688,
+          "duration": 900,
+          "timeSource": "log",
+        },
+        "000011e8--09c2203d2e": {
+          "date": "2026-07-19T18:17:44",
+          "distanceMeters": 1609.344,
+          "duration": 600,
+          "timeSource": "log",
+        },
+        "000011e9--a3a4dcd6ef": {
+          "date": "2026-07-20T11:38:53",
+          "distanceMeters": 32186.88,
+          "duration": 1800,
+          "timeSource": "filesystem",
+        },
+        "000011ea--00b28940d5": {
+          "date": "2026-07-20T02:18:17",
+          "distanceMeters": 8046.72,
+          "duration": 900,
+          "timeSource": "log",
+        },
+      },
+    },
+  })
+
+  data = load_drive_stats_data(params, now=datetime(2026, 7, 20, 12, 0, 0))
+
+  assert data.past_week.distance == 302.9
+  assert round(data.this_week.distance, 1) == 25.0
+  assert round(data.daily_distance[0].distance, 1) == 25.0
+
+
 def test_drive_stats_uses_clean_empty_record_labels():
   data = load_drive_stats_data(FakeParams({}), now=datetime(2026, 7, 20, 12, 0, 0))
 

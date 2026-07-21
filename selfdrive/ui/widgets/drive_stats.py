@@ -63,6 +63,7 @@ class DriveStatsData:
 
 @dataclass
 class _RouteStat:
+  name: str
   date: datetime
   distance_meters: float
   duration: int
@@ -70,6 +71,7 @@ class _RouteStat:
   attention_known: bool
   clean: bool
   undistracted: bool
+  time_source: str
 
 
 def _json_object(value: Any) -> dict[str, Any]:
@@ -128,6 +130,66 @@ def _summary_has_data(summary: DriveSummary) -> bool:
   return summary.drives > 0 or summary.distance > 0.0 or summary.hours > 0.0
 
 
+def _route_counter(route_name: str) -> int | None:
+  prefix = route_name.split("--", 1)[0]
+  try:
+    return int(prefix, 16) if len(prefix) == 8 else None
+  except ValueError:
+    return None
+
+
+def _repair_filesystem_route_dates(routes: list[_RouteStat]) -> None:
+  sequenced = [
+    (counter, route)
+    for route in routes
+    if (counter := _route_counter(route.name)) is not None
+  ]
+  sequenced.sort(key=lambda item: item[0])
+  if sum(route.time_source == "log" for _, route in sequenced) < 2:
+    return
+
+  previous_anchors = []
+  previous_anchor = None
+  for counter, route in sequenced:
+    previous_anchors.append(previous_anchor)
+    if route.time_source == "log":
+      previous_anchor = (counter, route)
+
+  following_anchors = [None] * len(sequenced)
+  following_anchor = None
+  for index in range(len(sequenced) - 1, -1, -1):
+    counter, route = sequenced[index]
+    following_anchors[index] = following_anchor
+    if route.time_source == "log":
+      following_anchor = (counter, route)
+
+  for index, (counter, route) in enumerate(sequenced):
+    if route.time_source != "filesystem":
+      continue
+
+    previous = previous_anchors[index]
+    following = following_anchors[index]
+    if previous is None or following is None:
+      continue
+
+    previous_counter, previous_route = previous
+    following_counter, following_route = following
+    if previous_route.date > following_route.date or previous_route.date <= route.date <= following_route.date:
+      continue
+
+    if following_counter == counter + 1:
+      inferred = following_route.date - timedelta(seconds=route.duration + 5 * 60)
+    elif previous_counter == counter - 1:
+      inferred = previous_route.date + timedelta(seconds=previous_route.duration + 5 * 60)
+    else:
+      progress = (counter - previous_counter) / (following_counter - previous_counter)
+      inferred = previous_route.date + (following_route.date - previous_route.date) * progress
+
+    lower_bound = previous_route.date + timedelta(seconds=1)
+    upper_bound = following_route.date - timedelta(seconds=1)
+    route.date = min(max(inferred, lower_bound), upper_bound)
+
+
 def _load_routes(galaxy_stats: dict[str, Any]) -> list[_RouteStat]:
   raw_routes = galaxy_stats.get("routes", {})
   if not isinstance(raw_routes, dict):
@@ -147,6 +209,7 @@ def _load_routes(galaxy_stats: dict[str, Any]) -> list[_RouteStat]:
     distracted = max(0, int(_number(entry.get("distractedMoments", 0))))
     unresponsive = max(0, int(_number(entry.get("unresponsiveMoments", 0))))
     routes.append(_RouteStat(
+      name=str(route_name),
       date=route_date,
       distance_meters=max(0.0, _number(entry.get("distanceMeters", 0.0))),
       duration=max(0, int(_number(entry.get("duration", 0)))),
@@ -154,7 +217,9 @@ def _load_routes(galaxy_stats: dict[str, Any]) -> list[_RouteStat]:
       attention_known=attention_known,
       clean=bool(entry.get("clean", unresponsive == 0)),
       undistracted=bool(entry.get("undistracted", distracted == 0)),
+      time_source=str(entry.get("timeSource", "") or ""),
     ))
+  _repair_filesystem_route_dates(routes)
   return sorted(routes, key=lambda route: route.date)
 
 
@@ -499,44 +564,45 @@ class DriveStatsDashboard:
     cx = rect.x + rect.width / 2
     cy = rect.y + rect.height / 2
     color = PURPLE
-    thickness = 2.5
+    scale = min(rect.width, rect.height) / 64.0
+    thickness = 2.5 * scale
 
     def line(x1: float, y1: float, x2: float, y2: float) -> None:
       rl.draw_line_ex(rl.Vector2(x1, y1), rl.Vector2(x2, y2), thickness, color)
 
     if index == 0:
-      line(cx - 13, cy, cx + 12, cy)
-      line(cx + 12, cy, cx + 5, cy - 7)
-      line(cx + 12, cy, cx + 5, cy + 7)
+      line(cx - 13 * scale, cy, cx + 12 * scale, cy)
+      line(cx + 12 * scale, cy, cx + 5 * scale, cy - 7 * scale)
+      line(cx + 12 * scale, cy, cx + 5 * scale, cy + 7 * scale)
     elif index == 1:
-      rl.draw_circle_lines(int(cx), int(cy), 13, color)
-      rl.draw_circle_lines(int(cx), int(cy), 12, color)
-      line(cx - 7, cy, cx - 2, cy + 5)
-      line(cx - 2, cy + 5, cx + 8, cy - 7)
+      rl.draw_circle_lines(int(cx), int(cy), 13 * scale, color)
+      rl.draw_circle_lines(int(cx), int(cy), 12 * scale, color)
+      line(cx - 7 * scale, cy, cx - 2 * scale, cy + 5 * scale)
+      line(cx - 2 * scale, cy + 5 * scale, cx + 8 * scale, cy - 7 * scale)
     elif index == 2:
-      line(cx - 13, cy - 12, cx - 13, cy + 12)
-      line(cx - 13, cy + 12, cx + 13, cy + 12)
-      line(cx - 9, cy + 6, cx - 2, cy - 2)
-      line(cx - 2, cy - 2, cx + 4, cy + 3)
-      line(cx + 4, cy + 3, cx + 13, cy - 8)
+      line(cx - 13 * scale, cy - 12 * scale, cx - 13 * scale, cy + 12 * scale)
+      line(cx - 13 * scale, cy + 12 * scale, cx + 13 * scale, cy + 12 * scale)
+      line(cx - 9 * scale, cy + 6 * scale, cx - 2 * scale, cy - 2 * scale)
+      line(cx - 2 * scale, cy - 2 * scale, cx + 4 * scale, cy + 3 * scale)
+      line(cx + 4 * scale, cy + 3 * scale, cx + 13 * scale, cy - 8 * scale)
     elif index == 3:
       points = (
-        (cx + 2, cy - 15), (cx - 10, cy + 2), (cx - 2, cy + 2),
-        (cx - 5, cy + 15), (cx + 11, cy - 5), (cx + 3, cy - 5),
+        (cx + 2 * scale, cy - 15 * scale), (cx - 10 * scale, cy + 2 * scale), (cx - 2 * scale, cy + 2 * scale),
+        (cx - 5 * scale, cy + 15 * scale), (cx + 11 * scale, cy - 5 * scale), (cx + 3 * scale, cy - 5 * scale),
       )
       for point_index, point in enumerate(points):
         next_point = points[(point_index + 1) % len(points)]
         line(point[0], point[1], next_point[0], next_point[1])
     elif index == 4:
       points = (
-        (cx, cy - 14), (cx + 12, cy - 9), (cx + 10, cy + 3),
-        (cx, cy + 14), (cx - 10, cy + 3), (cx - 12, cy - 9),
+        (cx, cy - 14 * scale), (cx + 12 * scale, cy - 9 * scale), (cx + 10 * scale, cy + 3 * scale),
+        (cx, cy + 14 * scale), (cx - 10 * scale, cy + 3 * scale), (cx - 12 * scale, cy - 9 * scale),
       )
       for point_index, point in enumerate(points):
         next_point = points[(point_index + 1) % len(points)]
         line(point[0], point[1], next_point[0], next_point[1])
-      line(cx - 5, cy, cx - 1, cy + 4)
-      line(cx - 1, cy + 4, cx + 6, cy - 4)
+      line(cx - 5 * scale, cy, cx - scale, cy + 4 * scale)
+      line(cx - scale, cy + 4 * scale, cx + 6 * scale, cy - 4 * scale)
     else:
       def sparkle(x: float, y: float, radius: float) -> None:
         inner = radius * 0.22
@@ -550,9 +616,9 @@ class DriveStatsDashboard:
           next_point = points[(point_index + 1) % len(points)]
           line(point[0], point[1], next_point[0], next_point[1])
 
-      sparkle(cx + 3, cy + 2, 10)
-      sparkle(cx - 9, cy - 9, 5)
-      sparkle(cx + 12, cy - 10, 4)
+      sparkle(cx + 3 * scale, cy + 2 * scale, 10 * scale)
+      sparkle(cx - 9 * scale, cy - 9 * scale, 5 * scale)
+      sparkle(cx + 12 * scale, cy - 10 * scale, 4 * scale)
 
   def _draw_fitted_centered(self, text: str, rect: rl.Rectangle, font_size: int, minimum_size: int, color: rl.Color) -> None:
     size = font_size
@@ -685,19 +751,24 @@ class DriveStatsDashboard:
       if row_index > 0:
         rl.draw_line(int(rect.x + 24), int(row_y), int(rect.x + rect.width - 24), int(row_y), TRACK_COLOR)
 
-      icon_size = min(84.0, row_height - 44)
+      icon_size = min(120.0, row_height - 34)
       icon_rect = rl.Rectangle(rect.x + 28, row_y + (row_height - icon_size) / 2, icon_size, icon_size)
       self._draw_record_icon(record_index, icon_rect)
 
-      text_x = rect.x + 132
+      text_x = rect.x + 170
       content_center_y = row_y + row_height / 2
-      title_pos = rl.Vector2(text_x, content_center_y - 56)
-      rl.draw_text_ex(self._font_medium, record.title, title_pos, 31, 0, MUTED_COLOR)
+      title_pos = rl.Vector2(text_x, content_center_y - 66)
+      rl.draw_text_ex(self._font_medium, record.title, title_pos, 38, 0, MUTED_COLOR)
 
-      value_pos = rl.Vector2(text_x, content_center_y - 8)
-      rl.draw_text_ex(self._font_bold, record.value, value_pos, 44, 0, TEXT_COLOR)
+      value_pos = rl.Vector2(text_x, content_center_y - 10)
+      rl.draw_text_ex(self._font_bold, record.value, value_pos, 56, 0, TEXT_COLOR)
 
-      detail_size = measure_text_cached(self._font_medium, record.detail, 27)
-      detail_x = max(text_x + 240, rect.x + rect.width - detail_size.x - 30)
-      detail_pos = rl.Vector2(detail_x, content_center_y - detail_size.y / 2 + 12)
-      rl.draw_text_ex(self._font_medium, record.detail, detail_pos, 27, 0, MUTED_COLOR)
+      detail_font_size = 34
+      detail_min_x = text_x + 250
+      detail_width = rect.x + rect.width - detail_min_x - 30
+      while detail_font_size > 29 and measure_text_cached(self._font_medium, record.detail, detail_font_size).x > detail_width:
+        detail_font_size -= 1
+      detail_size = measure_text_cached(self._font_medium, record.detail, detail_font_size)
+      detail_x = rect.x + rect.width - detail_size.x - 30
+      detail_pos = rl.Vector2(detail_x, content_center_y + 52)
+      rl.draw_text_ex(self._font_medium, record.detail, detail_pos, detail_font_size, 0, MUTED_COLOR)

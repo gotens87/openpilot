@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import sys
 
 from pathlib import Path
@@ -455,6 +456,27 @@ def test_route_listing_prefers_segment_candidates_with_logs(tmp_path):
   routes = utilities._list_dashboard_routes([hd_root, standard_root])
 
   assert routes[0]["segments"][0]["path"] == standard_segment
+
+
+def test_route_listing_uses_all_segment_times_when_segment_zero_was_touched(tmp_path):
+  route_start = utilities.datetime(2026, 7, 18, 7, 19, 0)
+  route_name = "000011e3--6e01289631"
+  for segment_num in range(2):
+    segment = tmp_path / f"{route_name}--{segment_num}"
+    segment.mkdir()
+    segment_end = route_start.timestamp() + (segment_num + 1) * 60
+    os.utime(segment, (segment_end, segment_end))
+
+  touched_segment = tmp_path / f"{route_name}--0"
+  touched_time = utilities.datetime(2026, 7, 20, 12, 8, 38).timestamp()
+  os.utime(touched_segment, (touched_time, touched_time))
+
+  routes = utilities._list_dashboard_routes([tmp_path])
+
+  assert routes[0]["startedAt"] == route_start
+  start, end = utilities._route_time_range(routes[0], 180)
+  assert start == "2026-07-18T07:19:00"
+  assert end == "2026-07-18T07:22:00"
 
 
 def test_top_models_are_ranked_from_persisted_usage_not_favorites():
@@ -1335,6 +1357,52 @@ def test_invalid_filesystem_time_requests_reanalysis():
   }
 
   assert utilities._analysis_candidates([route], stats) == [route]
+
+
+def test_corrected_filesystem_time_replaces_touched_persisted_time_without_losing_stats():
+  params = FakeParams({
+    utilities.DASHBOARD_PERSISTENT_STATS_PARAM: {
+      "routes": {
+        "000011e5--92dc4759b2": {
+          "date": "2026-07-20T11:33:49",
+          "endDate": "2026-07-20T12:08:38",
+          "distanceMeters": 45919.2,
+          "duration": 2089,
+          "engagedSeconds": 1200.0,
+          "model": "Pop Model V2",
+          "modifiedAt": 100.0,
+          "timeSource": utilities.DASHBOARD_TIME_SOURCE_FILESYSTEM,
+          "attentionKnown": True,
+          "analysisComplete": True,
+          "analysisVersion": utilities.DASHBOARD_ROUTE_ANALYSIS_VERSION,
+        },
+      },
+    },
+  })
+  corrected_shell = {
+    "name": "000011e5--92dc4759b2",
+    "date": "2026-07-19T04:55:02",
+    "endDate": "2026-07-19T05:30:02",
+    "distanceMeters": 0.0,
+    "duration": 2100,
+    "engagedSeconds": 0.0,
+    "model": "Unknown model",
+    "segmentCount": 35,
+    "routeModifiedAt": 100.0,
+    "timeSource": utilities.DASHBOARD_TIME_SOURCE_FILESYSTEM,
+    "attentionKnown": False,
+    "analysisComplete": False,
+    "analysisVersion": 0,
+  }
+
+  stats = utilities._update_dashboard_persistent_stats(params, [corrected_shell], wall_now=1000.0)
+  corrected = stats["routes"]["000011e5--92dc4759b2"]
+
+  assert corrected["date"] == "2026-07-19T04:55:02"
+  assert corrected["endDate"] == "2026-07-19T05:29:51"
+  assert corrected["distanceMeters"] == 45919.2
+  assert corrected["duration"] == 2089
+  assert corrected["model"] == "Pop Model V2"
 
 
 def test_github_urls_accept_owner_repo_origin():
