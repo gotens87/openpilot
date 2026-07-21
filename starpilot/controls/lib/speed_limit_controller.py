@@ -495,7 +495,5 @@ class SpeedLimitController:
         self.overridden_speed = float(np.clip(self.overridden_speed, target_to_use + offset, v_cruise + v_cruise_diff))
       elif self.starpilot_toggles.speed_limit_controller_override_set_speed:
         self.overridden_speed = v_cruise + v_cruise_diff
-
-      self.source = "None"
     else:
       self.overridden_speed = 0
