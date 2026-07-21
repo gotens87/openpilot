@@ -53,6 +53,20 @@ LANE_CHANGE_ARREST_JERK_FLOOR = 0.6
 # and noise-scale lag inside the deadband gets no boost (kills the fast-down/slow-up sawtooth).
 LANE_CHANGE_ARREST_PURSUIT_TAU = 0.2   # s
 LANE_CHANGE_ARREST_GAP_DEADBAND = 5e-5  # 1/m
+# The pursuit engage test compares the model's step against a FIXED entry direction
+# (latched once per maneuver), not the command's live sign: on a curve the arrest has to
+# swing back through zero and past it to reach the new lane's own steady curve-following
+# curvature, so by the time the deep arrest is happening the command has already crossed
+# zero onto the same side the model is diving toward — a live-sign reference reads that as
+# "still winding up" and never engages, leaving the command stranded ~4x further behind the
+# model than on a straight road (curvelanechange rlog 2026-07-21: lag grew to -0.0013 1/m
+# and didn't close until 0.8s after the state machine had already exited). A fixed
+# direction has no such blind spot. Raw per-frame engagement then flickers on 20 Hz model
+# noise once the command is moving fast enough to overtake-and-oscillate around the model
+# (jerk_factor sawtoothing 0.07-0.59 in the same rlog's tail) — LANE_CHANGE_ARREST_RISE_TAU
+# smooths only the RISE of the applied jerk factor (never the fall, so genuine disengagement
+# is instant) to absorb that flicker without dulling the pursuit's response to a real gap.
+LANE_CHANGE_ARREST_RISE_TAU = 0.2  # s
 
 # Low-speed turn-intent curvature hold. Approaching a turn with the blinker on, the
 # model's time-based plan collapses as the car slows to a stop: desiredCurvature decays
@@ -304,6 +318,8 @@ class Controls:
     self.curvature = 0.0
     self.desired_curvature = 0.0
     self.lc_smooth_release = 0.0
+    self.lc_entry_sign = 0.0
+    self.lc_arrest_jerk_factor = 1.0
     self.turn_hold_curvature = 0.0
     self.turn_hold_standstill_t = 0.0
     self.turn_hold_swept = 0.0
@@ -594,25 +610,40 @@ class Controls:
       # lane center before it can build enough counter-curvature.
       if in_lane_change:
         self.lc_smooth_release = LANE_CHANGE_SMOOTH_RELEASE_T
+        # Latch the entry's direction once, on the first meaningful model step, and hold it
+        # for the whole maneuver — this is what "unwinding" is measured against, not the
+        # command's live sign (see LANE_CHANGE_ARREST_PURSUIT_TAU comment above).
+        if self.lc_entry_sign == 0.0 and abs(new_desired_curvature - self.desired_curvature) > 2e-4:
+          self.lc_entry_sign = math.copysign(1.0, new_desired_curvature - self.desired_curvature)
       else:
         self.lc_smooth_release = max(self.lc_smooth_release - DT_CTRL, 0.0)
+        if self.lc_smooth_release <= 0.0:
+          self.lc_entry_sign = 0.0
       if self.lc_smooth_release > 0.0:
         release = 1.0 - self.lc_smooth_release / LANE_CHANGE_SMOOTH_RELEASE_T  # 0 in maneuver → 1 after
         jerk_factor = set_jerk + (1.0 - set_jerk) * release
-        # When the model is unwinding curvature (reducing the lane-change curvature magnitude)
-        # and the entry cap would make the command lag it, grant extra rate proportional to the
-        # lag so the car can stop on the new lane center. Applies only to the unwind direction;
-        # the entry ramp keeps the full pace smoothness. Robust to double lane changes (no
-        # baseline). Pursuit (lag/tau) rather than a fixed floor so the crest stays smooth.
-        model_unwinding = abs(new_desired_curvature) < abs(self.desired_curvature) and \
-            math.copysign(1.0, new_desired_curvature - self.desired_curvature) == -math.copysign(1.0, self.desired_curvature) and \
-            abs(self.desired_curvature) > 1e-4
+        # When the model is unwinding curvature (its step opposes the latched entry
+        # direction) and the entry cap would make the command lag it, grant extra rate
+        # proportional to the lag so the car can stop on the new lane center — including a
+        # curve's own steady curvature, which the arrest must swing through zero to reach.
+        # Applies only to the unwind direction; the entry ramp keeps the full pace
+        # smoothness. Robust to double lane changes (entry sign re-latches per maneuver).
+        step = new_desired_curvature - self.desired_curvature
+        model_unwinding = self.lc_entry_sign != 0.0 and abs(step) > LANE_CHANGE_ARREST_GAP_DEADBAND and \
+            math.copysign(1.0, step) == -self.lc_entry_sign
         if model_unwinding:
           v_lim = max(CS.vEgo, 1.0)
-          gap = max(abs(new_desired_curvature - self.desired_curvature) - LANE_CHANGE_ARREST_GAP_DEADBAND, 0.0)
+          gap = max(abs(step) - LANE_CHANGE_ARREST_GAP_DEADBAND, 0.0)
           jf_gap = (gap / LANE_CHANGE_ARREST_PURSUIT_TAU) * v_lim ** 2 / MAX_LATERAL_JERK
           arrest_cap = LANE_CHANGE_ARREST_JERK_FLOOR + (1.0 - LANE_CHANGE_ARREST_JERK_FLOOR) * release
           jerk_factor = max(jerk_factor, min(arrest_cap, jerk_factor + jf_gap))
+        # Smooth only the RISE of the applied factor so pursuit re-engaging on 20 Hz model
+        # noise near the deadband can't flicker the command; a genuine drop (pursuit no
+        # longer needed) still takes effect immediately.
+        if jerk_factor > self.lc_arrest_jerk_factor:
+          rise_alpha = 1.0 - math.exp(-DT_CTRL / LANE_CHANGE_ARREST_RISE_TAU)
+          jerk_factor = self.lc_arrest_jerk_factor + rise_alpha * (jerk_factor - self.lc_arrest_jerk_factor)
+      self.lc_arrest_jerk_factor = jerk_factor
 
     self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll,
                                                                jerk_factor)
