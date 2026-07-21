@@ -76,6 +76,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_kia_carnival_friction_center_fade_scale,
   get_kia_carnival_friction_threshold,
   get_tucson_4th_gen_center_taper_scale,
+  get_tucson_4th_gen_friction_threshold,
   get_kia_ev6_center_taper_scale,
   get_kia_ev6_ff_scale,
   get_kia_ev6_friction_scale,
@@ -838,6 +839,16 @@ class TestLatControl:
     assert low_speed_center < low_speed_moderate < low_speed_turn
     assert low_speed_turn > 0.98
     assert high_speed_center > 0.98
+
+  def test_tucson_4th_gen_friction_threshold_targets_low_speed_center(self):
+    base = get_hkg_canfd_base_friction_threshold(8.5)
+    low_speed_center = get_tucson_4th_gen_friction_threshold(8.5, 0.0)
+    low_speed_turn = get_tucson_4th_gen_friction_threshold(8.5, 0.50)
+    high_speed_center = get_tucson_4th_gen_friction_threshold(20.0, 0.0)
+
+    assert low_speed_center == pytest.approx(base * 1.22, rel=0.01)
+    assert low_speed_turn == pytest.approx(base, rel=0.01)
+    assert high_speed_center == pytest.approx(get_hkg_canfd_base_friction_threshold(20.0), rel=0.01)
 
   def test_tucson_4th_gen_default_update_path(self):
     controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.HYUNDAI_TUCSON_4TH_GEN)

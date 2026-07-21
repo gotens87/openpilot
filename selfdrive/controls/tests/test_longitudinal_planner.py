@@ -14,7 +14,7 @@ import openpilot.selfdrive.controls.lib.longitudinal_planner as longitudinal_pla
 from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
 from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N
 from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner, get_coast_accel, get_vehicle_min_accel, should_publish_planner_fcw
-from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import soften_far_radar_lead_accel, should_trigger_planner_fcw
+from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import LongitudinalMpc, soften_far_radar_lead_accel, should_trigger_planner_fcw
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import T_IDXS as T_IDXS_MPC
 from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
 
@@ -33,6 +33,71 @@ def make_lead(*, status: bool, d_rel: float = 200.0, v_lead: float = 0.0, a_lead
   lead.modelProb = model_prob
   lead.radar = radar
   return lead
+
+
+def test_mpc_duplicate_lead_filters_do_not_cross_contaminate_tracks():
+  mpc = LongitudinalMpc()
+  mpc.set_cur_state(20.0, 0.0)
+  mpc.current_filter_time = 0.5
+  lead_one = make_lead(status=True, d_rel=35.0, v_lead=12.0, model_prob=1.0)
+  lead_two = make_lead(status=True, d_rel=35.0, v_lead=28.0, model_prob=1.0)
+
+  mpc.process_lead(lead_one, lead_index=0, smooth_duplicate_vision=True)
+  mpc.process_lead(lead_two, lead_index=1, smooth_duplicate_vision=True)
+
+  assert mpc.duplicate_lead_v_filters[0].x == pytest.approx(12.0)
+  assert mpc.duplicate_lead_v_filters[1].x == pytest.approx(28.0)
+
+  lead_one.vLead = 14.0
+  mpc.process_lead(lead_one, lead_index=0, smooth_duplicate_vision=True)
+  assert 12.0 < mpc.duplicate_lead_v_filters[0].x < 14.0
+  assert mpc.duplicate_lead_v_filters[1].x == pytest.approx(28.0)
+
+
+def test_mpc_duplicate_vision_filter_damps_low_speed_velocity_noise():
+  mpc = LongitudinalMpc()
+  mpc.set_cur_state(18.0, 0.0)
+  mpc.current_filter_time = 0.0
+  lead = make_lead(status=True, d_rel=38.0, v_lead=17.0, model_prob=1.0)
+
+  mpc.process_lead(lead, lead_index=0, smooth_duplicate_vision=True)
+  lead.vLead = 20.0
+  mpc.process_lead(lead, lead_index=0, smooth_duplicate_vision=True)
+
+  assert 17.0 < mpc.duplicate_lead_v_filters[0].x < 20.0
+
+
+def test_mpc_distinct_vision_lead_uses_unchanged_baseline_filter():
+  mpc = LongitudinalMpc()
+  baseline_mpc = LongitudinalMpc()
+  mpc.set_cur_state(18.0, 0.0)
+  baseline_mpc.set_cur_state(18.0, 0.0)
+  mpc.current_filter_time = 0.0
+  baseline_mpc.current_filter_time = 0.0
+  lead = make_lead(status=True, d_rel=38.0, v_lead=17.0, model_prob=1.0)
+
+  mpc.process_lead(lead, lead_index=0, smooth_duplicate_vision=False)
+  baseline_mpc.process_lead(lead)
+  lead.vLead = 20.0
+  mpc.process_lead(lead, lead_index=0, smooth_duplicate_vision=False)
+  baseline_mpc.process_lead(lead)
+
+  assert mpc.lead_v_filter.x == pytest.approx(baseline_mpc.lead_v_filter.x)
+
+
+def test_mpc_panic_bypass_immediately_removes_duplicate_vision_filter():
+  mpc = LongitudinalMpc()
+  mpc.set_cur_state(18.0, 0.0)
+  mpc.current_filter_time = 0.0
+  lead = make_lead(status=True, d_rel=25.0, v_lead=17.0, model_prob=1.0)
+
+  mpc.process_lead(lead, lead_index=0, smooth_duplicate_vision=True)
+  mpc.set_weights(v_ego=18.0, panic_bypass=True)
+  lead.vLead = 10.0
+  mpc.process_lead(lead, lead_index=0, smooth_duplicate_vision=False)
+
+  assert mpc.filter_time_factor == 0.0
+  assert mpc.lead_v_filter.x == pytest.approx(10.0)
 
 
 def make_model(v_ego: float, desired_accel: float, gas_press_prob: float = 1.0, brake_press_prob: float = 0.0):

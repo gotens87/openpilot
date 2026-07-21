@@ -4031,6 +4031,7 @@ def setup(app):
       "amap2Key": params.get("AMapKey2", encoding="utf8") or "",
       "destination": params.get("NavDestination", encoding="utf8") or "",
       "isMetric": params.get_bool("IsMetric"),
+      "language": params.get("LanguageSetting", encoding="utf8") or "",
       "lastPosition": {
         "latitude": str(last_position.get("latitude", "")),
         "longitude": str(last_position.get("longitude", ""))

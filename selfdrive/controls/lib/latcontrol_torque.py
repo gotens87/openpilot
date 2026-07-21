@@ -344,6 +344,8 @@ class LatControlTorque(LatControl):
       elif kia_carnival_active:
         friction_threshold = get_kia_carnival_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
         friction_scale *= get_kia_carnival_friction_center_fade_scale(setpoint, CS.vEgo)
+      elif tucson_4th_gen_active:
+        friction_threshold = get_tucson_4th_gen_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
       elif self.is_silverado:
         ff *= silverado_center_taper
       elif volt_plexy_test_active:

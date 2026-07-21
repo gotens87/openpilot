@@ -2755,7 +2755,8 @@ class LongitudinalPlanner:
     )
     # Duplicate vision tracks can share the same noisy velocity spike. Keep the
     # comfort path unless distance, TTC, or lead braking makes the scene urgent.
-    if panic_bypass and self.is_nonurgent_duplicate_vision_follow(scene_v_ego, effective_t_follow):
+    nonurgent_duplicate_vision_follow = self.is_nonurgent_duplicate_vision_follow(scene_v_ego, effective_t_follow)
+    if panic_bypass and nonurgent_duplicate_vision_follow:
       panic_bypass = False
 
     steady_follow_filter_floor = 0.0
@@ -2820,7 +2821,8 @@ class LongitudinalPlanner:
     self.mpc.update(sm['radarState'], v_cruise, x, v, a, j,
                     sm['starpilotPlan'].dangerFactor, effective_t_follow,
                     personality=personality, tracking_lead=lead_control_active,
-                    optional_far_lead_comfort=True)
+                    optional_far_lead_comfort=True,
+                    smooth_duplicate_vision=nonurgent_duplicate_vision_follow and not panic_bypass)
 
     self.a_desired_trajectory_full = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.a_solution)
     self.v_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.v_solution)
