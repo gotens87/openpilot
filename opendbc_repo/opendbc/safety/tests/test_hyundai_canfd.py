@@ -744,7 +744,7 @@ class TestHyundaiCanfdLKASteeringAltAngleLongEV(HyundaiLongitudinalBase, TestHyu
     self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCanfd, self.SAFETY_PARAM | HyundaiSafetyFlags.CCNC)
     self.safety.init_tests()
 
-    for address, length in ((0x161, 32), (0x162, 32), (0x1BA, 24), (0x1E5, 16), (0x38C, 32)):
+    for address, length in ((0x161, 32), (0x162, 32), (0x1BA, 24), (0x1E5, 16), (0x1E0, 16), (0x38C, 32)):
       with self.subTest(address=address):
         self.assertTrue(self._tx(common.make_msg(1, address, length)))
 
