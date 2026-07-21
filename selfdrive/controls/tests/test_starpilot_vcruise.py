@@ -369,7 +369,6 @@ def test_force_stop_stays_committed_while_moving_even_if_scene_opens():
 
 
 def test_force_stop_turn_scene_veto_blocks_new_activation():
-  # No stop seen: a wound wheel is a turn instead of a stop -> veto still blocks.
   _, vcruise = make_vcruise(red_light=False, raw_model_stopped=False, forcing_stop=False)
   sm = make_sm(standstill=False)
   sm["carState"].leftBlinker = True
@@ -383,7 +382,6 @@ def test_force_stop_turn_scene_veto_blocks_new_activation():
 
 
 def test_force_stop_curve_veto_blocks_new_activation():
-  # No stop seen: road curvature is a genuine curve -> curve veto still blocks.
   _, vcruise = make_vcruise(red_light=False, raw_model_stopped=False, forcing_stop=False, road_curvature=0.005)
   sm = make_sm(standstill=False)
   toggles = make_toggles()
@@ -397,8 +395,6 @@ def test_force_stop_curve_veto_blocks_new_activation():
 
 
 def test_force_stop_turn_scene_veto_yields_to_stop_then_turn():
-  # Low Speed Turn Assist winds the wheel into the turn while approaching a red light.
-  # The wound wheel must NOT block Force Stop when the model saw a stop -> stop-then-turn.
   _, vcruise = make_vcruise(red_light=True, raw_model_stopped=True, forcing_stop=False)
   sm = make_sm(standstill=False)
   sm["carState"].leftBlinker = True
@@ -414,7 +410,6 @@ def test_force_stop_turn_scene_veto_yields_to_stop_then_turn():
 
 
 def test_force_stop_curve_veto_yields_to_stop_then_turn():
-  # Path curvature bends into the turn on a stop-then-turn approach -> curve veto must yield.
   _, vcruise = make_vcruise(red_light=True, raw_model_stopped=True, forcing_stop=False, road_curvature=0.05)
   sm = make_sm(standstill=False)
   sm["carState"].rightBlinker = True
@@ -430,8 +425,6 @@ def test_force_stop_curve_veto_yields_to_stop_then_turn():
 
 
 def test_stop_then_turn_override_releases_after_stop_seen_window_expires():
-  # Once the model stops seeing a stop and the hold window lapses, the veto resumes so a
-  # real mid-intersection turn isn't force-stopped.
   _, vcruise = make_vcruise(red_light=False, raw_model_stopped=False, forcing_stop=False)
   planner = vcruise.starpilot_planner
   sm = make_sm(standstill=False)
@@ -439,12 +432,10 @@ def test_stop_then_turn_override_releases_after_stop_seen_window_expires():
   sm["carState"].steeringAngleDeg = 30.0
   toggles = make_toggles()
 
-  # Stop seen briefly on approach (seeds the stop_then_turn latch), then it disappears.
   planner.starpilot_cem.stop_light_detected = True
   update_vcruise(vcruise, sm, toggles, now=0.0, v_ego=7.0)
   planner.starpilot_cem.stop_light_detected = False
 
-  # Past the hold window with no stop -> veto active again, no new activation.
   now = FORCE_STOP_TURN_VETO_STOP_SEEN_HOLD_TIME + 0.5
   for frame in range(12):
     result = update_vcruise(vcruise, sm, toggles, now=now + frame * 0.05, v_ego=7.0)

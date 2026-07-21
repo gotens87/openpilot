@@ -50,12 +50,6 @@ FORCE_STOP_TURN_VETO_MAX_SPEED = 18.0 * CV.MPH_TO_MS
 # for *new* activation — an in-progress stop is carried through (see force_stop_timer logic).
 FORCE_STOP_TURN_VETO_STEERING_ANGLE = 25.0
 FORCE_STOP_CURVE_VETO_MAX_ROAD_CURVATURE = 0.003
-# Low Speed Turn Assist pre-winds the wheel into an upcoming turn while the car is still
-# creeping to a stop, which crosses the veto angle before Force Stop can commit — so the
-# veto blocks the stop it was meant to carry through. When the model recently saw a stop
-# on approach, treat the wound wheel as a stop-then-turn (not turn-instead-of-stop) and
-# suppress the veto for this long after the stop was last seen, letting Force Stop arm and
-# latch; its committed hold + tracked_model_length then bridge the model dropout to the line.
 FORCE_STOP_TURN_VETO_STOP_SEEN_HOLD_TIME = 4.0
 
 # Knob bounds (mirror of UI slider; defense in depth)
@@ -152,8 +146,6 @@ class StarPilotVCruise:
     self.tracked_model_length = 0.0
 
     self.stop_sign_confirmed = False
-    # Time a model/dash stop was last seen while approaching (moving). Suppresses the
-    # turn veto so LSTA's pre-wound wheel doesn't block a stop-then-turn.
     self.stop_seen_on_approach_at = None
     self.nav_turn_target = 0.0
     self._nav_instruction_state_raw = None
@@ -277,9 +269,6 @@ class StarPilotVCruise:
 
     long_control_active = sm["carControl"].longActive
 
-    # Track a model/dash stop seen while still moving (the approach). LSTA winds the wheel
-    # past the veto angle during this window; without this the veto zeroes the force-stop
-    # timer before it can commit, so the "carry an in-progress stop through" latch never arms.
     raw_stop_seen = bool(
       self.starpilot_planner.starpilot_cem.stop_light_detected
       or getattr(self.starpilot_planner, "raw_model_stopped", False)
@@ -288,7 +277,6 @@ class StarPilotVCruise:
     if raw_stop_seen and not sm["carState"].standstill:
       self.stop_seen_on_approach_at = now
     elif sm["carState"].standstill:
-      # Stop reached: any wound wheel now is the turn itself, so let the veto resume.
       self.stop_seen_on_approach_at = None
     stop_then_turn = (
       self.stop_seen_on_approach_at is not None
@@ -310,10 +298,6 @@ class StarPilotVCruise:
     lead_present = (bool(getattr(lead, "status", False))
                     and float(getattr(lead, "dRel", float("inf"))) < ACTIVATION_M
                     and float(getattr(lead, "vLead", float("inf"))) < v_ego + 2.0)
-    # The road/path curvature bends toward the turn during a stop-then-turn approach, which
-    # trips this curve veto (meant for genuinely curvy roads) — same false block as the turn
-    # veto. When the model recently saw a stop here, the curvature is the turn we're stopping
-    # before, so let Force Stop arm through it. Left blinker-scoped via stop_then_turn.
     curved_approach_scene = (
       abs(float(getattr(self.starpilot_planner, "road_curvature", 0.0))) >= FORCE_STOP_CURVE_VETO_MAX_ROAD_CURVATURE
       and not stop_then_turn
