@@ -22,44 +22,51 @@ def _simple_module(name, **attrs):
 def _install_flm_import_stubs(tmp_path):
   class FakeParams:
     _store = {}
+    _memory_store = {}
 
-    def __init__(self, return_defaults=False):
+    def __init__(self, return_defaults=False, memory=False):
       self.return_defaults = return_defaults
+      self.memory = memory
+
+    @property
+    def _values(self):
+      return type(self)._memory_store if self.memory else type(self)._store
 
     def get(self, key, block=False, return_default=False, encoding=None, default=None):
       del block, return_default
-      value = self._store.get(key, default)
+      value = self._values.get(key, default)
       if encoding and isinstance(value, bytes):
         return value.decode(encoding, errors="replace")
       return value
 
     def get_bool(self, key, default=False):
-      value = self._store.get(key, default)
+      value = self._values.get(key, default)
       if isinstance(value, bool):
         return value
       return str(value).strip().lower() in ("1", "true", "yes", "on")
 
     def get_float(self, key, block=False, return_default=False, default=0.0):
       del block, return_default
-      value = self._store.get(key, default)
+      value = self._values.get(key, default)
       try:
         return float(value)
       except Exception:
         return default
 
     def put(self, key, value):
-      self._store[key] = value
+      self._values[key] = value
 
     def put_bool(self, key, value):
-      self._store[key] = bool(value)
+      self._values[key] = bool(value)
 
     def put_float(self, key, value):
-      self._store[key] = float(value)
+      self._values[key] = float(value)
 
     def remove(self, key):
-      self._store.pop(key, None)
+      self._values.pop(key, None)
 
   FakeParams._store = {}
+  FakeParams._memory_store = {}
 
   class FakeHyundaiFlags:
     CANFD = 1
@@ -850,7 +857,9 @@ def test_apply_and_revert_trial_profile_round_trip(tmp_path):
   assert fake_params_cls._store["FLMTrialBaseline"]["params"]["SteerLatAccel"] == pytest.approx(1.5)
   assert fake_params_cls._store["FLMActiveOverrides"]["vehicleKnobs"]["hyundai_ioniq_6.turn_in_boost_left"] == pytest.approx(0.08)
   assert fake_params_cls._store["FLMActiveOverrides"]["vehicleKnobs"]["hyundai_ioniq_6.unwind_taper_left"] == pytest.approx(0.55)
+  assert fake_params_cls._memory_store["StarPilotTogglesUpdated"] is True
 
+  fake_params_cls._memory_store["StarPilotTogglesUpdated"] = False
   revert_result = module.revert_trial_profile()
   assert revert_result["snapshot"]["profileId"] == profile_id
   assert fake_params_cls._store["AdvancedLateralTune"] is False
@@ -858,6 +867,7 @@ def test_apply_and_revert_trial_profile_round_trip(tmp_path):
   assert fake_params_cls._store["FLMTrialApplied"] is False
   assert "FLMTrialBaseline" not in fake_params_cls._store
   assert fake_params_cls._store["FLMActiveOverrides"]["vehicleKnobs"]["hyundai_ioniq_6.unwind_taper_left"] == pytest.approx(0.55)
+  assert fake_params_cls._memory_store["StarPilotTogglesUpdated"] is True
 
 
 def test_repeated_trial_revisions_revert_to_original_baseline(tmp_path):
@@ -1040,6 +1050,7 @@ def test_irrecoverable_trial_can_keep_current_values_as_new_baseline(tmp_path):
   assert fake_params_cls._store["FLMActiveOverrides"]["vehicleKnobs"]["generic.turn_in_boost_left"] == pytest.approx(0.1)
   assert fake_params_cls._store["FLMActiveProfileId"] == ""
   assert fake_params_cls._store["FLMTrialApplied"] is False
+  assert fake_params_cls._memory_store["StarPilotTogglesUpdated"] is True
 
 
 def test_workspace_hydrates_display_metadata_for_existing_active_trial(tmp_path):

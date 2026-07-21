@@ -284,13 +284,6 @@ EXCLUDED_KEYS = {
   "UptimeOffroad"
 }
 
-TUNING_LEVELS = {
-  "MINIMAL": 0,
-  "STANDARD": 1,
-  "ADVANCED": 2,
-  "DEVELOPER": 3
-}
-
 # Shared params handles for modules that import these from starpilot_variables.
 params = Params(return_defaults=True)
 params_memory = Params(memory=True)
@@ -419,8 +412,6 @@ class StarPilotVariables:
     toggle = self.starpilot_toggles
 
     self.default_values = {key.decode(): self.params.get_default_value(key) for key in self.params.all_keys()}
-    self.tuning_levels = {key.decode(): self.params.get_tuning_level(key) for key in self.params.all_keys()}
-
     branch = get_build_metadata().channel
     self.release_branch = branch == "StarPilot"
     self.staging_branch = branch == "StarPilot-Staging"
@@ -430,8 +421,6 @@ class StarPilotVariables:
     self.frogs_go_moo = FROGS_GO_MOO_PATH.is_file()
     # Development/vetting branches are no longer gated into dashcam mode.
     toggle.block_user = False
-
-    toggle.tuning_level = self.params.get("TuningLevel") if self.params.get_bool("TuningLevelConfirmed") else TUNING_LEVELS["ADVANCED"]
 
     device_management = self.get_value("DeviceManagement")
 
@@ -460,8 +449,8 @@ class StarPilotVariables:
         return f"#{color.get('alpha', 255):02X}{color.get('red', 255):02X}{color.get('green', 255):02X}{color.get('blue', 255):02X}"
     return "#FFFFFFFF"
 
-  def get_value(self, key, cast=bool, condition=True, conversion=None, default=None, min=None, max=None, respect_tuning_level=True):
-    if not condition or (respect_tuning_level and self.starpilot_toggles.tuning_level < self.tuning_levels.get(key, 0)):
+  def get_value(self, key, cast=bool, condition=True, conversion=None, default=None, min=None, max=None):
+    if not condition:
       if default is not None:
         value = default
       elif cast is bool:
@@ -509,9 +498,7 @@ class StarPilotVariables:
     return value
 
   def get_button_function(self, key, condition=True):
-    # Tuning level should hide wheel-mapping controls, not silently revert their
-    # runtime behavior to defaults after the driver has configured them.
-    return self.get_value(key, cast=float, condition=condition, respect_tuning_level=False)
+    return self.get_value(key, cast=float, condition=condition)
 
   def migrate_prius_cluster_offset(self, car_model):
     if car_model not in PRIUS_CLUSTER_OFFSET_CARS or self.params_raw.get_bool(PRIUS_CLUSTER_OFFSET_MIGRATION_KEY):
@@ -595,7 +582,6 @@ class StarPilotVariables:
 
   def update(self, holiday_theme="stock", started=False, clear_update_flag=True):
     toggle = self.starpilot_toggles
-    toggle.tuning_level = self.params.get("TuningLevel") if self.params.get_bool("TuningLevelConfirmed") else TUNING_LEVELS["ADVANCED"]
     # CarParams uses this value to select the matching Panda safety configuration.
     toggle.tesla_cooperative_steering = self.params.get_bool("TeslaCoopSteering")
 

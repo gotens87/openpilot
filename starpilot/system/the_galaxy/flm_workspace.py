@@ -2629,6 +2629,8 @@ def _apply_param_bundle(params: Params, bundle: dict[str, Any]) -> None:
     elif kind == "string":
       params.put(key, str(value or ""))
 
+  Params(memory=True).put_bool("StarPilotTogglesUpdated", True)
+
 
 def _merge_flm_override_state(base: dict[str, Any], delta: dict[str, Any]) -> dict[str, Any]:
   base = normalize_flm_overrides(base)
@@ -2815,6 +2817,7 @@ def accept_trial_as_baseline() -> dict[str, Any]:
   params.put_bool("FLMTrialApplied", False)
   params.put("FLMActiveProfileId", "")
   _clear_persistent_trial_baseline(params)
+  Params(memory=True).put_bool("StarPilotTogglesUpdated", True)
   for path in paths["snapshots"].glob("*.json"):
     path.unlink()
 

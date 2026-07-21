@@ -53,6 +53,8 @@ class TestToyotaInterfaces:
 
     assert default_params.lateralTuning.which() == "pid"
     assert forced_params.lateralTuning.which() == "torque"
+    assert forced_params.lateralTuning.torque.latAccelFactor == pytest.approx(1.7)
+    assert forced_params.lateralTuning.torque.friction == pytest.approx(0.14)
 
   def test_tss2_dbc(self):
     # We make some assumptions about TSS2 platforms,

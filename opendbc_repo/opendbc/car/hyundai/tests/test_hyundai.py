@@ -704,6 +704,14 @@ class TestHyundaiFingerprint:
     assert CP.vEgoStopping == pytest.approx(0.35)
     assert CP.stoppingDecelRate == pytest.approx(0.35)
 
+  def test_elantra_2021_longitudinal_params_match_observed_response(self):
+    toggles = get_test_toggles()
+    CP = CarInterface.get_params(CAR.HYUNDAI_ELANTRA_2021, gen_empty_fingerprint(), [], True, False, False, toggles)
+
+    assert CP.longitudinalActuatorDelay == pytest.approx(0.22)
+    assert CP.stopAccel == pytest.approx(-1.5)
+    assert CP.stoppingDecelRate == pytest.approx(0.5)
+
   def test_kia_niro_phev_2022_longitudinal_params_soften_final_stop_hold(self):
     toggles = get_test_toggles()
     CP = CarInterface.get_params(CAR.KIA_NIRO_PHEV_2022, gen_empty_fingerprint(), [], True, False, False, toggles)
