@@ -350,12 +350,12 @@ KIA_CARNIVAL_CENTER_TAPER_SPEED_MAX_WIDTH = 2.0
 KIA_CARNIVAL_FRICTION_THRESHOLD_GAIN = 0.24
 KIA_CARNIVAL_FRICTION_CENTER_FADE_MAX = 0.34
 
-TUCSON_4TH_GEN_CENTER_TAPER_MAX = 0.36
+TUCSON_4TH_GEN_CENTER_TAPER_MAX = 0.44
 TUCSON_4TH_GEN_CENTER_TAPER_LAT = 0.28
 TUCSON_4TH_GEN_CENTER_TAPER_LAT_WIDTH = 0.055
 TUCSON_4TH_GEN_CENTER_TAPER_SPEED_MAX = 14.0
 TUCSON_4TH_GEN_CENTER_TAPER_SPEED_WIDTH = 1.5
-TUCSON_4TH_GEN_FRICTION_THRESHOLD_GAIN = 0.22
+TUCSON_4TH_GEN_FRICTION_THRESHOLD_GAIN = 0.28
 
 KIA_FORTE_BASE_LAT_ACCEL_FACTOR_MULT = 1.05
 KIA_FORTE_FF_REDUCTION_LEFT = 0.05
@@ -721,6 +721,8 @@ RAV4_PRIME_UNWIND_FF_REDUCTION_LEFT = 0.15
 RAV4_PRIME_UNWIND_FF_REDUCTION_RIGHT = 0.13
 RAV4_PRIME_UNWIND_FRICTION_REDUCTION_LEFT = 0.16
 RAV4_PRIME_UNWIND_FRICTION_REDUCTION_RIGHT = 0.14
+RAV4_PRIME_UNWIND_OUTPUT_REDUCTION_LEFT = 0.12
+RAV4_PRIME_UNWIND_OUTPUT_REDUCTION_RIGHT = 0.14
 RAV4_PRIME_FRICTION_THRESHOLD_GAIN = 0.24
 RAV4_PRIME_FRICTION_CENTER_LAT = 0.30
 RAV4_PRIME_FRICTION_CENTER_LAT_WIDTH = 0.07
@@ -1015,6 +1017,14 @@ def get_rav4_prime_friction_scale(v_ego: float, desired_lateral_accel: float, de
   reduction = _rav4_prime_side_value(desired_lateral_accel,
                                      RAV4_PRIME_UNWIND_FRICTION_REDUCTION_LEFT,
                                      RAV4_PRIME_UNWIND_FRICTION_REDUCTION_RIGHT)
+  return 1.0 - (reduction * _rav4_prime_unwind_weight(desired_lateral_accel, desired_lateral_jerk) *
+                _rav4_prime_speed_weight(v_ego))
+
+
+def get_rav4_prime_output_taper_scale(desired_lateral_accel: float, desired_lateral_jerk: float, v_ego: float) -> float:
+  reduction = _rav4_prime_side_value(desired_lateral_accel,
+                                     RAV4_PRIME_UNWIND_OUTPUT_REDUCTION_LEFT,
+                                     RAV4_PRIME_UNWIND_OUTPUT_REDUCTION_RIGHT)
   return 1.0 - (reduction * _rav4_prime_unwind_weight(desired_lateral_accel, desired_lateral_jerk) *
                 _rav4_prime_speed_weight(v_ego))
 

@@ -252,7 +252,7 @@ class LatControlTorque(LatControl):
       kia_xceed_active = self.is_kia_xceed
       kia_niro_phev_2022_active = self.is_kia_niro_phev_2022
       kia_forte_active = self.is_kia_forte
-      kia_ev6_test_active = self.is_kia_ev6 and kia_ev6_lateral_testing_ground_active()
+      kia_ev6_active = self.is_kia_ev6
       kia_carnival_active = self.is_kia_carnival
       tucson_4th_gen_active = self.is_tucson_4th_gen
       volt_plexy_test_active = self.is_volt_standard and volt_plexy_lateral_testing_ground_active()
@@ -267,8 +267,8 @@ class LatControlTorque(LatControl):
       kia_xceed_center_taper = get_kia_xceed_center_taper_scale(setpoint, CS.vEgo) if kia_xceed_active else 1.0
       kia_niro_phev_2022_center_taper = get_kia_niro_phev_2022_center_taper_scale(setpoint, CS.vEgo) if kia_niro_phev_2022_active else 1.0
       kia_forte_center_taper = get_kia_forte_center_taper_scale(setpoint, CS.vEgo) if kia_forte_active else 1.0
-      kia_ev6_center_taper = get_kia_ev6_center_taper_scale(setpoint, CS.vEgo) if kia_ev6_test_active else 1.0
-      kia_ev6_low_speed_center_taper = get_kia_ev6_low_speed_center_taper_scale(setpoint, CS.vEgo) if kia_ev6_test_active else 1.0
+      kia_ev6_center_taper = get_kia_ev6_center_taper_scale(setpoint, CS.vEgo) if kia_ev6_active else 1.0
+      kia_ev6_low_speed_center_taper = get_kia_ev6_low_speed_center_taper_scale(setpoint, CS.vEgo) if kia_ev6_active else 1.0
       kia_carnival_center_taper = get_kia_carnival_center_taper_scale(setpoint, CS.vEgo) if kia_carnival_active else 1.0
       tucson_4th_gen_center_taper = get_tucson_4th_gen_center_taper_scale(setpoint, CS.vEgo) if tucson_4th_gen_active else 1.0
       silverado_center_taper = get_silverado_center_taper_scale(setpoint, CS.vEgo) if self.is_silverado else 1.0
@@ -342,7 +342,7 @@ class LatControlTorque(LatControl):
       elif kia_forte_active:
         ff *= get_kia_forte_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo) * kia_forte_center_taper
         friction_threshold = get_kia_forte_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
-      elif kia_ev6_test_active:
+      elif kia_ev6_active:
         ff *= get_kia_ev6_ff_scale(setpoint, desired_lateral_jerk, CS.vEgo) * kia_ev6_center_taper
         friction_threshold = get_kia_ev6_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
         friction_scale = get_kia_ev6_friction_scale(CS.vEgo, setpoint, desired_lateral_jerk)
@@ -410,13 +410,15 @@ class LatControlTorque(LatControl):
       if ioniq_6_active:
         output_torque *= get_ioniq_6_highway_output_taper_scale(setpoint, CS.vEgo)
         output_torque *= get_ioniq_6_highway_transition_output_taper_scale(setpoint, desired_lateral_jerk, CS.vEgo)
+      elif rav4_prime_active:
+        output_torque *= get_rav4_prime_output_taper_scale(setpoint, desired_lateral_jerk, CS.vEgo)
       elif prius_active:
         output_torque *= prius_center_taper
       elif volt_standard_test_active:
         output_torque *= volt_standard_center_taper
       elif volt_plexy_test_active:
         output_torque *= volt_plexy_center_taper
-      elif kia_ev6_test_active:
+      elif kia_ev6_active:
         output_torque *= kia_ev6_low_speed_center_taper
       elif kia_carnival_active:
         output_torque *= kia_carnival_center_taper

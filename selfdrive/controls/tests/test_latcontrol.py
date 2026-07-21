@@ -60,6 +60,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_rav4_prime_ff_scale,
   get_rav4_prime_friction_scale,
   get_rav4_prime_friction_threshold,
+  get_rav4_prime_output_taper_scale,
   get_ioniq_5_ff_scale,
   get_ioniq_5_friction_scale,
   get_ioniq_5_friction_threshold,
@@ -593,14 +594,32 @@ class TestLatControl:
     assert get_rav4_prime_friction_scale(13.0, 1.0, 0.8) == pytest.approx(1.0)
     assert get_rav4_prime_friction_scale(13.0, 1.0, -0.8) < 1.0
 
-  def test_rav4_prime_forced_torque_update_path(self):
+  def test_rav4_prime_output_taper_only_targets_unwind(self):
+    assert get_rav4_prime_output_taper_scale(1.0, 0.8, 13.0) == pytest.approx(1.0)
+    assert get_rav4_prime_output_taper_scale(-1.0, -0.8, 13.0) == pytest.approx(1.0)
+
+    left_unwind = get_rav4_prime_output_taper_scale(1.0, -0.8, 13.0)
+    right_unwind = get_rav4_prime_output_taper_scale(-1.0, 0.8, 13.0)
+    assert right_unwind < left_unwind < 1.0
+    assert get_rav4_prime_output_taper_scale(-1.0, 0.8, 25.0) > right_unwind
+
+  def test_rav4_prime_forced_torque_update_path(self, monkeypatch):
     controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(TOYOTA.TOYOTA_RAV4_PRIME, force_torque=True)
     CS.vEgo = 13.0
+    base_output, _, lac_log = controller.update(True, CS, VM, params, False, 0.0025, False, 0.2, None, None, starpilot_toggles)
 
-    _, _, lac_log = controller.update(True, CS, VM, params, False, 0.0025, False, 0.2, None, None, starpilot_toggles)
+    monkeypatch.setattr(latcontrol_torque, "get_rav4_prime_output_taper_scale", lambda *_args: 0.5)
+    tapered_controller, tapered_VM, tapered_CS, tapered_params, tapered_toggles = self._build_torque_controller(
+      TOYOTA.TOYOTA_RAV4_PRIME, force_torque=True,
+    )
+    tapered_CS.vEgo = 13.0
+    tapered_output, _, _ = tapered_controller.update(
+      True, tapered_CS, tapered_VM, tapered_params, False, 0.0025, False, 0.2, None, None, tapered_toggles,
+    )
 
     assert controller.is_rav4_prime
     assert lac_log.active
+    assert tapered_output == pytest.approx(base_output * 0.5)
 
   def test_ioniq_5_center_taper_curve(self):
     assert get_ioniq_5_center_taper_scale(0.0, 25.0) < get_ioniq_5_center_taper_scale(0.0, 10.0)
@@ -882,7 +901,7 @@ class TestLatControl:
     low_speed_turn = get_tucson_4th_gen_friction_threshold(8.5, 0.50)
     high_speed_center = get_tucson_4th_gen_friction_threshold(20.0, 0.0)
 
-    assert low_speed_center == pytest.approx(base * 1.22, rel=0.01)
+    assert low_speed_center == pytest.approx(base * 1.28, rel=0.01)
     assert low_speed_turn == pytest.approx(base, rel=0.01)
     assert high_speed_center == pytest.approx(get_hkg_canfd_base_friction_threshold(20.0), rel=0.01)
 
@@ -1082,13 +1101,21 @@ class TestLatControl:
     assert get_civic_bosch_modified_a_center_taper_scale(0.0, 25.0) < get_civic_bosch_modified_a_center_taper_scale(0.0, 10.0)
     assert get_civic_bosch_modified_a_center_taper_scale(0.0, 25.0) < get_civic_bosch_modified_a_center_taper_scale(0.35, 25.0) <= 1.0
 
-  def test_kia_ev6_testing_ground_update_path(self, monkeypatch):
+  def test_kia_ev6_default_update_path(self, monkeypatch):
     controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.KIA_EV6)
-    monkeypatch.setattr(latcontrol_torque, "kia_ev6_lateral_testing_ground_active", lambda: True)
+    calls = 0
+
+    def record_ff_scale(*_args):
+      nonlocal calls
+      calls += 1
+      return 1.0
+
+    monkeypatch.setattr(latcontrol_torque, "get_kia_ev6_ff_scale", record_ff_scale)
 
     _, _, lac_log = controller.update(True, CS, VM, params, False, 0.0025, False, 0.2, None, None, starpilot_toggles)
 
     assert lac_log.active
+    assert calls == 1
 
   def test_kia_ev6_ff_scale_curve(self):
     assert get_kia_ev6_ff_scale(0.0, 0.0, 20.0) == 1.0
