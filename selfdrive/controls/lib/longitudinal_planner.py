@@ -353,6 +353,27 @@ FAR_LEAD_COMFORT_BRAKE_CAP_FULL_HEADWAY_MARGIN = 1.00
 FAR_LEAD_COMFORT_BRAKE_CAP_MIN_DECEL = 0.05
 FAR_LEAD_COMFORT_BRAKE_CAP_MAX_DECEL = 0.18
 FAR_LEAD_COMFORT_BRAKE_CAP_FULL_RELAX_DECEL = 0.05
+FAR_RADAR_COMFORT_BRAKE_CAP_MIN_DISTANCE = 40.0
+FAR_RADAR_COMFORT_BRAKE_CAP_MIN_CLOSING_SPEED = 0.5
+FAR_RADAR_COMFORT_BRAKE_CAP_MAX_CLOSING_SPEED = 1.8
+FAR_RADAR_COMFORT_BRAKE_CAP_MAX_LEAD_BRAKE = 0.12
+FAR_RADAR_COMFORT_BRAKE_CAP_MIN_TTC = 20.0
+FAR_RADAR_COMFORT_BRAKE_CAP_MIN_HEADWAY_MARGIN = 0.55
+FAR_RADAR_COMFORT_BRAKE_CAP_FULL_HEADWAY_MARGIN = 0.95
+FAR_RADAR_COMFORT_BRAKE_CAP_MIN_DECEL = 0.04
+FAR_RADAR_COMFORT_BRAKE_CAP_MAX_DECEL = 0.14
+FAR_RADAR_COMFORT_BRAKE_CAP_FULL_RELAX_DECEL = 0.05
+EXPERIMENTAL_RELEASE_ACCEL_HOLD_TIME = 0.75
+EXPERIMENTAL_RELEASE_ACCEL_MIN_SPEED = 12.0
+EXPERIMENTAL_RELEASE_ACCEL_MIN_LEAD_SPEED = 5.0
+EXPERIMENTAL_RELEASE_ACCEL_MIN_LEAD_DELTA = -1.0
+EXPERIMENTAL_RELEASE_ACCEL_MAX_LEAD_DELTA = 1.5
+EXPERIMENTAL_RELEASE_ACCEL_MAX_LEAD_BRAKE = 0.2
+EXPERIMENTAL_RELEASE_ACCEL_MIN_MODEL_PROB = 0.9
+EXPERIMENTAL_RELEASE_ACCEL_MAX_LATERAL_OFFSET = 1.5
+EXPERIMENTAL_RELEASE_ACCEL_MIN_HEADWAY_MARGIN = 0.0
+EXPERIMENTAL_RELEASE_ACCEL_MIN_DELTA_A = 0.12
+EXPERIMENTAL_RELEASE_ACCEL_STEP = 0.06
 MATCHED_FOLLOW_TRANSITION_MIN_SPEED = 20.0
 MATCHED_FOLLOW_TRANSITION_MIN_HEADWAY_MARGIN = 0.25
 MATCHED_FOLLOW_TRANSITION_FULL_HEADWAY_MARGIN = 0.75
@@ -653,6 +674,8 @@ class LongitudinalPlanner:
     self.lead_depart_accel_hold_floor = None
     self.post_departure_follow_settle_until = 0.0
     self.duplicate_vision_comfort_lead_source = None
+    self.prev_experimental_mode = None
+    self.experimental_release_accel_until = 0.0
 
     if self.is_preap:
       try:
@@ -2025,23 +2048,45 @@ class LongitudinalPlanner:
     if lead is None or not lead.status or v_ego < STEADY_FOLLOW_SMOOTHING_MIN_SPEED:
       return None
 
+    relative_speed = float(v_ego) - float(lead.vLead)
+    lead_brake = max(0.0, -float(getattr(lead, "aLeadK", 0.0)))
+    actual_headway = float(lead.dRel) / max(float(v_ego), 1e-3)
+    headway_margin = actual_headway - float(base_t_follow)
+
     if bool(getattr(lead, "radar", False)):
-      return None
+      if not (FAR_RADAR_COMFORT_BRAKE_CAP_MIN_CLOSING_SPEED <= relative_speed <= FAR_RADAR_COMFORT_BRAKE_CAP_MAX_CLOSING_SPEED):
+        return None
+      if lead_brake > FAR_RADAR_COMFORT_BRAKE_CAP_MAX_LEAD_BRAKE:
+        return None
+      if float(lead.dRel) < FAR_RADAR_COMFORT_BRAKE_CAP_MIN_DISTANCE or headway_margin < FAR_RADAR_COMFORT_BRAKE_CAP_MIN_HEADWAY_MARGIN:
+        return None
+
+      ttc = float(lead.dRel) / max(relative_speed, 1e-3)
+      if ttc < FAR_RADAR_COMFORT_BRAKE_CAP_MIN_TTC:
+        return None
+
+      cap_decel = float(np.interp(
+        relative_speed,
+        [FAR_RADAR_COMFORT_BRAKE_CAP_MIN_CLOSING_SPEED, FAR_RADAR_COMFORT_BRAKE_CAP_MAX_CLOSING_SPEED],
+        [FAR_RADAR_COMFORT_BRAKE_CAP_MIN_DECEL, FAR_RADAR_COMFORT_BRAKE_CAP_MAX_DECEL],
+      ))
+      relax_decel = float(np.interp(
+        headway_margin,
+        [FAR_RADAR_COMFORT_BRAKE_CAP_MIN_HEADWAY_MARGIN, FAR_RADAR_COMFORT_BRAKE_CAP_FULL_HEADWAY_MARGIN],
+        [0.0, FAR_RADAR_COMFORT_BRAKE_CAP_FULL_RELAX_DECEL],
+      ))
+      return -max(0.0, cap_decel - relax_decel)
 
     lead_prob = float(getattr(lead, "modelProb", 0.0))
     if lead_prob < FAR_LEAD_COMFORT_BRAKE_CAP_MIN_MODEL_PROB:
       return None
 
-    relative_speed = float(v_ego) - float(lead.vLead)
     if not (FAR_LEAD_COMFORT_BRAKE_CAP_MIN_CLOSING_SPEED <= relative_speed <= FAR_LEAD_COMFORT_BRAKE_CAP_MAX_CLOSING_SPEED):
       return None
 
-    lead_brake = max(0.0, -float(getattr(lead, "aLeadK", 0.0)))
     if lead_brake > FAR_LEAD_COMFORT_BRAKE_CAP_MAX_LEAD_BRAKE:
       return None
 
-    actual_headway = float(lead.dRel) / max(float(v_ego), 1e-3)
-    headway_margin = actual_headway - float(base_t_follow)
     if float(lead.dRel) < FAR_LEAD_COMFORT_BRAKE_CAP_MIN_DISTANCE or headway_margin < FAR_LEAD_COMFORT_BRAKE_CAP_MIN_HEADWAY_MARGIN:
       return None
 
@@ -2060,6 +2105,42 @@ class LongitudinalPlanner:
       [0.0, FAR_LEAD_COMFORT_BRAKE_CAP_FULL_RELAX_DECEL],
     ))
     return -max(0.0, cap_decel - relax_decel)
+
+  def update_experimental_release_accel_state(self, experimental_mode, now_t):
+    if self.prev_experimental_mode is True and not experimental_mode:
+      self.experimental_release_accel_until = now_t + EXPERIMENTAL_RELEASE_ACCEL_HOLD_TIME
+    elif experimental_mode:
+      self.experimental_release_accel_until = 0.0
+    self.prev_experimental_mode = bool(experimental_mode)
+
+  def get_experimental_release_accel_target(self, lead, v_ego, base_t_follow,
+                                            prev_output_a_target, output_a_target,
+                                            release_active):
+    if not release_active or lead is None or not lead.status or v_ego < EXPERIMENTAL_RELEASE_ACCEL_MIN_SPEED:
+      return None
+
+    lead_speed = float(lead.vLead)
+    lead_delta = lead_speed - float(v_ego)
+    lead_brake = max(0.0, -float(getattr(lead, "aLeadK", 0.0)))
+    lead_radar = bool(getattr(lead, "radar", False))
+    lead_prob = float(getattr(lead, "modelProb", 1.0 if lead_radar else 0.0))
+    actual_headway = float(lead.dRel) / max(float(v_ego), 1e-3)
+    if lead_speed < EXPERIMENTAL_RELEASE_ACCEL_MIN_LEAD_SPEED:
+      return None
+    if not (EXPERIMENTAL_RELEASE_ACCEL_MIN_LEAD_DELTA <= lead_delta <= EXPERIMENTAL_RELEASE_ACCEL_MAX_LEAD_DELTA):
+      return None
+    if lead_brake > EXPERIMENTAL_RELEASE_ACCEL_MAX_LEAD_BRAKE:
+      return None
+    if not lead_radar and lead_prob < EXPERIMENTAL_RELEASE_ACCEL_MIN_MODEL_PROB:
+      return None
+    if abs(float(getattr(lead, "yRel", 0.0))) > EXPERIMENTAL_RELEASE_ACCEL_MAX_LATERAL_OFFSET:
+      return None
+    if actual_headway < float(base_t_follow) + EXPERIMENTAL_RELEASE_ACCEL_MIN_HEADWAY_MARGIN:
+      return None
+    if float(output_a_target) - float(prev_output_a_target) < EXPERIMENTAL_RELEASE_ACCEL_MIN_DELTA_A:
+      return None
+
+    return min(float(output_a_target), float(prev_output_a_target) + EXPERIMENTAL_RELEASE_ACCEL_STEP)
 
   def get_matched_follow_transition_target(self, lead, v_ego, base_t_follow, prev_output_a_target, output_a_target,
                                            current_source, tracking_lead_active):
@@ -2527,7 +2608,8 @@ class LongitudinalPlanner:
         self.nap_adaptive_accel = self._preap_params.get_bool("NAPAdaptiveAccel")
 
     self.generation = getattr(starpilot_toggles, "model_version", None)
-    self.mode = 'blended' if sm['selfdriveState'].experimentalMode else 'acc'
+    experimental_mode = bool(sm['selfdriveState'].experimentalMode)
+    self.mode = 'blended' if experimental_mode else 'acc'
     self.mpc.mode = 'acc'
     if not self.mlsim:
       self.mpc.mode = self.mode
@@ -2656,6 +2738,7 @@ class LongitudinalPlanner:
 
     # Lead stability estimation and recent-brake timer
     now_t = time.monotonic()
+    self.update_experimental_release_accel_state(experimental_mode, now_t)
     # relative speed (ego - lead) positive when closing
     v_rel = (v_ego - self.lead_one.vLead) if lead_one_active else 0.0
     if self.prev_lead_dist is None:
@@ -3486,6 +3569,24 @@ class LongitudinalPlanner:
     if inside_gap_closing_cap is not None:
       self.a_desired = min(self.a_desired, inside_gap_closing_cap)
       output_a_target = min(output_a_target, inside_gap_closing_cap)
+
+    experimental_release_accel_target = self.get_experimental_release_accel_target(
+      comfort_follow_lead,
+      scene_v_ego,
+      effective_t_follow,
+      prev_output_a_target,
+      output_a_target,
+      bool(
+        now_t < self.experimental_release_accel_until and
+        not output_should_stop and
+        not vision_low_speed_stop_active and
+        not getattr(sm['starpilotPlan'], 'forcingStop', False) and
+        not getattr(sm['starpilotPlan'], 'redLight', False)
+      ),
+    )
+    if experimental_release_accel_target is not None:
+      self.a_desired = min(self.a_desired, experimental_release_accel_target)
+      output_a_target = min(output_a_target, experimental_release_accel_target)
 
     self.output_a_target = output_a_target
     self.output_should_stop = bool(output_should_stop or vision_low_speed_stop_active)

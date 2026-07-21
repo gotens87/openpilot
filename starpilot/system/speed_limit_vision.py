@@ -15,6 +15,7 @@ import numpy as np
 
 from openpilot.common.constants import CV
 from openpilot.common.realtime import set_core_affinity
+from openpilot.selfdrive.car.cruise import V_CRUISE_UNSET
 from openpilot.system.hardware import PC
 
 RUNTIME_LOOP_HZ = 20
@@ -62,6 +63,8 @@ CHANGE_REPEAT_MIN_CONFIDENCE = 0.70
 LOW_SPEED_CHANGE_CONSISTENT_DETECTIONS = 2
 LOW_SPEED_CHANGE_MIN_CONFIDENCE = 0.90
 LOW_SPEED_CHANGE_ALLOW_STRONG_CONSENSUS = True
+LARGE_SET_SPEED_DELTA_MPH = 30.0
+LARGE_SET_SPEED_DELTA_CONSISTENT_DETECTIONS = 3
 MODEL_DETECTION_SHORT_CIRCUIT_CONFIDENCE = 0.65
 PUBLISHED_HOLD_SECONDS = 300.0
 PUBLISHED_CHANGE_COOLDOWN_SECONDS = 1.4
@@ -311,7 +314,7 @@ class SpeedLimitVisionDaemon:
       self.Ratekeeper = Ratekeeper
       self.VisionIpcClient = VisionIpcClient
       self.VisionStreamType = VisionStreamType
-      self.sm = messaging.SubMaster(["deviceState", "mapdOut", "userBookmark", "livePose"])
+      self.sm = messaging.SubMaster(["carState", "deviceState", "mapdOut", "userBookmark", "livePose"])
 
     self.client = None
     self.stream_name = ""
@@ -337,6 +340,7 @@ class SpeedLimitVisionDaemon:
     self.started_prev = False
 
     self.history: deque[HistoryEntry] = deque()
+    self.current_cruise_set_speed_ms = 0.0
     self.published_speed_limit_mph = 0
     self.published_confidence = 0.0
     self.previous_published_speed_limit_mph = 0
@@ -437,6 +441,24 @@ class SpeedLimitVisionDaemon:
   def _speed_value_to_ms(self, speed_value):
     conversion = CV.KPH_TO_MS if self.is_metric else CV.MPH_TO_MS
     return speed_value * conversion
+
+  def _update_current_cruise_set_speed(self):
+    self.current_cruise_set_speed_ms = 0.0
+    if self.sm is None:
+      return
+    try:
+      v_cruise_kph = float(self.sm["carState"].vCruise)
+    except Exception:
+      return
+    if math.isfinite(v_cruise_kph) and 0.0 < v_cruise_kph < V_CRUISE_UNSET:
+      self.current_cruise_set_speed_ms = v_cruise_kph * CV.KPH_TO_MS
+
+  def _has_large_cruise_set_speed_delta(self, speed_limit):
+    cruise_set_speed_ms = getattr(self, "current_cruise_set_speed_ms", 0.0)
+    return (
+      cruise_set_speed_ms > 0.0 and
+      abs(self._speed_value_to_ms(speed_limit) - cruise_set_speed_ms) >= LARGE_SET_SPEED_DELTA_MPH * CV.MPH_TO_MS
+    )
 
   def _speed_value_from_ms(self, speed_ms):
     conversion = CV.MS_TO_KPH if self.is_metric else CV.MS_TO_MPH
@@ -2205,6 +2227,10 @@ class SpeedLimitVisionDaemon:
     has_strong_consensus = any(entry.strong_consensus for entry in matching_entries)
     current_speed_limit = self.published_speed_limit_mph
     current_count = counts.get(current_speed_limit, 0) if current_speed_limit > 0 else 0
+    large_set_speed_delta = (
+      candidate_speed_limit != current_speed_limit and
+      self._has_large_cruise_set_speed_delta(candidate_speed_limit)
+    )
 
     if current_speed_limit > 0 and candidate_speed_limit != current_speed_limit:
       required_count = CHANGE_CONSISTENT_DETECTIONS
@@ -2219,6 +2245,9 @@ class SpeedLimitVisionDaemon:
         )
         if best_confidence < LOW_SPEED_CHANGE_MIN_CONFIDENCE:
           return None
+      if large_set_speed_delta:
+        required_count = max(required_count, LARGE_SET_SPEED_DELTA_CONSISTENT_DETECTIONS)
+        allow_single_frame_confirmation = False
       if candidate_count < required_count and not allow_single_frame_confirmation:
         return None
       if (
@@ -2227,6 +2256,13 @@ class SpeedLimitVisionDaemon:
       ):
         return None
       if candidate_count <= current_count:
+        return None
+      return candidate_speed_limit, best_confidence
+
+    if large_set_speed_delta:
+      if candidate_count < LARGE_SET_SPEED_DELTA_CONSISTENT_DETECTIONS:
+        return None
+      if matching_confidences[LARGE_SET_SPEED_DELTA_CONSISTENT_DETECTIONS - 1] < CHANGE_REPEAT_MIN_CONFIDENCE:
         return None
       return candidate_speed_limit, best_confidence
 
@@ -2472,6 +2508,7 @@ class SpeedLimitVisionDaemon:
       now = time.monotonic()
       self.loop_count += 1
       self.sm.update(0)
+      self._update_current_cruise_set_speed()
 
       if self.sm.updated["userBookmark"]:
         if self.ignore_next_user_bookmark:

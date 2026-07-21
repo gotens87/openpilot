@@ -2760,6 +2760,113 @@ def test_far_lead_soft_brake_cap_limits_high_confidence_distant_vision_lead():
   assert cap < -0.05
 
 
+def test_far_lead_soft_brake_cap_limits_spacious_mild_closing_radar_lead():
+  v_ego = 25.61
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=55.1, v_lead=24.11, a_lead=0.22, radar=True, model_prob=0.99)
+
+  cap = planner.get_far_lead_brake_cap(lead, v_ego, 1.13)
+
+  assert cap is not None
+  assert -0.11 < cap < -0.04
+
+
+@pytest.mark.parametrize(
+  "v_lead,a_lead",
+  [
+    (22.9, 0.0),
+    (24.11, -0.5),
+  ],
+)
+def test_far_lead_soft_brake_cap_rejects_urgent_radar_lead(v_lead, a_lead):
+  v_ego = 25.61
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=55.1, v_lead=v_lead, a_lead=a_lead, radar=True, model_prob=0.99)
+
+  assert planner.get_far_lead_brake_cap(lead, v_ego, 1.13) is None
+
+
+def test_experimental_release_state_arms_only_on_falling_edge():
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP)
+
+  planner.update_experimental_release_accel_state(True, 10.0)
+  assert planner.experimental_release_accel_until == 0.0
+
+  planner.update_experimental_release_accel_state(False, 10.1)
+  assert planner.experimental_release_accel_until > 10.1
+
+  planner.update_experimental_release_accel_state(True, 10.2)
+  assert planner.experimental_release_accel_until == 0.0
+
+
+def test_experimental_release_accel_transition_damps_moving_lead_handoff():
+  v_ego = 23.96
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=55.15, v_lead=23.73, a_lead=0.40, radar=True, model_prob=0.997)
+
+  target = planner.get_experimental_release_accel_target(
+    lead,
+    v_ego,
+    1.13,
+    prev_output_a_target=0.03,
+    output_a_target=0.44,
+    release_active=True,
+  )
+
+  assert target == pytest.approx(0.09)
+
+
+def test_experimental_release_accel_transition_does_not_mask_stopped_lead():
+  v_ego = 23.96
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=35.0, v_lead=0.0, a_lead=-1.0, radar=True, model_prob=0.997)
+
+  target = planner.get_experimental_release_accel_target(
+    lead,
+    v_ego,
+    1.13,
+    prev_output_a_target=-0.4,
+    output_a_target=0.4,
+    release_active=True,
+  )
+
+  assert target is None
+
+
+def test_planner_arms_experimental_release_accel_only_on_mode_exit():
+  v_ego = 23.96
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=55.15, v_lead=23.73, a_lead=0.40, radar=True, model_prob=0.997)
+  sm = make_sm(
+    v_ego,
+    desired_accel=0.0,
+    min_accel=-1.0,
+    experimental_mode=True,
+    tracking_lead=True,
+    lead_one=lead,
+  )
+
+  release_states = []
+  original = planner.get_experimental_release_accel_target
+
+  def record_release_state(self, *args, **kwargs):
+    release_states.append(bool(args[-1]))
+    return original(*args, **kwargs)
+
+  planner.get_experimental_release_accel_target = types.MethodType(record_release_state, planner)
+  planner.update(sm, make_toggles())
+  sm["selfdriveState"].experimentalMode = False
+  planner.update(sm, make_toggles())
+
+  assert release_states == [False, True]
+
+
 def test_matched_follow_transition_target_damps_large_comfort_sign_flip():
   v_ego = 20.3
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)

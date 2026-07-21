@@ -92,7 +92,7 @@ class StarPilotOnroadView(AugmentedRoadView):
       self._render_overlays()
       self._render_road_name()
     if self._draw_road_overlays:
-      self._render_path_features(rect)
+      self._render_path_features(self._content_rect)
 
   def _draw_border(self, rect: rl.Rectangle):
     border_width = self._get_border_width()

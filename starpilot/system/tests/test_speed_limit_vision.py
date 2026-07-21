@@ -30,6 +30,8 @@ class StaticClassifierNet:
 
 def daemon_with_history(current_speed, entries):
   daemon = SpeedLimitVisionDaemon.__new__(SpeedLimitVisionDaemon)
+  daemon.is_metric = False
+  daemon.current_cruise_set_speed_ms = 0.0
   daemon.published_speed_limit_mph = current_speed
   daemon.history = deque(HistoryEntry(speed, confidence, float(index)) for index, (speed, confidence) in enumerate(entries))
   return daemon
@@ -187,6 +189,34 @@ def test_low_speed_change_accepts_single_strong_consensus_read():
 def test_low_speed_change_rejects_low_confidence_sequence():
   daemon = daemon_with_history(40, [(25, 0.82), (25, 0.88), (25, 0.89)])
   assert daemon._confirm_detection() is None
+
+
+@pytest.mark.parametrize(
+  ("is_metric", "set_speed", "candidate_speed", "conversion"),
+  (
+    (False, 75, 45, slv.CV.MPH_TO_MS),
+    (True, 100, 50, slv.CV.KPH_TO_MS),
+  ),
+)
+def test_large_cruise_set_speed_delta_requires_three_reads(is_metric, set_speed, candidate_speed, conversion):
+  daemon = daemon_with_history(0, [(candidate_speed, 0.99)])
+  daemon.is_metric = is_metric
+  daemon.current_cruise_set_speed_ms = set_speed * conversion
+  assert daemon._has_large_cruise_set_speed_delta(candidate_speed)
+  assert daemon._confirm_detection() is None
+
+  daemon.history.append(HistoryEntry(candidate_speed, 0.95, 1.0, strong_consensus=True))
+  assert daemon._confirm_detection() is None
+
+  daemon.history.append(HistoryEntry(candidate_speed, 0.91, 1.5))
+  assert daemon._confirm_detection() == pytest.approx((candidate_speed, 0.99))
+
+
+def test_normal_cruise_set_speed_delta_keeps_single_read_confirmation():
+  daemon = daemon_with_history(0, [(50, 0.99)])
+  daemon.current_cruise_set_speed_ms = 75 * slv.CV.MPH_TO_MS
+
+  assert daemon._confirm_detection() == pytest.approx((50, 0.99))
 
 
 def textured_track_frame(offset_x=0, offset_y=0):
