@@ -58,7 +58,7 @@ def test_drive_stats_uses_cloud_totals_and_local_galaxy_week():
   assert data.this_week.drives == 1
   assert data.this_week.distance == 10.0
   assert data.this_week.hours == 1.0
-  assert data.daily_distance[0].label == "Mon"
+  assert [day.label for day in data.daily_distance] == ["M", "T", "W", "T", "F", "S", "S"]
   assert data.daily_distance[0].distance == 10.0
   assert data.daily_distance[0].is_today
   assert data.daily_distance[1].is_future

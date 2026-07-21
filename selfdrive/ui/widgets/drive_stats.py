@@ -17,6 +17,7 @@ from openpilot.system.ui.lib.text_measure import measure_text_cached
 
 METER_TO_MILE = 1.0 / 1609.344
 METER_TO_KILOMETER = 0.001
+WEEKDAY_LABELS = ("M", "T", "W", "T", "F", "S", "S")
 
 CARD_COLOR = rl.Color(18, 20, 29, 255)
 CARD_BORDER = rl.Color(67, 57, 86, 255)
@@ -384,7 +385,7 @@ def load_drive_stats_data(params: Params, now: datetime | None = None) -> DriveS
     day = week_start + timedelta(days=day_index)
     distance_meters = sum(route.distance_meters for route in this_week_routes if route.date.date() == day)
     daily.append(DailyDistance(
-      label=day.strftime("%a"),
+      label=WEEKDAY_LABELS[day_index],
       distance=_distance_from_meters(distance_meters, is_metric),
       is_today=day == now.date(),
       is_future=day > now.date(),
@@ -401,14 +402,13 @@ def load_drive_stats_data(params: Params, now: datetime | None = None) -> DriveS
 
 def demo_drive_stats_data(is_metric: bool, now: datetime | None = None) -> DriveStatsData:
   now = now or datetime.now()
-  week_start = now.date() - timedelta(days=now.weekday())
   distance_scale = CV.MPH_TO_KPH if is_metric else 1.0
   unit = "kilometers" if is_metric else "miles"
   daily_miles = (19.4, 43.2, 28.6, 51.8, 12.7, 35.1, 8.9)
 
   daily = [
     DailyDistance(
-      label=(week_start + timedelta(days=index)).strftime("%a"),
+      label=WEEKDAY_LABELS[index],
       distance=distance * distance_scale,
       is_today=index == now.weekday(),
     )
@@ -658,9 +658,9 @@ class DriveStatsDashboard:
         )
 
       label_color = TEXT_COLOR if day.is_today else MUTED_COLOR
-      label_size = measure_text_cached(self._font_semi_bold, day.label, 24)
+      label_size = measure_text_cached(self._font_semi_bold, day.label, 28)
       label_pos = rl.Vector2(center_x - label_size.x / 2, plot.y + plot.height + 16)
-      rl.draw_text_ex(self._font_semi_bold, day.label, label_pos, 24, 0, label_color)
+      rl.draw_text_ex(self._font_semi_bold, day.label, label_pos, 28, 0, label_color)
 
   def render_records(self, rect: rl.Rectangle) -> None:
     self._draw_card(rect)
@@ -673,24 +673,31 @@ class DriveStatsDashboard:
       TEXT_COLOR,
     )
 
-    header_height = 78
-    row_height = (rect.height - header_height - 12) / max(len(self._data.records), 1)
-    for index, record in enumerate(self._data.records):
-      row_y = rect.y + header_height + index * row_height
-      if index > 0:
+    displayed_records = [
+      (record_index, self._data.records[record_index])
+      for record_index in (0, 3, 5)
+      if record_index < len(self._data.records)
+    ]
+    header_height = 82
+    row_height = (rect.height - header_height - 12) / max(len(displayed_records), 1)
+    for row_index, (record_index, record) in enumerate(displayed_records):
+      row_y = rect.y + header_height + row_index * row_height
+      if row_index > 0:
         rl.draw_line(int(rect.x + 24), int(row_y), int(rect.x + rect.width - 24), int(row_y), TRACK_COLOR)
 
-      icon_rect = rl.Rectangle(rect.x + 24, row_y + (row_height - 54) / 2, 54, 54)
-      self._draw_record_icon(index, icon_rect)
+      icon_size = min(84.0, row_height - 44)
+      icon_rect = rl.Rectangle(rect.x + 28, row_y + (row_height - icon_size) / 2, icon_size, icon_size)
+      self._draw_record_icon(record_index, icon_rect)
 
-      text_x = rect.x + 96
-      title_pos = rl.Vector2(text_x, row_y + 17)
-      rl.draw_text_ex(self._font_medium, record.title, title_pos, 23, 0, MUTED_COLOR)
+      text_x = rect.x + 132
+      content_center_y = row_y + row_height / 2
+      title_pos = rl.Vector2(text_x, content_center_y - 56)
+      rl.draw_text_ex(self._font_medium, record.title, title_pos, 31, 0, MUTED_COLOR)
 
-      value_pos = rl.Vector2(text_x, row_y + 49)
-      rl.draw_text_ex(self._font_bold, record.value, value_pos, 32, 0, TEXT_COLOR)
+      value_pos = rl.Vector2(text_x, content_center_y - 8)
+      rl.draw_text_ex(self._font_bold, record.value, value_pos, 44, 0, TEXT_COLOR)
 
-      detail_size = measure_text_cached(self._font_medium, record.detail, 21)
-      detail_x = max(text_x + 190, rect.x + rect.width - detail_size.x - 28)
-      detail_pos = rl.Vector2(detail_x, row_y + 57)
-      rl.draw_text_ex(self._font_medium, record.detail, detail_pos, 21, 0, MUTED_COLOR)
+      detail_size = measure_text_cached(self._font_medium, record.detail, 27)
+      detail_x = max(text_x + 240, rect.x + rect.width - detail_size.x - 30)
+      detail_pos = rl.Vector2(detail_x, content_center_y - detail_size.y / 2 + 12)
+      rl.draw_text_ex(self._font_medium, record.detail, detail_pos, 27, 0, MUTED_COLOR)
