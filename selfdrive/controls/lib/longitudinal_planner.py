@@ -90,7 +90,8 @@ LEAD_DEPART_ACCEL_HOLD_MIN_MODEL_PROB = 0.85
 LEAD_DEPART_ACCEL_HOLD_MIN_MODEL_ACCEL = 0.12
 LEAD_DEPART_ACCEL_HOLD_MAX_LEAD_BRAKE = 0.2
 LEAD_DEPART_ACCEL_HOLD_MIN_ACCEL = 0.25
-LEAD_DEPART_ACCEL_HOLD_MAX_ACCEL = 0.45
+LEAD_DEPART_ACCEL_HOLD_MAX_ACCEL = 0.55
+LEAD_DEPART_ACCEL_ASSIST = 0.10
 LEAD_DEPART_ACCEL_HOLD_REUSE_MIN_GAP = 3.75
 LEAD_DEPART_ACCEL_HOLD_REUSE_MAX_CLOSING_SPEED = 0.45
 LEAD_DEPART_ACCEL_HOLD_REUSE_MAX_LEAD_BRAKE = 0.2
@@ -1418,7 +1419,8 @@ class LongitudinalPlanner:
                                 max(LEAD_DEPART_ACCEL_HOLD_FULL_LEAD_SPEED - LEAD_DEPART_ACCEL_HOLD_MIN_LEAD_SPEED, 0.1), 0.0, 1.0))
     accel_cap = LEAD_DEPART_ACCEL_HOLD_MIN_ACCEL + (LEAD_DEPART_ACCEL_HOLD_MAX_ACCEL - LEAD_DEPART_ACCEL_HOLD_MIN_ACCEL) * np.clip(
       0.55 * lead_factor + 0.45 * gap_factor, 0.0, 1.0)
-    return min(accel_cap, max(float(model_desired_accel), LEAD_DEPART_ACCEL_HOLD_MIN_ACCEL))
+    assisted_model_accel = float(model_desired_accel) + LEAD_DEPART_ACCEL_ASSIST
+    return min(accel_cap, max(assisted_model_accel, LEAD_DEPART_ACCEL_HOLD_MIN_ACCEL))
 
   def get_reusable_lead_depart_accel_floor(self, lead, v_ego, t_follow):
     if self.lead_depart_accel_hold_floor is None or lead is None or not lead.status:

@@ -1896,6 +1896,24 @@ def test_standstill_moving_lead_holds_depart_accel_floor_after_stop_release(mode
   assert outputs[4] >= 0.25
 
 
+def test_route_251682_rav4_confirmed_depart_adds_bounded_accel_assist():
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=0.0)
+  lead = make_lead(
+    status=True,
+    d_rel=7.7,
+    v_lead=2.0,
+    a_lead=1.79,
+    radar=False,
+    model_prob=1.0,
+  )
+
+  floor = planner.get_lead_depart_accel_floor(lead, v_ego=0.0, model_desired_accel=0.44)
+
+  assert 0.52 <= floor <= 0.54
+  assert floor <= longitudinal_planner_module.LEAD_DEPART_ACCEL_HOLD_MAX_ACCEL
+
+
 @pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_standstill_depart_accel_hold_reuses_floor_through_softening_lead_delta(model_version):
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
