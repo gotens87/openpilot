@@ -50,6 +50,7 @@ def apply_kia_ev6_gt_line_longitudinal_params(ret: structs.CarParams) -> None:
 
 def apply_kia_ev9_longitudinal_params(ret: structs.CarParams) -> None:
   ret.startAccel = 0.2
+  ret.longitudinalActuatorDelay = 0.3
   ret.vEgoStarting = 0.5
 
 
@@ -157,8 +158,6 @@ class CarInterface(CarInterfaceBase):
       if ret.flags & HyundaiFlags.CANFD_ANGLE_STEERING:
         ret.steerControlType = structs.CarParams.SteerControlType.angle
         ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CANFD_ANGLE_STEERING.value
-        if candidate == CAR.KIA_EV9:
-          ret.steerAtStandstill = True
       if candidate == CAR.HYUNDAI_IONIQ_6:
         # Keep lateral active through stops: zeroing torque at standstill dropped the
         # stop-turn hold and forced a rate-limit re-ramp from zero on every pull-away
