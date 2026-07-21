@@ -27,6 +27,7 @@ ACCEL_PID_UNWIND = 0.03 * DT_CTRL * 3  # m/s^2 / frame
 PRIUS_INTEGRAL_MISMATCH_UNWIND = 8.0
 PRIUS_POSITIVE_FEEDFORWARD_SCALE = 0.7
 PRIUS_CRUISE_FEEDFORWARD_SCALE = 1.0
+PRIUS_NEGATIVE_FEEDFORWARD_SCALE = 1.125
 CAMRY_HYBRID_POSITIVE_FEEDFORWARD_SCALE = 0.8
 
 MAX_PITCH_COMPENSATION = 1.5  # m/s^2
@@ -80,6 +81,12 @@ def get_long_tune(CP, params):
 def get_prius_positive_feedforward_scale(v_ego: float) -> float:
   return float(np.interp(v_ego, [0.0, 8.0, 20.0],
                          [PRIUS_POSITIVE_FEEDFORWARD_SCALE, PRIUS_POSITIVE_FEEDFORWARD_SCALE, PRIUS_CRUISE_FEEDFORWARD_SCALE]))
+
+
+def get_prius_feedforward(accel: float, v_ego: float) -> float:
+  if accel > 0.0:
+    return accel * get_prius_positive_feedforward_scale(v_ego)
+  return accel * PRIUS_NEGATIVE_FEEDFORWARD_SCALE
 
 
 def get_camry_hybrid_feedforward(accel: float) -> float:
@@ -468,8 +475,7 @@ class CarController(CarControllerBase):
 
             feedforward = pcm_accel_cmd
             if self.CP.carFingerprint == CAR.TOYOTA_PRIUS:
-              if feedforward > 0.0:
-                feedforward *= get_prius_positive_feedforward_scale(CS.out.vEgo)
+              feedforward = get_prius_feedforward(feedforward, CS.out.vEgo)
             elif is_camry_hybrid(self.CP) and feedforward > 0.0:
               # Preserve the established Camry Hybrid acceleration response while
               # allowing negative requests to track the planner at full scale.

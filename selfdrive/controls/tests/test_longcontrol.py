@@ -791,6 +791,63 @@ def test_gm_stock_truck_positive_i_bleeds_on_coast_request():
   assert lc.pid.i < 0.25
 
 
+def test_gm_stock_truck_target_filter_smooths_mild_follow_reversals():
+  CP = make_longcontrol_cp(
+    brand="gm",
+    carFingerprint=CAR.CHEVROLET_SILVERADO,
+    enableGasInterceptorDEPRECATED=False,
+  )
+  tuning = LongControl(CP).vehicle_tuning
+
+  assert tuning.shape_gm_truck_accel_target(0.25, 20.0, False) == pytest.approx(0.25)
+  filtered_brake = tuning.shape_gm_truck_accel_target(-0.10, 20.0, False)
+  filtered_accel = tuning.shape_gm_truck_accel_target(0.25, 20.0, False)
+
+  assert -0.10 < filtered_brake < 0.25
+  assert filtered_brake < filtered_accel < 0.25
+
+
+def test_gm_stock_truck_target_filter_bypasses_urgent_braking():
+  CP = make_longcontrol_cp(
+    brand="gm",
+    carFingerprint=CAR.CHEVROLET_SILVERADO,
+    enableGasInterceptorDEPRECATED=False,
+  )
+  tuning = LongControl(CP).vehicle_tuning
+
+  tuning.shape_gm_truck_accel_target(0.40, 20.0, False)
+
+  assert tuning.shape_gm_truck_accel_target(-0.70, 20.0, False) == pytest.approx(-0.70)
+
+  tuning.reset()
+  tuning.shape_gm_truck_accel_target(0.40, 20.0, False)
+  assert tuning.shape_gm_truck_accel_target(-0.10, 20.0, False) == pytest.approx(-0.10)
+
+  tuning.reset()
+  tuning.shape_gm_truck_accel_target(0.25, 20.0, False)
+  assert tuning.shape_gm_truck_accel_target(0.10, 20.0, True) == pytest.approx(0.10)
+
+
+def test_gm_stock_truck_target_filter_bypasses_low_speed_and_other_cars():
+  truck_cp = make_longcontrol_cp(
+    brand="gm",
+    carFingerprint=CAR.CHEVROLET_SILVERADO,
+    enableGasInterceptorDEPRECATED=False,
+  )
+  truck_tuning = LongControl(truck_cp).vehicle_tuning
+  truck_tuning.shape_gm_truck_accel_target(0.40, 20.0, False)
+
+  bolt_cp = make_longcontrol_cp(
+    brand="gm",
+    carFingerprint=CAR.CHEVROLET_BOLT_ACC_2022_2023,
+    enableGasInterceptorDEPRECATED=False,
+  )
+  bolt_tuning = LongControl(bolt_cp).vehicle_tuning
+
+  assert truck_tuning.shape_gm_truck_accel_target(-0.10, 10.0, False) == pytest.approx(-0.10)
+  assert bolt_tuning.shape_gm_truck_accel_target(-0.10, 20.0, False) == pytest.approx(-0.10)
+
+
 def test_gm_stock_truck_positive_i_bleeds_during_light_highway_accel_request():
   CP = car.CarParams.new_message()
   CP.brand = "gm"

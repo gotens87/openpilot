@@ -8,7 +8,8 @@ from opendbc.can import CANPacker, CANParser
 from opendbc.car.structs import CarParams
 from opendbc.car.fw_versions import build_fw_dict
 from opendbc.car.toyota import toyotacan
-from opendbc.car.toyota.carcontroller import CarController, get_camry_hybrid_feedforward, get_long_tune, get_prius_positive_feedforward_scale, \
+from opendbc.car.toyota.carcontroller import CarController, get_camry_hybrid_feedforward, get_long_tune, get_prius_feedforward, \
+                                             get_prius_positive_feedforward_scale, \
                                              limit_interceptor_pcm_accel, \
                                              limit_interceptor_stopping_accel, limit_no_lead_cruise_sign_flip, \
                                              limit_prius_stopping_accel, update_permit_braking
@@ -523,6 +524,10 @@ class TestToyotaCarController:
   def test_prius_positive_feedforward_scale_restores_cruise_authority(self):
     assert get_prius_positive_feedforward_scale(20.0) > get_prius_positive_feedforward_scale(8.0)
     assert abs(get_prius_positive_feedforward_scale(20.0) - 1.0) < 1e-6
+
+  def test_prius_feedforward_adds_braking_authority_without_changing_acceleration(self):
+    assert get_prius_feedforward(-2.0, 8.0) == pytest.approx(-2.25)
+    assert get_prius_feedforward(1.0, 8.0) == pytest.approx(0.7)
 
   def test_camry_hybrid_feedforward_only_softens_acceleration(self):
     assert get_camry_hybrid_feedforward(1.0) == pytest.approx(0.8)

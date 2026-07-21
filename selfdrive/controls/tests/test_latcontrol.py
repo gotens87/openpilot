@@ -6,6 +6,7 @@ from cereal import car, custom, log
 import openpilot.selfdrive.controls.lib.latcontrol_torque as latcontrol_torque
 import openpilot.selfdrive.controls.lib.latcontrol_pid as latcontrol_pid
 from opendbc.car.car_helpers import interfaces
+from opendbc.car.interfaces import CarInterfaceBase
 from opendbc.car.honda.values import CAR as HONDA, HondaFlags
 from opendbc.car.toyota.values import CAR as TOYOTA
 from opendbc.car.nissan.values import CAR as NISSAN
@@ -56,6 +57,9 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_prius_ff_scale,
   get_prius_friction_scale,
   get_prius_friction_threshold,
+  get_rav4_prime_ff_scale,
+  get_rav4_prime_friction_scale,
+  get_rav4_prime_friction_threshold,
   get_ioniq_5_ff_scale,
   get_ioniq_5_friction_scale,
   get_ioniq_5_friction_threshold,
@@ -98,9 +102,11 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
 class TestLatControl:
 
   @staticmethod
-  def _build_torque_controller(car_name):
+  def _build_torque_controller(car_name, force_torque=False):
     CarInterface = interfaces[car_name]
     CP = CarInterface.get_non_essential_params(car_name)
+    if force_torque:
+      CarInterfaceBase.configure_torque_tune(car_name, CP.lateralTuning)
     CI = CarInterface(CP, custom.StarPilotCarParams.new_message())
     controller = LatControlTorque(CP.as_reader(), CI, DT_CTRL)
     VM = VehicleModel(CP)
@@ -565,6 +571,36 @@ class TestLatControl:
     assert unwind_left_scale < 1.0
     assert unwind_right_scale <= unwind_left_scale
     assert get_ioniq_5_friction_threshold(25.0, 0.0, 0.0) >= get_hkg_canfd_base_friction_threshold(25.0)
+
+  def test_rav4_prime_unwind_relief_preserves_turn_in(self):
+    left_turn_in = get_rav4_prime_ff_scale(1.0, 0.8, 13.0)
+    right_turn_in = get_rav4_prime_ff_scale(-1.0, -0.8, 13.0)
+    left_unwind = get_rav4_prime_ff_scale(1.0, -0.8, 13.0)
+    right_unwind = get_rav4_prime_ff_scale(-1.0, 0.8, 13.0)
+
+    assert left_turn_in == pytest.approx(1.0)
+    assert right_turn_in == pytest.approx(1.0)
+    assert left_unwind < right_unwind < 1.0
+    assert get_rav4_prime_ff_scale(1.0, -0.8, 25.0) > left_unwind
+
+  def test_rav4_prime_friction_targets_center_and_unwind(self):
+    base = get_standard_friction_threshold(13.0)
+    center = get_rav4_prime_friction_threshold(13.0, 0.0)
+    turn = get_rav4_prime_friction_threshold(13.0, 1.0)
+
+    assert center > base
+    assert turn == pytest.approx(base, rel=0.01)
+    assert get_rav4_prime_friction_scale(13.0, 1.0, 0.8) == pytest.approx(1.0)
+    assert get_rav4_prime_friction_scale(13.0, 1.0, -0.8) < 1.0
+
+  def test_rav4_prime_forced_torque_update_path(self):
+    controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(TOYOTA.TOYOTA_RAV4_PRIME, force_torque=True)
+    CS.vEgo = 13.0
+
+    _, _, lac_log = controller.update(True, CS, VM, params, False, 0.0025, False, 0.2, None, None, starpilot_toggles)
+
+    assert controller.is_rav4_prime
+    assert lac_log.active
 
   def test_ioniq_5_center_taper_curve(self):
     assert get_ioniq_5_center_taper_scale(0.0, 25.0) < get_ioniq_5_center_taper_scale(0.0, 10.0)

@@ -1,6 +1,7 @@
 import numpy as np
 
 from opendbc.car.gm.values import CAR, GMFlags
+from openpilot.common.realtime import DT_CTRL
 from openpilot.starpilot.common.testing_grounds import testing_ground
 
 
@@ -11,6 +12,11 @@ BOLT_ACC_PEDAL_REGEN_LIMIT_BP = [0.0, 1.5, 4.0, 8.0, 15.0, 30.0]
 BOLT_ACC_PEDAL_REGEN_LIMIT_V = [-0.93, -1.28, -1.98, -2.58, -2.86, -2.95]
 NEGATIVE_TARGET_CREEP_GUARD_SPEED = 0.35
 NEGATIVE_TARGET_CREEP_GUARD_DECEL = 0.40
+GM_TRUCK_TARGET_FILTER_MIN_SPEED = 12.0
+GM_TRUCK_TARGET_FILTER_UP_TAU = 0.10
+GM_TRUCK_TARGET_FILTER_DOWN_TAU = 0.06
+GM_TRUCK_TARGET_FILTER_BRAKE_BYPASS = -0.65
+GM_TRUCK_TARGET_FILTER_DROP_BYPASS = 0.45
 
 
 def get_bolt_acc_pedal_friction_bias(output_accel, a_target, v_ego):
@@ -86,6 +92,29 @@ class LongControlVehicleTuning:
   def reset(self):
     self.last_a_target = 0.0
     self.integrator_hold_frames = 0
+    self.gm_truck_filtered_a_target = 0.0
+    self.gm_truck_target_filter_initialized = False
+
+  def shape_gm_truck_accel_target(self, a_target, v_ego, should_stop):
+    if not self.is_gm_stock_truck:
+      return a_target
+
+    bypass_filter = (
+      v_ego < GM_TRUCK_TARGET_FILTER_MIN_SPEED or
+      should_stop or
+      a_target <= GM_TRUCK_TARGET_FILTER_BRAKE_BYPASS or
+      (self.gm_truck_target_filter_initialized and
+       a_target < self.gm_truck_filtered_a_target - GM_TRUCK_TARGET_FILTER_DROP_BYPASS)
+    )
+    if not self.gm_truck_target_filter_initialized or bypass_filter:
+      self.gm_truck_filtered_a_target = float(a_target)
+      self.gm_truck_target_filter_initialized = True
+      return float(a_target)
+
+    tau = GM_TRUCK_TARGET_FILTER_DOWN_TAU if a_target < self.gm_truck_filtered_a_target else GM_TRUCK_TARGET_FILTER_UP_TAU
+    alpha = DT_CTRL / (tau + DT_CTRL)
+    self.gm_truck_filtered_a_target += alpha * (float(a_target) - self.gm_truck_filtered_a_target)
+    return self.gm_truck_filtered_a_target
 
   def get_integrator_freeze(self, last_output_accel, a_target, error, v_ego, accel_limits):
     volt_test_tune_handoff = self.is_volt and testing_ground.use_2

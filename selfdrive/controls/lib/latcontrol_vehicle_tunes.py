@@ -132,6 +132,10 @@ PRIUS_CARS = (
   TOYOTA_CAR.TOYOTA_PRIUS,
 )
 
+RAV4_PRIME_CARS = (
+  TOYOTA_CAR.TOYOTA_RAV4_PRIME,
+)
+
 BOLT_2017_LATERAL_TESTING_GROUND_ID = testing_ground.id_3
 BOLT_2017_STEER_RATIO_TEST_SCALE = 1.045
 BOLT_2017_STEER_RATIO_ONSET_SPEED = 20.0 * CV.MPH_TO_MS
@@ -712,6 +716,19 @@ PRIUS_CENTER_TAPER_LAT_WIDTH = 0.035
 PRIUS_CENTER_TAPER_SPEED = 18.0
 PRIUS_CENTER_TAPER_SPEED_WIDTH = 2.2
 
+RAV4_PRIME_PHASE_SCALE = 0.12
+RAV4_PRIME_UNWIND_FF_REDUCTION_LEFT = 0.15
+RAV4_PRIME_UNWIND_FF_REDUCTION_RIGHT = 0.13
+RAV4_PRIME_UNWIND_FRICTION_REDUCTION_LEFT = 0.16
+RAV4_PRIME_UNWIND_FRICTION_REDUCTION_RIGHT = 0.14
+RAV4_PRIME_FRICTION_THRESHOLD_GAIN = 0.24
+RAV4_PRIME_FRICTION_CENTER_LAT = 0.30
+RAV4_PRIME_FRICTION_CENTER_LAT_WIDTH = 0.07
+RAV4_PRIME_SPEED_ONSET = 5.0
+RAV4_PRIME_SPEED_ONSET_WIDTH = 1.5
+RAV4_PRIME_SPEED_MAX = 20.0
+RAV4_PRIME_SPEED_MAX_WIDTH = 2.5
+
 TRAILER_LOAD_FULL_ASSIST_KG = 15000.0 * CV.LB_TO_KG
 TRAILER_LATERAL_MIN_SPEED = 15.0 * CV.MPH_TO_MS
 TRAILER_LATERAL_FULL_SPEED = 35.0 * CV.MPH_TO_MS
@@ -959,6 +976,47 @@ def get_prius_center_taper_scale(desired_lateral_accel: float, v_ego: float) -> 
   center_weight = _prius_sigmoid((PRIUS_CENTER_TAPER_LAT - abs(desired_lateral_accel)) / PRIUS_CENTER_TAPER_LAT_WIDTH)
   reduction = _flm_vehicle_knob("toyota_prius.center_taper_max", PRIUS_CENTER_TAPER_MAX) * speed_weight * center_weight
   return 1.0 - reduction
+
+
+def _rav4_prime_side_value(desired_lateral_accel: float, left_value: float, right_value: float) -> float:
+  return left_value if desired_lateral_accel >= 0.0 else right_value
+
+
+def _rav4_prime_speed_weight(v_ego: float) -> float:
+  onset = _sigmoid((v_ego - RAV4_PRIME_SPEED_ONSET) / RAV4_PRIME_SPEED_ONSET_WIDTH)
+  cutoff = _sigmoid((RAV4_PRIME_SPEED_MAX - v_ego) / RAV4_PRIME_SPEED_MAX_WIDTH)
+  return onset * cutoff
+
+
+def _rav4_prime_unwind_weight(desired_lateral_accel: float, desired_lateral_jerk: float) -> float:
+  phase = math.tanh((desired_lateral_accel * desired_lateral_jerk) / RAV4_PRIME_PHASE_SCALE)
+  lat_weight = _sigmoid((abs(desired_lateral_accel) - 0.20) / 0.07)
+  return max(-phase, 0.0) * lat_weight
+
+
+def get_rav4_prime_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: float, v_ego: float) -> float:
+  reduction = _rav4_prime_side_value(desired_lateral_accel,
+                                     RAV4_PRIME_UNWIND_FF_REDUCTION_LEFT,
+                                     RAV4_PRIME_UNWIND_FF_REDUCTION_RIGHT)
+  return 1.0 - (reduction * _rav4_prime_unwind_weight(desired_lateral_accel, desired_lateral_jerk) *
+                _rav4_prime_speed_weight(v_ego))
+
+
+def get_rav4_prime_friction_threshold(v_ego: float, desired_lateral_accel: float = 0.0,
+                                      desired_lateral_jerk: float = 0.0) -> float:
+  del desired_lateral_jerk
+  center_weight = _sigmoid((RAV4_PRIME_FRICTION_CENTER_LAT - abs(desired_lateral_accel)) /
+                           RAV4_PRIME_FRICTION_CENTER_LAT_WIDTH)
+  scale = 1.0 + (RAV4_PRIME_FRICTION_THRESHOLD_GAIN * center_weight * _rav4_prime_speed_weight(v_ego))
+  return get_standard_friction_threshold(v_ego) * scale
+
+
+def get_rav4_prime_friction_scale(v_ego: float, desired_lateral_accel: float, desired_lateral_jerk: float) -> float:
+  reduction = _rav4_prime_side_value(desired_lateral_accel,
+                                     RAV4_PRIME_UNWIND_FRICTION_REDUCTION_LEFT,
+                                     RAV4_PRIME_UNWIND_FRICTION_REDUCTION_RIGHT)
+  return 1.0 - (reduction * _rav4_prime_unwind_weight(desired_lateral_accel, desired_lateral_jerk) *
+                _rav4_prime_speed_weight(v_ego))
 
 
 def civic_bosch_modified_lateral_testing_ground_active() -> bool:
@@ -2790,7 +2848,7 @@ def get_flm_capabilities(car_fingerprint, brand: str = "", hyundai_canfd: bool =
 
   dedicated_friction = car_fingerprint in (
     set(BOLT_2022_2023_CARS) | set(BOLT_2018_2021_CARS) | set(VOLT_STANDARD_CARS) | set(PALISADE_CARS) |
-    set(PRIUS_CARS) | set(IONIQ_5_CARS) | set(IONIQ_6_CARS) | set(KIA_EV6_CARS) | set(KIA_FORTE_CARS) |
+    set(PRIUS_CARS) | set(RAV4_PRIME_CARS) | set(IONIQ_5_CARS) | set(IONIQ_6_CARS) | set(KIA_EV6_CARS) | set(KIA_FORTE_CARS) |
     set(KIA_NIRO_PHEV_2022_CARS) | set(KIA_CARNIVAL_CARS) | set(GENESIS_G90_CARS)
   )
   dedicated_center_taper = car_fingerprint in (
