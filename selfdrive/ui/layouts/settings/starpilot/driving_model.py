@@ -84,7 +84,7 @@ _SORT_LABELS = {
   "alphabetical":     "Alphabetical",
   "date":             "Date (Newest)",
   "date_oldest":      "Date (Oldest)",
-  "favorites":        "Favorites",
+  "favorites":        "Favorites + Downloaded",
   "community_picks":  "Community Picks",
 }
 _SORT_PILLS = ("alphabetical", "date", "favorites", "community_picks")
@@ -444,6 +444,15 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
         if self._controller.current_entry() is not None and self._controller.current_entry().user_favorite:
           count = max(count - 1, 0)
         sections.append(("favorites", SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP + count * ROW_HEIGHT))
+      
+      fav_keys = {e.key for e in fav}
+      other_installed = [e for e in self._controller.installed_entries() if e.key not in fav_keys]
+      if other_installed:
+        count = len(other_installed)
+        if self._controller.current_entry() is not None and not self._controller.current_entry().user_favorite:
+          count = max(count - 1, 0)
+        if count > 0:
+          sections.append(("downloaded", SECTION_HEADER_HEIGHT + SECTION_HEADER_GAP + count * ROW_HEIGHT))
     elif sort_mode == "community_picks":
       community = self._controller.community_picks_entries()
       if community:
@@ -474,11 +483,22 @@ class DrivingModelManagerView(AetherInteractiveMixin, Widget):
     y = rect.y + self._scroll_offset
 
     if sort_mode == "favorites":
-      entries = self._controller.favorites_entries()
+      fav_entries = self._controller.favorites_entries()
       if self._controller.current_entry() is not None:
-        entries = [e for e in entries if not self._controller.is_current_model(e.key)]
-      if entries:
-        y = self._draw_model_section(rect.x, y, width, tr("Favorites"), entries)
+        fav_entries = [e for e in fav_entries if not self._controller.is_current_model(e.key)]
+      
+      fav_keys = {e.key for e in self._controller.favorites_entries()}
+      other_installed = [e for e in self._controller.installed_entries() if e.key not in fav_keys]
+      if self._controller.current_entry() is not None:
+        other_installed = [e for e in other_installed if not self._controller.is_current_model(e.key)]
+
+      if fav_entries or other_installed:
+        if fav_entries:
+          y = self._draw_model_section(rect.x, y, width, tr("Favorites"), fav_entries)
+          y += SECTION_GAP
+        if other_installed:
+          y = self._draw_model_section(rect.x, y, width, tr("Downloaded"), other_installed)
+          y += SECTION_GAP
       else:
         self._draw_empty_state(rl.Rectangle(rect.x, y + 36, width, 200))
       return
