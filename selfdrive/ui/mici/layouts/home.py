@@ -280,7 +280,7 @@ class MiciHomeLayout(Widget):
       self._version_commit_label.render()
 
     # ***** Center-aligned bottom section icons *****
-    self._egpu_icon.set_visible(ui_state.usbgpu_active)
+    self._egpu_icon.set_visible(ui_state.usbgpu and ui_state.usbgpu_active)
     self._egpu_icon_gray.set_visible(ui_state.usbgpu and not ui_state.usbgpu_active)
     self._mic_icon.set_visible(ui_state.recording_audio)
 
