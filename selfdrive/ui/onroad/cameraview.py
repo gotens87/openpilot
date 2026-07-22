@@ -253,10 +253,12 @@ class CameraView(Widget):
 
   def _observe_displayed_frame(self) -> None:
     if self.frame is not None:
-      self._last_frame_id = max(self._last_frame_id, int(self.frame.frame_id))
+      client_frame_id = getattr(self.client, "frame_id", -1) if hasattr(self, "client") and self.client is not None else -1
+      frame_id = getattr(self.frame, "frame_id", client_frame_id)
+      self._last_frame_id = max(self._last_frame_id, int(frame_id))
 
   def _accept_frame(self, frame: VisionBuf, packet_frame_id: int) -> bool:
-    content_frame_id = int(frame.frame_id)
+    content_frame_id = int(getattr(frame, "frame_id", packet_frame_id))
     if content_frame_id < self._last_frame_id:
       self._regressive_frame_count += 1
       if self._regressive_frame_count == 1 or self._regressive_frame_count % 100 == 0:
@@ -370,7 +372,8 @@ class CameraView(Widget):
     # Switch to target
     self.client = self._target_client
     self._stream_type = self._target_stream_type
-    self._last_frame_id = int(self.frame.frame_id) if self.frame is not None else -1
+    client_frame_id = getattr(self.client, "frame_id", -1) if hasattr(self, "client") and self.client is not None else -1
+    self._last_frame_id = int(getattr(self.frame, "frame_id", client_frame_id)) if self.frame is not None else -1
     self._texture_needs_update = True
 
     # Reset state
