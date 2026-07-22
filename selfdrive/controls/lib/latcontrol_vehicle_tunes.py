@@ -662,6 +662,10 @@ KIA_EV6_UNWIND_TAPER_LEFT = 0.56
 KIA_EV6_UNWIND_TAPER_RIGHT = 0.54
 KIA_EV6_BASE_UNWIND_TAPER_LEFT = 0.06
 KIA_EV6_BASE_UNWIND_TAPER_RIGHT = 0.05
+KIA_EV6_JWARM_BASE_TURN_IN_BOOST_LEFT = 0.12
+KIA_EV6_JWARM_BASE_TURN_IN_BOOST_RIGHT = 0.14
+KIA_EV6_JWARM_BASE_UNWIND_TAPER_LEFT = 0.15
+KIA_EV6_JWARM_BASE_UNWIND_TAPER_RIGHT = 0.16
 KIA_EV6_FRICTION_MULT = 1.01
 KIA_EV6_FRICTION_LAT_RISE = 0.18
 KIA_EV6_FRICTION_JERK_RISE = 0.22
@@ -2419,12 +2423,20 @@ def get_kia_ev6_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: flo
                          _flm_vehicle_knob("hyundai_kia_ev6.unwind_taper_right", KIA_EV6_UNWIND_TAPER_RIGHT),
                        ) *
                          unwind_weight * (0.35 + 0.65 * low_speed_factor))
+  jwarm_tune = kia_ev6_lateral_testing_ground_active()
+  base_turn_in_boost = 1.0 + ((_kia_ev6_side_value(
+                                desired_lateral_accel,
+                                KIA_EV6_JWARM_BASE_TURN_IN_BOOST_LEFT,
+                                KIA_EV6_JWARM_BASE_TURN_IN_BOOST_RIGHT,
+                              ) if jwarm_tune else 0.0) * turn_in_weight * onset * cutoff)
   base_unwind_taper = 1.0 - (_kia_ev6_side_value(
                               desired_lateral_accel,
-                              _flm_vehicle_knob("hyundai_kia_ev6.base_unwind_taper_left", KIA_EV6_BASE_UNWIND_TAPER_LEFT),
-                              _flm_vehicle_knob("hyundai_kia_ev6.base_unwind_taper_right", KIA_EV6_BASE_UNWIND_TAPER_RIGHT),
+                              KIA_EV6_JWARM_BASE_UNWIND_TAPER_LEFT if jwarm_tune else
+                                _flm_vehicle_knob("hyundai_kia_ev6.base_unwind_taper_left", KIA_EV6_BASE_UNWIND_TAPER_LEFT),
+                              KIA_EV6_JWARM_BASE_UNWIND_TAPER_RIGHT if jwarm_tune else
+                                _flm_vehicle_knob("hyundai_kia_ev6.base_unwind_taper_right", KIA_EV6_BASE_UNWIND_TAPER_RIGHT),
                             ) * unwind_weight * onset * cutoff)
-  return base_unwind_taper + (extra_scale * turn_in_boost * max(unwind_taper, 0.0))
+  return (base_unwind_taper * base_turn_in_boost) + (extra_scale * turn_in_boost * max(unwind_taper, 0.0))
 
 
 def get_kia_ev6_friction_threshold(v_ego: float, desired_lateral_accel: float = 0.0, desired_lateral_jerk: float = 0.0) -> float:

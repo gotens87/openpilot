@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from cereal import car, custom, log
 import openpilot.selfdrive.controls.lib.latcontrol_torque as latcontrol_torque
 import openpilot.selfdrive.controls.lib.latcontrol_pid as latcontrol_pid
+import openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes as latcontrol_vehicle_tunes
 from opendbc.car.car_helpers import interfaces
 from opendbc.car.interfaces import CarInterfaceBase
 from opendbc.car.honda.values import CAR as HONDA, HondaFlags
@@ -1135,6 +1136,22 @@ class TestLatControl:
     assert unwind_right < steady_right
     assert unwind_left < 1.03
     assert unwind_right < 1.07
+
+  def test_kia_ev6_jwarm_testing_ground_phase_correction(self, monkeypatch):
+    clear_flm_runtime_overrides()
+    monkeypatch.setattr(latcontrol_vehicle_tunes, "kia_ev6_lateral_testing_ground_active", lambda: False)
+    normal_steady = get_kia_ev6_ff_scale(0.45, 0.0, 10.0)
+    normal_turn_in_left = get_kia_ev6_ff_scale(0.45, 0.7, 10.0)
+    normal_turn_in_right = get_kia_ev6_ff_scale(-0.45, -0.7, 10.0)
+    normal_unwind_left = get_kia_ev6_ff_scale(0.45, -0.7, 10.0)
+    normal_unwind_right = get_kia_ev6_ff_scale(-0.45, 0.7, 10.0)
+
+    monkeypatch.setattr(latcontrol_vehicle_tunes, "kia_ev6_lateral_testing_ground_active", lambda: True)
+    assert get_kia_ev6_ff_scale(0.45, 0.0, 10.0) == pytest.approx(normal_steady)
+    assert get_kia_ev6_ff_scale(0.45, 0.7, 10.0) > normal_turn_in_left + 0.08
+    assert get_kia_ev6_ff_scale(-0.45, -0.7, 10.0) > normal_turn_in_right + 0.10
+    assert get_kia_ev6_ff_scale(0.45, -0.7, 10.0) < normal_unwind_left - 0.07
+    assert get_kia_ev6_ff_scale(-0.45, 0.7, 10.0) < normal_unwind_right - 0.08
 
   def test_kia_ev6_center_taper_curve(self):
     assert get_kia_ev6_center_taper_scale(0.0, 25.0) < get_kia_ev6_center_taper_scale(0.0, 10.0)
