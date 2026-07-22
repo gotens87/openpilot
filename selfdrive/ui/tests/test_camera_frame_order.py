@@ -1,4 +1,7 @@
-from openpilot.selfdrive.ui.onroad import cameraview
+import pytest
+
+from openpilot.selfdrive.ui.mici.onroad import cameraview as mici_cameraview
+from openpilot.selfdrive.ui.onroad import cameraview as big_cameraview
 
 
 class FakeFrame:
@@ -7,7 +10,7 @@ class FakeFrame:
     self.idx = idx
 
 
-def _camera_view():
+def _camera_view(cameraview):
   view = cameraview.CameraView.__new__(cameraview.CameraView)
   view._name = "camerad"
   view.frame = None
@@ -18,9 +21,10 @@ def _camera_view():
   return view
 
 
-def test_reused_egl_slot_cannot_move_camera_backwards(monkeypatch):
+@pytest.mark.parametrize("cameraview", [big_cameraview, mici_cameraview])
+def test_reused_egl_slot_cannot_move_camera_backwards(monkeypatch, cameraview):
   monkeypatch.setattr(cameraview.cloudlog, "warning", lambda *_args, **_kwargs: None)
-  view = _camera_view()
+  view = _camera_view(cameraview)
 
   displayed = FakeFrame(frame_id=10, idx=0)
   assert view._accept_frame(displayed, packet_frame_id=10)
@@ -36,8 +40,9 @@ def test_reused_egl_slot_cannot_move_camera_backwards(monkeypatch):
   assert view._regressive_frame_count == 1
 
 
-def test_newer_camera_frame_is_accepted():
-  view = _camera_view()
+@pytest.mark.parametrize("cameraview", [big_cameraview, mici_cameraview])
+def test_newer_camera_frame_is_accepted(cameraview):
+  view = _camera_view(cameraview)
   view._last_frame_id = 30
   newer = FakeFrame(frame_id=31, idx=2)
 
