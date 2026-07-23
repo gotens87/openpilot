@@ -2916,6 +2916,20 @@ def _resolve_troubleshoot_default_value(key, value_type, default_values):
 
   return _coerce_param_value(default_raw_value, safe_type)
 
+def _normalize_troubleshoot_current_display_value(key, current_value, default_value):
+  if key != "SteerDelay":
+    return current_value
+
+  try:
+    full_current_delay = full_lateral_delay(float(current_value))
+    numeric_default = float(default_value)
+  except (TypeError, ValueError):
+    return current_value
+
+  if math.isfinite(full_current_delay) and math.isfinite(numeric_default) and math.isclose(full_current_delay, numeric_default, abs_tol=1e-6):
+    return default_value
+  return current_value
+
 def _normalize_live_delay_status(status):
   status_text = str(status or "").strip().lower()
   if status_text in {"estimated", "unestimated", "invalid"}:
@@ -3245,6 +3259,7 @@ def _build_troubleshoot_section_payload(section_definition, value_types, default
     try:
       current_value = _resolve_troubleshoot_current_value(key, value_type, default_values)
       default_value = _resolve_troubleshoot_default_value(key, value_type, default_values)
+      current_value = _normalize_troubleshoot_current_display_value(key, current_value, default_value)
     except Exception:
       current_value = "Unavailable"
       default_value = "n/a"
@@ -5918,7 +5933,12 @@ def setup(app):
     if not route_names:
       return jsonify({"error": "No routes were selected."}), 400
 
-    started = flm_workspace.start_flm_background_analysis(route_names, FOOTAGE_PATHS)
+    try:
+      segment_ranges = flm_workspace.normalize_segment_ranges(route_names, data.get("segmentRanges", {}))
+    except (TypeError, ValueError) as error:
+      return jsonify({"error": str(error)}), 400
+
+    started = flm_workspace.start_flm_background_analysis(route_names, FOOTAGE_PATHS, segment_ranges)
     if not started:
       return jsonify({"error": "Failed to start FLM analysis."}), 500
 
