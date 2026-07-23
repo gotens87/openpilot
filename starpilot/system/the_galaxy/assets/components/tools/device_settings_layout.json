@@ -4033,7 +4033,7 @@
       },
       {
         "key": "LaneCenteringE2EAuthority",
-        "label": "E2E Break-In Authority",
+        "label": "E2E Override Strength",
         "description": "How strongly a confident end-to-end path can override lane centering when it deliberately departs the lane target. 1.0 gives the model full authority; 0.0 disables break-in.",
         "data_type": "float",
         "ui_type": "numeric",
