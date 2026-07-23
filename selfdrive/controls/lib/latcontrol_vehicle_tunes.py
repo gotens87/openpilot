@@ -671,10 +671,15 @@ KIA_EV6_UNWIND_TAPER_LEFT = 0.56
 KIA_EV6_UNWIND_TAPER_RIGHT = 0.54
 KIA_EV6_BASE_UNWIND_TAPER_LEFT = 0.06
 KIA_EV6_BASE_UNWIND_TAPER_RIGHT = 0.05
-KIA_EV6_JWARM_BASE_TURN_IN_BOOST_LEFT = 0.12
-KIA_EV6_JWARM_BASE_TURN_IN_BOOST_RIGHT = 0.14
-KIA_EV6_JWARM_BASE_UNWIND_TAPER_LEFT = 0.15
-KIA_EV6_JWARM_BASE_UNWIND_TAPER_RIGHT = 0.16
+KIA_EV6_JWARM_BASE_TURN_IN_BOOST_LEFT = 0.13
+KIA_EV6_JWARM_BASE_TURN_IN_BOOST_RIGHT = 0.15
+KIA_EV6_JWARM_BASE_UNWIND_TAPER_LEFT = 0.17
+KIA_EV6_JWARM_BASE_UNWIND_TAPER_RIGHT = 0.18
+KIA_EV6_JWARM_PHASE_STABILITY_MAX_REDUCTION = 0.55
+KIA_EV6_JWARM_PHASE_STABILITY_SPEED = 10.0
+KIA_EV6_JWARM_PHASE_STABILITY_SPEED_WIDTH = 1.8
+KIA_EV6_JWARM_PHASE_STABILITY_JERK = 0.70
+KIA_EV6_JWARM_PHASE_STABILITY_JERK_WIDTH = 0.18
 KIA_EV6_FRICTION_MULT = 1.01
 KIA_EV6_FRICTION_LAT_RISE = 0.18
 KIA_EV6_FRICTION_JERK_RISE = 0.22
@@ -2433,6 +2438,16 @@ def _kia_ev6_transition_envelope(v_ego: float, desired_lateral_accel: float, des
   return _kia_ev6_low_speed_factor(v_ego) * lat_factor * jerk_factor
 
 
+def get_kia_ev6_jwarm_phase_confidence(v_ego: float, desired_lateral_jerk: float) -> float:
+  low_speed_weight = _kia_ev6_sigmoid(
+    (KIA_EV6_JWARM_PHASE_STABILITY_SPEED - v_ego) / KIA_EV6_JWARM_PHASE_STABILITY_SPEED_WIDTH
+  )
+  abrupt_transition_weight = _kia_ev6_sigmoid(
+    (abs(desired_lateral_jerk) - KIA_EV6_JWARM_PHASE_STABILITY_JERK) / KIA_EV6_JWARM_PHASE_STABILITY_JERK_WIDTH
+  )
+  return 1.0 - (KIA_EV6_JWARM_PHASE_STABILITY_MAX_REDUCTION * low_speed_weight * abrupt_transition_weight)
+
+
 def get_kia_ev6_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: float, v_ego: float) -> float:
   if desired_lateral_accel == 0.0:
     return 1.0
@@ -2463,17 +2478,22 @@ def get_kia_ev6_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: flo
                        ) *
                          unwind_weight * (0.35 + 0.65 * low_speed_factor))
   jwarm_tune = kia_ev6_lateral_testing_ground_active()
+  jwarm_phase_confidence = get_kia_ev6_jwarm_phase_confidence(v_ego, desired_lateral_jerk) if jwarm_tune else 0.0
   base_turn_in_boost = 1.0 + ((_kia_ev6_side_value(
                                 desired_lateral_accel,
                                 KIA_EV6_JWARM_BASE_TURN_IN_BOOST_LEFT,
                                 KIA_EV6_JWARM_BASE_TURN_IN_BOOST_RIGHT,
-                              ) if jwarm_tune else 0.0) * turn_in_weight * onset * cutoff)
+                              ) if jwarm_tune else 0.0) *
+                                jwarm_phase_confidence * turn_in_weight * onset * cutoff)
+  base_unwind_taper_left = _flm_vehicle_knob("hyundai_kia_ev6.base_unwind_taper_left", KIA_EV6_BASE_UNWIND_TAPER_LEFT)
+  base_unwind_taper_right = _flm_vehicle_knob("hyundai_kia_ev6.base_unwind_taper_right", KIA_EV6_BASE_UNWIND_TAPER_RIGHT)
+  if jwarm_tune:
+    base_unwind_taper_left += (KIA_EV6_JWARM_BASE_UNWIND_TAPER_LEFT - base_unwind_taper_left) * jwarm_phase_confidence
+    base_unwind_taper_right += (KIA_EV6_JWARM_BASE_UNWIND_TAPER_RIGHT - base_unwind_taper_right) * jwarm_phase_confidence
   base_unwind_taper = 1.0 - (_kia_ev6_side_value(
                               desired_lateral_accel,
-                              KIA_EV6_JWARM_BASE_UNWIND_TAPER_LEFT if jwarm_tune else
-                                _flm_vehicle_knob("hyundai_kia_ev6.base_unwind_taper_left", KIA_EV6_BASE_UNWIND_TAPER_LEFT),
-                              KIA_EV6_JWARM_BASE_UNWIND_TAPER_RIGHT if jwarm_tune else
-                                _flm_vehicle_knob("hyundai_kia_ev6.base_unwind_taper_right", KIA_EV6_BASE_UNWIND_TAPER_RIGHT),
+                              base_unwind_taper_left,
+                              base_unwind_taper_right,
                             ) * unwind_weight * onset * cutoff)
   return (base_unwind_taper * base_turn_in_boost) + (extra_scale * turn_in_boost * max(unwind_taper, 0.0))
 

@@ -1376,7 +1376,7 @@ function renderFavoriteSlotsPanel() {
               </label>
 
               <label class="ds-favorite-switch">
-                <span>Show On-Road Button</span>
+                <span>On-Road Button (C4: tap invisible third)</span>
                 <input
                   type="checkbox"
                   class="ds-toggle"

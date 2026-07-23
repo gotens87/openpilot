@@ -90,6 +90,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_kia_ev6_ff_scale,
   get_kia_ev6_friction_scale,
   get_kia_ev6_friction_threshold,
+  get_kia_ev6_jwarm_phase_confidence,
   get_sonata_center_taper_scale,
   get_sonata_ff_scale,
   get_sonata_hybrid_center_taper_scale,
@@ -1202,6 +1203,17 @@ class TestLatControl:
     assert get_kia_ev6_ff_scale(-0.45, -0.7, 10.0) > normal_turn_in_right + 0.10
     assert get_kia_ev6_ff_scale(0.45, -0.7, 10.0) < normal_unwind_left - 0.07
     assert get_kia_ev6_ff_scale(-0.45, 0.7, 10.0) < normal_unwind_right - 0.08
+
+  def test_kia_ev6_jwarm_abrupt_low_speed_phase_correction_is_bounded(self):
+    calm_low_speed = get_kia_ev6_jwarm_phase_confidence(6.0, 0.25)
+    abrupt_low_speed = get_kia_ev6_jwarm_phase_confidence(6.0, 1.40)
+    abrupt_high_speed = get_kia_ev6_jwarm_phase_confidence(18.0, 1.40)
+
+    assert abrupt_low_speed < calm_low_speed
+    assert abrupt_low_speed < abrupt_high_speed
+    assert 0.45 <= abrupt_low_speed < 0.60
+    assert calm_low_speed > 0.90
+    assert abrupt_high_speed > 0.98
 
   def test_kia_ev6_center_taper_curve(self):
     assert get_kia_ev6_center_taper_scale(0.0, 25.0) < get_kia_ev6_center_taper_scale(0.0, 10.0)
