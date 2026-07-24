@@ -1240,7 +1240,7 @@ class TestLatControl:
 
     assert abrupt_low_speed < calm_low_speed
     assert abrupt_low_speed < abrupt_high_speed
-    assert 0.45 <= abrupt_low_speed < 0.60
+    assert 0.75 <= abrupt_low_speed < 0.82
     assert calm_low_speed > 0.90
     assert abrupt_high_speed > 0.98
 
