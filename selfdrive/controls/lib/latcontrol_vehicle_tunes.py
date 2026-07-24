@@ -125,6 +125,9 @@ KIA_XCEED_CARS = (
 KIA_NIRO_PHEV_2022_CARS = (
   HYUNDAI_CAR.KIA_NIRO_PHEV_2022,
 )
+KIA_STINGER_2022_CARS = (
+  HYUNDAI_CAR.KIA_STINGER_2022,
+)
 KIA_FORTE_CARS = (
   HYUNDAI_CAR.KIA_FORTE,
   HYUNDAI_CAR.KIA_FORTE_2019_NON_SCC,
@@ -353,6 +356,13 @@ KIA_NIRO_PHEV_2022_FRICTION_SPEED_WIDTH = 2.5
 KIA_NIRO_PHEV_2022_FRICTION_CALM_JERK = 0.22
 KIA_NIRO_PHEV_2022_FRICTION_CALM_JERK_WIDTH = 0.06
 KIA_NIRO_PHEV_2022_FRICTION_THRESHOLD_GAIN = 0.12
+
+KIA_STINGER_2022_CENTER_TAPER_MAX = 0.12
+KIA_STINGER_2022_CENTER_TAPER_LAT = 0.30
+KIA_STINGER_2022_CENTER_TAPER_LAT_WIDTH = 0.05
+KIA_STINGER_2022_CENTER_TAPER_SPEED = 10.0
+KIA_STINGER_2022_CENTER_TAPER_SPEED_WIDTH = 2.5
+KIA_STINGER_2022_FRICTION_THRESHOLD_GAIN = 0.10
 
 KIA_CARNIVAL_CENTER_TAPER_MAX = 0.20
 KIA_CARNIVAL_CENTER_TAPER_LAT = 0.20
@@ -1762,6 +1772,25 @@ def get_kia_niro_phev_2022_friction_threshold(v_ego: float, desired_lateral_acce
   calm_jerk_weight = _sigmoid((KIA_NIRO_PHEV_2022_FRICTION_CALM_JERK - abs(desired_lateral_jerk)) / KIA_NIRO_PHEV_2022_FRICTION_CALM_JERK_WIDTH)
   threshold_scale = 1.0 + (KIA_NIRO_PHEV_2022_FRICTION_THRESHOLD_GAIN * speed_weight * center_weight * calm_jerk_weight)
   return base_threshold * min(max(threshold_scale, 1.0), 1.18)
+
+
+def _kia_stinger_2022_center_weights(desired_lateral_accel: float, v_ego: float) -> tuple[float, float]:
+  speed_weight = _sigmoid((v_ego - KIA_STINGER_2022_CENTER_TAPER_SPEED) / KIA_STINGER_2022_CENTER_TAPER_SPEED_WIDTH)
+  center_weight = _sigmoid((KIA_STINGER_2022_CENTER_TAPER_LAT - abs(desired_lateral_accel)) /
+                           KIA_STINGER_2022_CENTER_TAPER_LAT_WIDTH)
+  return speed_weight, center_weight
+
+
+def get_kia_stinger_2022_center_taper_scale(desired_lateral_accel: float, v_ego: float) -> float:
+  speed_weight, center_weight = _kia_stinger_2022_center_weights(desired_lateral_accel, v_ego)
+  return 1.0 - (KIA_STINGER_2022_CENTER_TAPER_MAX * speed_weight * center_weight)
+
+
+def get_kia_stinger_2022_friction_threshold(v_ego: float, desired_lateral_accel: float = 0.0,
+                                            desired_lateral_jerk: float = 0.0) -> float:
+  del desired_lateral_jerk
+  speed_weight, center_weight = _kia_stinger_2022_center_weights(desired_lateral_accel, v_ego)
+  return get_standard_friction_threshold(v_ego) * (1.0 + KIA_STINGER_2022_FRICTION_THRESHOLD_GAIN * speed_weight * center_weight)
 
 
 def _kia_carnival_center_weights(desired_lateral_accel: float, v_ego: float) -> tuple[float, float]:
