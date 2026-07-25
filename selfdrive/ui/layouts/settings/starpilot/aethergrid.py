@@ -924,12 +924,12 @@ class PanelManagerView(AetherInteractiveMixin, Widget):
         self._page_anim_prev_tiles.clear()
       self._page_drag_start_x = mouse_pos.x
       self._page_drag_start_y = mouse_pos.y
-      self._page_drag_active = True
+      self._page_drag_active = False
       self._page_drag_offset = 0.0
 
   def _handle_mouse_event(self, mouse_event: MouseEvent) -> None:
     super()._handle_mouse_event(mouse_event)
-    if self._page_drag_active and self._has_pagination:
+    if self._has_pagination:
       dx = mouse_event.pos.x - self._page_drag_start_x
       dy = abs(mouse_event.pos.y - self._page_drag_start_y)
       if dy > abs(dx) * 1.2 and dy > 32:
@@ -941,6 +941,7 @@ class PanelManagerView(AetherInteractiveMixin, Widget):
         dx = 0
       self._page_drag_offset = dx
       if abs(dx) > 6:
+        self._page_drag_active = True
         self._pressed_target = None
         self._can_click = False
 
