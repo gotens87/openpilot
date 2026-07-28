@@ -123,8 +123,9 @@ def _get_slc_state():
   plan = sm["starpilotPlan"]
   speed_limit_changed = plan.speedLimitChanged
 
-  show_slc = ui_state.params.get_bool("ShowSpeedLimits") or ui_state.params.get_bool("SpeedLimitController")
-  hide_sl = ui_state.params.get_bool("HideSpeedLimit")
+  params = ui_state.ui_params
+  show_slc = params.get_bool("ShowSpeedLimits") or params.get_bool("SpeedLimitController")
+  hide_sl = params.get_bool("HideSpeedLimit")
   unconfirmed_valid = plan.unconfirmedSlcSpeedLimit > 1
   # A pending (unconfirmed) limit overrides HideSpeedLimit so the prompt always shows.
   hide = not (speed_limit_changed and unconfirmed_valid) and hide_sl
@@ -134,10 +135,10 @@ def _get_slc_state():
     return None
 
   speed_conversion = CV.MS_TO_KPH if ui_state.is_metric else CV.MS_TO_MPH
-  show_offset = ui_state.params.get_bool("ShowSLCOffset")
+  show_offset = params.get_bool("ShowSLCOffset")
 
   dashboard_sl = sm["starpilotCarState"].dashboardSpeedLimit if sm.valid.get("starpilotCarState", False) else 0.0
-  vision_sl = ui_state.params_memory.get_float("VisionSpeedLimit") if ui_state.params.get_bool("VisionSpeedLimitDetection") else 0.0
+  vision_sl = ui_state.params_memory.get_float("VisionSpeedLimit") if params.get_bool("VisionSpeedLimitDetection") else 0.0
 
   slc_overridden_speed = plan.slcOverriddenSpeed
   # Driver override takes precedence over the planner's limit when active.
@@ -171,7 +172,7 @@ def _get_slc_state():
     'speed_limit_changed': speed_limit_changed,
     'hide': hide,
     'show_offset': show_offset,
-    'use_vienna': ui_state.params.get_bool("UseVienna"),
+    'use_vienna': params.get_bool("UseVienna"),
     'offset_str': offset_str,
     'speed_conversion': speed_conversion,
     'speed_unit': " km/h" if ui_state.is_metric else " mph",
@@ -498,4 +499,3 @@ def render_speed_limit_at(state: dict, rect: rl.Rectangle, expanded: bool = Fals
     _draw_sources_bubble(state, pill_rect, visual_rect)
 
   return pill_rect
-

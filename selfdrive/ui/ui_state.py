@@ -10,6 +10,7 @@ from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.ui.lib.prime_state import PrimeState
+from openpilot.selfdrive.ui.lib.ui_param_cache import shared_ui_params
 from openpilot.system.hardware.usb import chestnut_present
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.hardware import HARDWARE, PC
@@ -35,6 +36,9 @@ class UIState:
 
   def _initialize(self):
     self.params = Params()
+    # BIG UI views use this read-through cache; keep ``params`` untouched for
+    # MICI and for non-rendering callers that rely on its exact semantics.
+    self.ui_params = shared_ui_params() if gui_app.big_ui() else self.params
     self.params_memory = Params(memory=True)
     self.sm = messaging.SubMaster(
       [
@@ -176,24 +180,26 @@ class UIState:
       self.light_sensor = -1
 
     # Trust hardwared's filtered started state; raw ignition can flap on Toyota.
-    force_onroad = self.params.get_bool("ForceOnroad")
-    force_offroad = self.params.get_bool("ForceOffroad")
+    # Use the BIG-UI cache here as this path runs once per render iteration.
+    params = self.ui_params
+    force_onroad = params.get_bool("ForceOnroad")
+    force_offroad = params.get_bool("ForceOffroad")
     started = self.sm["deviceState"].started
     started |= force_onroad
     started &= not force_offroad
     self.started = started
 
     # Update recording audio state
-    self.recording_audio = self.params.get_bool("RecordAudio") and self.started
+    self.recording_audio = params.get_bool("RecordAudio") and self.started
 
-    self.is_metric = self.params.get_bool("IsMetric")
-    self.always_on_dm = self.params.get_bool("AlwaysOnDM")
+    self.is_metric = params.get_bool("IsMetric")
+    self.always_on_dm = params.get_bool("AlwaysOnDM")
     now = time.monotonic()
     if now - self._usbgpu_update_time >= USBGPU_POLL_INTERVAL:
       self.usbgpu = chestnut_present()
       self._usbgpu_update_time = now
-    self.usbgpu_compiled = self.params.get_bool("UsbGpuCompiled")
-    self.usbgpu_active = self.params.get_bool("UsbGpuActive")
+    self.usbgpu_compiled = params.get_bool("UsbGpuCompiled")
+    self.usbgpu_active = params.get_bool("UsbGpuActive")
     self.switchback_mode_enabled = self.params_memory.get_bool("SwitchbackModeEnabled") if self.started else False
     if self.sm.valid.get("starpilotCarState", False):
       starpilot_car_state = self.sm["starpilotCarState"]
@@ -269,7 +275,7 @@ class Device:
     self._interactive_timeout_callbacks: list[Callable] = []
     self._prev_timed_out = False
     self._awake: bool = True
-    self._params = Params()
+    self._params = ui_state.ui_params
 
     self._offroad_brightness: int = BACKLIGHT_OFFROAD
     self._last_brightness: int = 0

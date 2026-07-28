@@ -145,7 +145,7 @@ class AugmentedRoadView(CameraView):
     pass
 
   def _get_border_width(self) -> int:
-    return get_border_width(UI_BORDER_SIZE, ui_state.params)
+    return get_border_width(UI_BORDER_SIZE, ui_state.ui_params)
 
   def _draw_border(self, rect: rl.Rectangle):
     border_width = self._get_border_width()
@@ -179,7 +179,8 @@ class AugmentedRoadView(CameraView):
     return self._is_in_reverse()
 
   def _update_reverse_driver_camera_state(self) -> bool:
-    should_force_driver = ui_state.started and ui_state.params.get_bool("DriverCamera") and self._is_in_reverse()
+    params = ui_state.ui_params
+    should_force_driver = ui_state.started and params.get_bool("DriverCamera") and self._is_in_reverse()
     if not should_force_driver:
       self._reverse_driver_camera_frames = 0
       self._reverse_driver_camera_active = False
@@ -191,7 +192,8 @@ class AugmentedRoadView(CameraView):
 
   @staticmethod
   def _camera_view() -> int:
-    camera_view = ui_state.params.get_int("CameraView", return_default=True, default=CAMERA_VIEW_WIDE)
+    params = ui_state.ui_params
+    camera_view = params.get_int("CameraView", return_default=True, default=CAMERA_VIEW_WIDE)
     if camera_view not in (CAMERA_VIEW_AUTO, CAMERA_VIEW_DRIVER, CAMERA_VIEW_STANDARD, CAMERA_VIEW_WIDE, CAMERA_VIEW_NONE):
       return CAMERA_VIEW_WIDE
     return camera_view
