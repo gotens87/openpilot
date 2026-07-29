@@ -604,8 +604,12 @@ class ModelRenderer(Widget):
     path_x_array = self._path.raw_points[:, 0]
     line_z = self._path.raw_points[:, 2]
 
-    radius = 4.0
-    red_color = rl.Color(255, 0, 0, 200)
+    # Keep raw radar detections visible over bright road imagery without
+    # making them look like confirmed lead-vehicle markers.
+    radius = 7.0
+    outline_radius = 9.0
+    outline_color = rl.Color(0, 0, 0, 170)
+    red_color = rl.Color(255, 40, 40, 230)
 
     # Pre-extract matrix values and clip bounds for native loop speed
     t = self._car_space_transform
@@ -653,7 +657,9 @@ class ModelRenderer(Widget):
       x = max(rect_x, min(x, rect_xmax))
       y = max(rect_y, min(y, rect_ymax))
 
-      rl.draw_circle_v(rl.Vector2(x, y), radius, red_color)
+      marker = rl.Vector2(x, y)
+      rl.draw_circle_v(marker, outline_radius, outline_color)
+      rl.draw_circle_v(marker, radius, red_color)
 
   def _update_adjacent_paths(self, max_idx: int, max_distance: float):
     """Compute adjacent lane path polygons by averaging lane line pairs."""
