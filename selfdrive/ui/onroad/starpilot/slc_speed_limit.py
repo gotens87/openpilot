@@ -353,8 +353,8 @@ def _draw_sign(state: dict, rect: rl.Rectangle, *, pending: bool = False):
 
 # ── Active Source Label (single-line mode when sources panel is off) ──
 
-_SOURCE_ABBREV = {"Dashboard": "DASH", "Map Data": "MAPS", "Vision": "VISION",
-                  "Mapbox": "MAPBOX", "Upcoming": "NEXT"}
+_SOURCE_ABBREV = {"Dashboard": "Dash", "Map Data": "Maps", "Vision": "Vision",
+                  "Mapbox": "Mapbox", "Upcoming": "Next"}
 
 def _draw_active_source_label(state: dict, cx: float, bottom_y: float, sign_width: float, expanded: bool = False) -> Optional[rl.Rectangle]:
   """Draw the single active-source pill below the sign. Returns pill rect for hit-testing."""
@@ -373,7 +373,7 @@ def _draw_active_source_label(state: dict, cx: float, bottom_y: float, sign_widt
   rl.draw_rectangle_rounded(rect, 0.4, 8, rl.Color(0, 0, 0, 180))
   rl.draw_rectangle_rounded_lines_ex(rect, 0.4, 8, 1, rl.Color(255, 255, 255, 100))
   
-  text_y = bottom_y + 8 + (pill_h - font_size) / 2
+  text_y = rect.y + (pill_h - sz.y) / 2
   rl.draw_text_ex(font, label, rl.Vector2(cx - sz.x / 2, text_y), font_size, 0, rl.WHITE)
   return rect
 
@@ -413,7 +413,7 @@ def _draw_sources_bubble(state: dict, anchor_rect: rl.Rectangle, sign_rect: rl.R
     return
 
   bubble_w = sign_rect.width + 24
-  bubble_h = sign_rect.height
+  bubble_h = sign_rect.height + 40
 
   bubble_x = sign_rect.x + sign_rect.width + 12
   bubble_y = sign_rect.y
