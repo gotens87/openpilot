@@ -21,7 +21,7 @@ from openpilot.selfdrive.ui.lib.starpilot_status import (
 )
 
 from openpilot.system.ui.lib.application import MousePos, gui_app, FontWeight
-from openpilot.system.ui.lib.text_measure import measure_text_cached
+from openpilot.system.ui.lib.text_measure import draw_text_with_shadow, measure_text_cached
 
 from cereal import log
 AlertSize = log.SelfdriveState.AlertSize
@@ -398,18 +398,12 @@ class StarPilotOnroadView(AugmentedRoadView):
       return
 
     font = self._font_bold
-    font_size = 32
+    font_size = 40
     sz = measure_text_cached(font, road_name, font_size)
 
-    pad_x = 24
-    pad_y = 5
-    pill_w = sz.x + pad_x * 2
-    pill_h = font_size + pad_y * 2
-
     cx = self._content_rect.x + self._content_rect.width / 2
-    by = self._content_rect.y + self._content_rect.height - pill_h - 16
-
-    pill = rl.Rectangle(cx - pill_w / 2, by, pill_w, pill_h)
-    rl.draw_rectangle_rounded(pill, 0.4, 8, rl.Color(0, 0, 0, 166))
-    rl.draw_rectangle_rounded_lines_ex(pill, 0.4, 8, 1, rl.Color(255, 255, 255, 60))
-    rl.draw_text_ex(font, road_name, rl.Vector2(cx - sz.x / 2, by + pad_y), font_size, 0, rl.WHITE)
+    text_pos = rl.Vector2(
+      round(cx - sz.x / 2),
+      round(self._content_rect.y + self._content_rect.height - sz.y - 5),
+    )
+    draw_text_with_shadow(font, road_name, text_pos, font_size, rl.Color(255, 255, 255, 180))
