@@ -6,7 +6,7 @@ name: Rebuild StarPilot
 
 on:
   schedule:
-    - cron: '0 */3 * * *'
+    - cron: '*/10 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -30,7 +30,9 @@ jobs:
         with:
           path: ops
 
-      - name: Fetch upstream tip
+      - name: Check whether upstream moved
+        env:
+          GH_TOKEN: ${{ secrets.PATCHQUEUE_TOKEN }}
         run: |
           # A patchless force-push would silently ship unpatched code to the car.
           count=$(ls -1 ops/patches/*.patch 2>/dev/null | wc -l)
@@ -38,20 +40,40 @@ jobs:
             echo "::error::no patches found in ops/patches/ - refusing to build"
             exit 1
           fi
-          echo "found $count patches"
+          echo "PATCH_COUNT=$count" >> "$GITHUB_ENV"
 
+          # ls-remote is a few KB; the shallow fetch below is ~400MB. On a 10-minute
+          # cadence, fetching unconditionally would pull ~58GB/day off upstream.
+          dom=$(git ls-remote "$UPSTREAM_REPO" "refs/heads/$UPSTREAM_BRANCH" | cut -f1)
+          echo "DOM_SHA=$dom" >> "$GITHUB_ENV"
+
+          # Our tip is Dom + N patch commits, so entry N is the base we last built on.
+          base=$(gh api "repos/$GITHUB_REPOSITORY/commits?sha=$TARGET_BRANCH&per_page=$((count + 1))" \
+                   --jq ".[$count].sha" 2>/dev/null || true)
+          [ "$base" = "null" ] && base=""
+
+          if [ -n "$base" ] && [ "$base" = "$dom" ]; then
+            echo "UPSTREAM_MOVED=no" >> "$GITHUB_ENV"
+            echo "$TARGET_BRANCH already built on $dom, nothing to do"
+          else
+            echo "UPSTREAM_MOVED=yes" >> "$GITHUB_ENV"
+            echo "rebuild needed: upstream at $dom, last built on ${base:-unknown}"
+          fi
+
+      - name: Fetch upstream tip
+        if: env.UPSTREAM_MOVED == 'yes'
+        run: |
           git init -q work
           cd work
           git remote add upstream "$UPSTREAM_REPO"
           git fetch -q --depth=1 --no-tags upstream "$UPSTREAM_BRANCH"
-          dom=$(git rev-parse FETCH_HEAD)
-          echo "DOM_SHA=$dom" >> "$GITHUB_ENV"
           # Pin the committer date to upstream's so an unchanged rebuild is
           # bit-identical and the force-push below becomes a no-op.
-          echo "DOM_DATE=$(git log -1 --format=%cI "$dom")" >> "$GITHUB_ENV"
-          echo "upstream $UPSTREAM_BRANCH tip: $dom"
+          echo "DOM_DATE=$(git log -1 --format=%cI FETCH_HEAD)" >> "$GITHUB_ENV"
+          echo "upstream $UPSTREAM_BRANCH tip: $DOM_SHA"
 
       - name: Apply patch series
+        if: env.UPSTREAM_MOVED == 'yes'
         env:
           GIT_AUTHOR_NAME: gotens87
           GIT_AUTHOR_EMAIL: gotens87@users.noreply.github.com
@@ -79,6 +101,7 @@ jobs:
           echo "NEW_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
       - name: Push if changed
+        if: env.UPSTREAM_MOVED == 'yes'
         env:
           PATCHQUEUE_TOKEN: ${{ secrets.PATCHQUEUE_TOKEN }}
         run: |
@@ -106,7 +129,11 @@ jobs:
             echo "| --- | --- |"
             echo "| upstream $UPSTREAM_BRANCH tip | \`${DOM_SHA:-n/a}\` |"
             echo "| new $TARGET_BRANCH tip | \`${NEW_SHA:-n/a}\` |"
-            echo "| pushed | ${PUSHED:-no (run failed)} |"
+            if [ "$UPSTREAM_MOVED" = "no" ]; then
+              echo "| pushed | no (upstream unchanged, no fetch) |"
+            else
+              echo "| pushed | ${PUSHED:-no (run failed)} |"
+            fi
             echo ""
             for p in ops/patches/*.patch; do
               echo "- $(basename "$p")"
