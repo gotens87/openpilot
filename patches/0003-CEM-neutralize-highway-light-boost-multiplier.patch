@@ -1,0 +1,22 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gotens87 <gotens87@users.noreply.github.com>
+Date: Thu, 1 Jan 2026 00:00:00 +0000
+Subject: [PATCH 3/3] CEM: neutralize highway light-boost multiplier
+
+---
+ starpilot/controls/lib/conditional_experimental_mode.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/starpilot/controls/lib/conditional_experimental_mode.py b/starpilot/controls/lib/conditional_experimental_mode.py
+index bdb1780..7564347 100644
+--- a/starpilot/controls/lib/conditional_experimental_mode.py
++++ b/starpilot/controls/lib/conditional_experimental_mode.py
+@@ -433,7 +433,7 @@ class ConditionalExperimentalMode:
+       tuned_filter_time_leads = self.FILTER_TIME_LEADS[1]
+       tuned_filter_time_lights = self.FILTER_TIME_LIGHTS[1]
+       low_boost = 1.0
+-      tuned_boost = self.LIGHT_BOOSTS[1]
++      tuned_boost = 1.0  # CEM_LIGHTBOOST_PATCHED: was LIGHT_BOOSTS[1]=1.2, false-triggered CEM stop/light on highway
+       low_cap_factor = 0.0  # No cap under 35 mph
+       tuned_cap_factor = 1.0
+ 

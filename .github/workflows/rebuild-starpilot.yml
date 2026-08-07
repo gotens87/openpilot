@@ -1,0 +1,114 @@
+name: Rebuild StarPilot
+
+# Rebuilds branch StarPilot as: upstream Dom tip + the patch series in patches/.
+# Lives on the default branch (ops) because schedule: only fires from the default
+# branch, and StarPilot itself is force-reset to upstream content on every run.
+
+on:
+  schedule:
+    - cron: '0 */3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rebuild-starpilot
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: https://github.com/firestar5683/StarPilot.git
+  UPSTREAM_BRANCH: Dom
+  TARGET_BRANCH: StarPilot
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out ops branch for patches
+        uses: actions/checkout@v4
+        with:
+          path: ops
+
+      - name: Fetch upstream tip
+        run: |
+          # A patchless force-push would silently ship unpatched code to the car.
+          count=$(ls -1 ops/patches/*.patch 2>/dev/null | wc -l)
+          if [ "$count" -eq 0 ]; then
+            echo "::error::no patches found in ops/patches/ - refusing to build"
+            exit 1
+          fi
+          echo "found $count patches"
+
+          git init -q work
+          cd work
+          git remote add upstream "$UPSTREAM_REPO"
+          git fetch -q --depth=1 --no-tags upstream "$UPSTREAM_BRANCH"
+          dom=$(git rev-parse FETCH_HEAD)
+          echo "DOM_SHA=$dom" >> "$GITHUB_ENV"
+          # Pin the committer date to upstream's so an unchanged rebuild is
+          # bit-identical and the force-push below becomes a no-op.
+          echo "DOM_DATE=$(git log -1 --format=%cI "$dom")" >> "$GITHUB_ENV"
+          echo "upstream $UPSTREAM_BRANCH tip: $dom"
+
+      - name: Apply patch series
+        env:
+          GIT_AUTHOR_NAME: gotens87
+          GIT_AUTHOR_EMAIL: gotens87@users.noreply.github.com
+          GIT_COMMITTER_NAME: gotens87
+          GIT_COMMITTER_EMAIL: gotens87@users.noreply.github.com
+        run: |
+          cd work
+          export GIT_COMMITTER_DATE="$DOM_DATE"
+          git checkout -q -B "$TARGET_BRANCH" "$DOM_SHA"
+
+          for p in ../ops/patches/*.patch; do
+            echo "applying $(basename "$p")"
+            if ! git am --keep-non-patch "$p"; then
+              echo "::error::git am failed on $(basename "$p") - upstream likely restructured this file"
+              echo "--- conflict ---"
+              git status --short
+              git diff
+              git am --abort
+              # Deliberate: halt without pushing. StarPilot stays at last-good, so
+              # the car keeps running the last good build WITH its patches applied.
+              exit 1
+            fi
+          done
+
+          echo "NEW_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Push if changed
+        env:
+          PATCHQUEUE_TOKEN: ${{ secrets.PATCHQUEUE_TOKEN }}
+        run: |
+          cd work
+          remote="https://x-access-token:${PATCHQUEUE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          current=$(git ls-remote "$remote" "refs/heads/$TARGET_BRANCH" | cut -f1)
+
+          if [ "$current" = "$NEW_SHA" ]; then
+            echo "PUSHED=no" >> "$GITHUB_ENV"
+            echo "$TARGET_BRANCH already at $NEW_SHA - nothing to do"
+            exit 0
+          fi
+
+          git push -q --force "$remote" "HEAD:refs/heads/$TARGET_BRANCH"
+          echo "PUSHED=yes" >> "$GITHUB_ENV"
+          echo "pushed $current -> $NEW_SHA"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Rebuild StarPilot"
+            echo ""
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| upstream $UPSTREAM_BRANCH tip | \`${DOM_SHA:-n/a}\` |"
+            echo "| new $TARGET_BRANCH tip | \`${NEW_SHA:-n/a}\` |"
+            echo "| pushed | ${PUSHED:-no (run failed)} |"
+            echo ""
+            for p in ops/patches/*.patch; do
+              echo "- $(basename "$p")"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
