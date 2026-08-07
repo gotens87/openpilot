@@ -1,0 +1,20 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gotens87 <gotens87@users.noreply.github.com>
+Date: Thu, 1 Jan 2026 00:00:00 +0000
+Subject: [PATCH 4/4] probe: deliberately unappliable patch
+
+---
+ starpilot/controls/lib/conditional_experimental_mode.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/starpilot/controls/lib/conditional_experimental_mode.py b/starpilot/controls/lib/conditional_experimental_mode.py
+index 1111111..2222222 100644
+--- a/starpilot/controls/lib/conditional_experimental_mode.py
++++ b/starpilot/controls/lib/conditional_experimental_mode.py
+@@ -100,7 +100,7 @@ class ConditionalExperimentalMode:
+     THIS_CONTEXT_LINE_DOES_NOT_EXIST_ANYWHERE = 1
+     NEITHER_DOES_THIS_ONE = 2
+-    REMOVE_THIS_NONEXISTENT_LINE = 3
++    REPLACED_WITH_THIS = 3
+     NOR_THIS_TRAILING_CONTEXT = 4
+     OR_THIS_FINAL_CONTEXT = 5
