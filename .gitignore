@@ -1,0 +1,4 @@
+
+# Generated preview only (tools/make-patches.sh); the Action runs the patchers directly.
+patches/
+__pycache__/

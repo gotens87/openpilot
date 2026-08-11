@@ -29,8 +29,8 @@ def main():
         print("conditional_experimental_mode.py already patched")
         return 0
 
-    if OLD_LIGHTBOOST not in content:
-        print("ERROR: expected tuned_boost assignment not found in conditional_experimental_mode.py; patch not applied")
+    if content.count(OLD_LIGHTBOOST) != 1:
+        print("ERROR: expected tuned_boost assignment not found exactly once in conditional_experimental_mode.py; patch not applied")
         return 1
 
     content = content.replace(OLD_LIGHTBOOST, NEW_LIGHTBOOST, 1)

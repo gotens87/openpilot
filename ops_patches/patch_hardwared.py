@@ -102,23 +102,23 @@ def main():
         print("hardwared.py already patched")
         return 0
 
-    if OLD_IMPORTS not in content:
-        print("ERROR: expected imports block not found in hardwared.py; patch not applied")
+    if content.count(OLD_IMPORTS) != 1:
+        print("ERROR: expected imports block not found exactly once in hardwared.py; patch not applied")
         return 1
     content = content.replace(OLD_IMPORTS, NEW_IMPORTS, 1)
 
-    if OLD_PARAMS not in content:
-        print("ERROR: expected params block not found in hardwared.py; patch not applied")
+    if content.count(OLD_PARAMS) != 1:
+        print("ERROR: expected params block not found exactly once in hardwared.py; patch not applied")
         return 1
     content = content.replace(OLD_PARAMS, NEW_PARAMS, 1)
 
-    if OLD_SHOULD_START not in content:
-        print("ERROR: expected should_start line not found in hardwared.py; patch not applied")
+    if content.count(OLD_SHOULD_START) != 1:
+        print("ERROR: expected should_start line not found exactly once in hardwared.py; patch not applied")
         return 1
     content = content.replace(OLD_SHOULD_START, NEW_SHOULD_START, 1)
 
-    if OLD_LOOP not in content:
-        print("ERROR: expected loop start not found in hardwared.py; patch not applied")
+    if content.count(OLD_LOOP) != 1:
+        print("ERROR: expected loop start not found exactly once in hardwared.py; patch not applied")
         return 1
     content = content.replace(OLD_LOOP, NEW_LOOP, 1)
 

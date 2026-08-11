@@ -1,37 +1,29 @@
 #!/usr/bin/env bash
-# Regenerate patches/*.patch from the on-device Python patcher scripts.
-# Run manually after a patcher changes; not used by CI.
+# make-patches.sh — LOCAL PREVIEW ONLY. Regenerate patches/*.patch from the
+# patcher scripts, to eyeball what the patchers actually produce against Dom.
+#
+# NOT the build path and NOT committed: since 2026-08-11 the rebuild Action runs
+# tools/apply-patchers.sh directly against the upstream checkout. Stored .patch
+# files were only a cache of one application of the patchers, and their hunk
+# context went stale on any upstream line-number shift (6 consecutive failed runs
+# 2026-08-11 with every anchor still present). patches/ is gitignored.
+#
+# Patcher list and commit subjects live in tools/apply-patchers.sh, not here.
 set -euo pipefail
 
 PATCH_DIR="${1:-./ops_patches}"
 UPSTREAM=https://github.com/firestar5683/StarPilot.git
 BRANCH=Dom
 
-PATCHERS=(
-  patch_starpilot_card.py
-  patch_hardwared.py
-  patch_cem_lightboost.py
-)
-SUBJECTS=(
-  "starpilot_card: auto-offroad on park (entry)"
-  "hardwared: auto-offroad exit on leaving park"
-  "CEM: neutralize highway light-boost multiplier"
-)
-
-OUT=$(cd "$(dirname "$0")/.." && pwd)/patches
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+OUT="$ROOT/patches"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-# The patchers hardcode device paths under /data/openpilot; retarget them at the
-# throwaway checkout. The /data/ops_patches marker path is deliberately untouched:
-# it is a runtime path on the device, not a source path.
-mkdir -p "$TMP/patchers"
-for f in "${PATCHERS[@]}"; do
-  sed "s|/data/openpilot|$TMP/checkout|g" "$PATCH_DIR/$f" > "$TMP/patchers/$f"
-done
-
 git clone --depth=1 --no-tags --single-branch --branch "$BRANCH" "$UPSTREAM" "$TMP/checkout"
 cd "$TMP/checkout"
+git config user.name gotens87
+git config user.email gotens87@users.noreply.github.com
 
 # Fixed identity + dates so regenerating without a content change is byte-identical.
 export GIT_AUTHOR_NAME=gotens87
@@ -41,20 +33,14 @@ export GIT_COMMITTER_EMAIL=$GIT_AUTHOR_EMAIL
 export GIT_AUTHOR_DATE="2026-01-01T00:00:00Z"
 export GIT_COMMITTER_DATE="$GIT_AUTHOR_DATE"
 
-for i in "${!PATCHERS[@]}"; do
-  echo "=== ${PATCHERS[$i]} ==="
-  # A patcher that cannot find its anchor exits non-zero. Silently skipping one is
-  # the exact failure this whole rig exists to prevent, so let set -e kill the run.
-  python3 "$TMP/patchers/${PATCHERS[$i]}"
-  git add -A
-  git commit -q -m "${SUBJECTS[$i]}"
-done
+COUNT=$("$ROOT/tools/apply-patchers.sh" --count)
+"$ROOT/tools/apply-patchers.sh" "$TMP/checkout" "$(cd "$PATCH_DIR" && pwd)"
 
 mkdir -p "$OUT"
 rm -f "$OUT"/*.patch
 # --zero-commit and --no-signature strip the base SHA and the git version, the two
 # fields that would otherwise change the patch bytes without the content changing.
-git format-patch -q --zero-commit --no-signature -"${#PATCHERS[@]}" -o "$OUT"
+git format-patch -q --zero-commit --no-signature -"$COUNT" -o "$OUT"
 
-echo "wrote:"
+echo "wrote (preview, gitignored):"
 ls -1 "$OUT"

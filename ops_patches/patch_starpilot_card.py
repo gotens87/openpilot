@@ -72,18 +72,18 @@ def main():
         print("starpilot_card.py already patched")
         return 0
 
-    if OLD_IMPORT not in content:
-        print("ERROR: expected import line not found in starpilot_card.py; patch not applied")
+    if content.count(OLD_IMPORT) != 1:
+        print("ERROR: expected import line not found exactly once in starpilot_card.py; patch not applied")
         return 1
     content = content.replace(OLD_IMPORT, NEW_IMPORT, 1)
 
-    if OLD_INIT not in content:
-        print("ERROR: expected __init__ block not found in starpilot_card.py; patch not applied")
+    if content.count(OLD_INIT) != 1:
+        print("ERROR: expected __init__ block not found exactly once in starpilot_card.py; patch not applied")
         return 1
     content = content.replace(OLD_INIT, NEW_INIT, 1)
 
-    if OLD_PARKED not in content:
-        print("ERROR: expected isParked block not found in starpilot_card.py; patch not applied")
+    if content.count(OLD_PARKED) != 1:
+        print("ERROR: expected isParked block not found exactly once in starpilot_card.py; patch not applied")
         return 1
     content = content.replace(OLD_PARKED, NEW_PARKED, 1)
 

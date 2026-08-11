@@ -35,9 +35,9 @@ jobs:
           GH_TOKEN: ${{ secrets.PATCHQUEUE_TOKEN }}
         run: |
           # A patchless force-push would silently ship unpatched code to the car.
-          count=$(ls -1 ops/patches/*.patch 2>/dev/null | wc -l)
-          if [ "$count" -eq 0 ]; then
-            echo "::error::no patches found in ops/patches/ - refusing to build"
+          count=$(ops/tools/apply-patchers.sh --count)
+          if [ "${count:-0}" -eq 0 ] || [ ! -d ops/ops_patches ]; then
+            echo "::error::no patchers found in ops/ops_patches/ - refusing to build"
             exit 1
           fi
           echo "PATCH_COUNT=$count" >> "$GITHUB_ENV"
@@ -83,20 +83,21 @@ jobs:
           cd work
           export GIT_COMMITTER_DATE="$DOM_DATE"
           git checkout -q -B "$TARGET_BRANCH" "$DOM_SHA"
+          git config user.name "$GIT_AUTHOR_NAME"
+          git config user.email "$GIT_AUTHOR_EMAIL"
 
-          for p in ../ops/patches/*.patch; do
-            echo "applying $(basename "$p")"
-            if ! git am --keep-non-patch "$p"; then
-              echo "::error::git am failed on $(basename "$p") - upstream likely restructured this file"
-              echo "--- conflict ---"
-              git status --short
-              git diff
-              git am --abort
-              # Deliberate: halt without pushing. StarPilot stays at last-good, so
-              # the car keeps running the last good build WITH its patches applied.
-              exit 1
-            fi
-          done
+          # Runs ops_patches/patch_*.py against this checkout (anchor-text matching),
+          # NOT `git am` on stored .patch files. Stored patches carried unified-diff
+          # hunk context that went stale on any upstream line-number shift; that cost
+          # 6 consecutive failed runs on 2026-08-11 with every anchor still present.
+          #
+          # Still fail-closed: a missing or ambiguous anchor exits non-zero here, so
+          # the job stops before the push step and StarPilot stays at last-good with
+          # its patches. No patch is ever skipped or auto-resolved.
+          if ! ../ops/tools/apply-patchers.sh "$PWD" ../ops/ops_patches; then
+            echo "::error::patcher failed - upstream restructured a patched file; anchors need updating in ops_patches/"
+            exit 1
+          fi
 
           echo "NEW_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
@@ -135,7 +136,7 @@ jobs:
               echo "| pushed | ${PUSHED:-no (run failed)} |"
             fi
             echo ""
-            for p in ops/patches/*.patch; do
+            for p in ops/ops_patches/patch_*.py; do
               echo "- $(basename "$p")"
             done
           } >> "$GITHUB_STEP_SUMMARY"
