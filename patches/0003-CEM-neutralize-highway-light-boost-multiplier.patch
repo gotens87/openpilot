@@ -8,10 +8,10 @@ Subject: [PATCH 3/3] CEM: neutralize highway light-boost multiplier
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/starpilot/controls/lib/conditional_experimental_mode.py b/starpilot/controls/lib/conditional_experimental_mode.py
-index bdb1780..7564347 100644
+index 2253aa3..bc2d4d7 100644
 --- a/starpilot/controls/lib/conditional_experimental_mode.py
 +++ b/starpilot/controls/lib/conditional_experimental_mode.py
-@@ -433,7 +433,7 @@ class ConditionalExperimentalMode:
+@@ -460,7 +460,7 @@ class ConditionalExperimentalMode:
        tuned_filter_time_leads = self.FILTER_TIME_LEADS[1]
        tuned_filter_time_lights = self.FILTER_TIME_LIGHTS[1]
        low_boost = 1.0
