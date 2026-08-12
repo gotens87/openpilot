@@ -8,6 +8,11 @@ on:
   schedule:
     - cron: '*/10 * * * *'
   workflow_dispatch:
+    inputs:
+      force:
+        description: 'Rebuild even if upstream has not moved (use after editing ops_patches/)'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -52,7 +57,13 @@ jobs:
                    --jq ".[$count].sha" 2>/dev/null || true)
           [ "$base" = "null" ] && base=""
 
-          if [ -n "$base" ] && [ "$base" = "$dom" ]; then
+          # The moved-check watches UPSTREAM only. Editing a patcher changes what we
+          # would build from the same Dom tip, and that is invisible here -- without
+          # this the car sits on stale patches until upstream happens to move.
+          if [ "${{ inputs.force }}" = "true" ]; then
+            echo "UPSTREAM_MOVED=yes" >> "$GITHUB_ENV"
+            echo "forced rebuild (patchers changed); upstream at $dom"
+          elif [ -n "$base" ] && [ "$base" = "$dom" ]; then
             echo "UPSTREAM_MOVED=no" >> "$GITHUB_ENV"
             echo "$TARGET_BRANCH already built on $dom, nothing to do"
           else
