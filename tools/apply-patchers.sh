@@ -29,11 +29,13 @@ PATCHERS=(
   patch_starpilot_card.py
   patch_hardwared.py
   patch_cem_lightboost.py
+  patch_radar_valid.py
 )
 SUBJECTS=(
   "starpilot_card: auto-offroad on park (entry)"
   "hardwared: auto-offroad exit on leaving park"
   "CEM: neutralize highway light-boost multiplier"
+  "toyota: honour side-cluster VALID bit on TSS-P Continental radar"
 )
 
 if [ "${1:-}" = "--count" ]; then
