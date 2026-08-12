@@ -40,15 +40,13 @@ OLD_SHOULD_START = "    should_start &= not starpilot_toggles.force_offroad"
 
 NEW_SHOULD_START = "    should_start &= not (starpilot_toggles.force_offroad or params.get_bool(\"ForceOffroad\"))"
 
-OLD_LOOP = """  while not end_event.is_set():
-    sm.update(PANDA_STATES_TIMEOUT)
+# Anchor on the pandaStates read alone, NOT the whole loop head: upstream inserts
+# code between `sm.update(...)` and this line (chestnut block, Dom decf85985), which
+# broke a multi-line loop-head anchor. This line is unique in the file and our block
+# only needs to run once per iteration ahead of the panda handling.
+OLD_LOOP = """    pandaStates = sm['pandaStates']"""
 
-    pandaStates = sm['pandaStates']"""
-
-NEW_LOOP = """  while not end_event.is_set():
-    sm.update(PANDA_STATES_TIMEOUT)
-
-    if park_cp is None and os.path.isfile(PARK_OFFROAD_MARKER):
+NEW_LOOP = """    if park_cp is None and os.path.isfile(PARK_OFFROAD_MARKER):
       try:
         cp_bytes = params.get("CarParams")
         if cp_bytes:
