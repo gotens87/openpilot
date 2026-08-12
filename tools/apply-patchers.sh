@@ -59,6 +59,7 @@ for f in "${PATCHERS[@]}"; do
 done
 
 cd "$CHECKOUT"
+START=$(git rev-parse HEAD)
 for i in "${!PATCHERS[@]}"; do
   echo "=== ${PATCHERS[$i]} ==="
   python3 "$STAGE/${PATCHERS[$i]}"
@@ -71,6 +72,15 @@ for i in "${!PATCHERS[@]}"; do
     echo "::warning::${PATCHERS[$i]} made no change - upstream may have adopted it; candidate for removal"
   fi
   git commit -q --allow-empty -m "${SUBJECTS[$i]}"
+done
+
+# A patcher can match its anchor and still emit broken Python (a mis-escaped quote
+# in a replacement block does exactly that). Nothing else in the pipeline would catch
+# it before the car booted on it. Builtin compile() = syntax check with no bytecode
+# written, so no __pycache__ to clean up.
+for f in $(git diff --name-only "$START"..HEAD | grep '\.py$' || true); do
+  python3 -c "import sys; compile(open(sys.argv[1]).read(), sys.argv[1], 'exec')" "$f" \
+    || { echo "::error::patched $f does not compile"; exit 1; }
 done
 
 echo "applied ${#PATCHERS[@]} patchers"

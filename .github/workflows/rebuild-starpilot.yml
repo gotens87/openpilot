@@ -131,23 +131,5 @@ jobs:
           echo "PUSHED=yes" >> "$GITHUB_ENV"
           echo "pushed $current -> $NEW_SHA"
 
-      - name: Summary
-        if: always()
-        run: |
-          {
-            echo "### Rebuild StarPilot"
-            echo ""
-            echo "| field | value |"
-            echo "| --- | --- |"
-            echo "| upstream $UPSTREAM_BRANCH tip | \`${DOM_SHA:-n/a}\` |"
-            echo "| new $TARGET_BRANCH tip | \`${NEW_SHA:-n/a}\` |"
-            if [ "$UPSTREAM_MOVED" = "no" ]; then
-              echo "| pushed | no (upstream unchanged, no fetch) |"
-            else
-              echo "| pushed | ${PUSHED:-no (run failed)} |"
-            fi
-            echo ""
-            for p in ops/ops_patches/patch_*.py; do
-              echo "- $(basename "$p")"
-            done
-          } >> "$GITHUB_STEP_SUMMARY"
+# ponytail: no job-summary step. Every value it printed (Dom sha, new sha, pushed
+# or not) is already in the step logs, which is where you look when it breaks.
