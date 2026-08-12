@@ -9,19 +9,21 @@ import sys
 
 CARD = "/data/openpilot/starpilot/controls/starpilot_card.py"
 
-OLD_IMPORT = """from openpilot.starpilot.common.starpilot_variables import ERROR_LOGS_PATH, GearShifter, NON_DRIVING_GEARS"""
+# Anchors are deliberately ONE line each, on a line upstream has no reason to touch.
+# A multi-line anchor dies on any insertion inside its span (Dom acf32365b grew
+# __init__; decf85985 inserted into a loop body). Insert AFTER the anchor and re-emit
+# it, so trailing context is never part of the match.
+#
+# No import anchor: `Path` is imported lazily inside __init__ instead of patching the
+# module import block. That block is a long, frequently-edited import list, and the
+# only place Path is needed is the marker construction below.
 
-NEW_IMPORT = """from pathlib import Path
-
-from openpilot.starpilot.common.starpilot_variables import ERROR_LOGS_PATH, GearShifter, NON_DRIVING_GEARS"""
-
-OLD_INIT = """    self.error_log = ERROR_LOGS_PATH / "error.txt"
-
-  def handle_button_event"""
+OLD_INIT = """    self.error_log = ERROR_LOGS_PATH / "error.txt\""""
 
 NEW_INIT = """    self.error_log = ERROR_LOGS_PATH / "error.txt"
 
     # Park auto-offroad entry counters (exit lives in hardwared.py).
+    from pathlib import Path
     self.park_offroad_counter = 0
     self.park_offroad_threshold = 300  # dwell frames (~3s at 100Hz)
     self.park_offroad_v_ego_threshold = 0.5  # m/s
@@ -32,12 +34,9 @@ NEW_INIT = """    self.error_log = ERROR_LOGS_PATH / "error.txt"
       if self.park_offroad_marker.is_file():
         self.park_offroad_marker.unlink()
     except Exception:
-      pass
+      pass"""
 
-  def handle_button_event"""
-
-OLD_PARKED = """    starpilotCarState.isParked = carState.gearShifter == GearShifter.park
-    starpilotCarState.pauseLateral = self.pause_lateral"""
+OLD_PARKED = """    starpilotCarState.isParked = carState.gearShifter == GearShifter.park"""
 
 NEW_PARKED = """    starpilotCarState.isParked = carState.gearShifter == GearShifter.park
 
@@ -55,9 +54,7 @@ NEW_PARKED = """    starpilotCarState.isParked = carState.gearShifter == GearShi
           self.park_offroad_marker.parent.mkdir(parents=True, exist_ok=True)
           self.park_offroad_marker.write_text("1")
         except Exception:
-          pass
-
-    starpilotCarState.pauseLateral = self.pause_lateral"""
+          pass"""
 
 
 def main():
@@ -72,18 +69,13 @@ def main():
         print("starpilot_card.py already patched")
         return 0
 
-    if content.count(OLD_IMPORT) != 1:
-        print("ERROR: expected import line not found exactly once in starpilot_card.py; patch not applied")
-        return 1
-    content = content.replace(OLD_IMPORT, NEW_IMPORT, 1)
-
     if content.count(OLD_INIT) != 1:
-        print("ERROR: expected __init__ block not found exactly once in starpilot_card.py; patch not applied")
+        print(f"ERROR: error_log anchor found {content.count(OLD_INIT)}x (expected 1) in starpilot_card.py; patch not applied")
         return 1
     content = content.replace(OLD_INIT, NEW_INIT, 1)
 
     if content.count(OLD_PARKED) != 1:
-        print("ERROR: expected isParked block not found exactly once in starpilot_card.py; patch not applied")
+        print(f"ERROR: isParked anchor found {content.count(OLD_PARKED)}x (expected 1) in starpilot_card.py; patch not applied")
         return 1
     content = content.replace(OLD_PARKED, NEW_PARKED, 1)
 

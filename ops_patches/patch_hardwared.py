@@ -10,24 +10,23 @@ import sys
 
 HARDWARED = "/data/openpilot/system/hardware/hardwared.py"
 
-OLD_IMPORTS = """import cereal.messaging as messaging
-from cereal import log
-from cereal.services import SERVICE_LIST"""
+# Anchors are deliberately ONE line each, on a line upstream has no reason to touch,
+# and we insert AFTER the anchor + re-emit it. A multi-line anchor dies on any
+# insertion inside its span -- that is exactly how Dom decf85985 (chestnut block in
+# the loop body) and acf32365b (grown __init__) broke this stack.
 
-NEW_IMPORTS = """import cereal.messaging as messaging
+OLD_IMPORTS = """from cereal.services import SERVICE_LIST"""
+
+NEW_IMPORTS = """from cereal.services import SERVICE_LIST
 from cereal import car as car_log
-from cereal import log
-from cereal.services import SERVICE_LIST
 from opendbc.can import CANDefine, CANParser
 from opendbc.car import Bus
 from opendbc.car.toyota.values import CAR, DBC
 from openpilot.selfdrive.pandad import can_capnp_to_list"""
 
-OLD_PARAMS = """  params = Params()
-  power_monitor = PowerMonitoring()"""
+OLD_PARAMS = """  power_monitor = PowerMonitoring()"""
 
-NEW_PARAMS = """  params = Params()
-  power_monitor = PowerMonitoring()
+NEW_PARAMS = """  power_monitor = PowerMonitoring()
 
   # Park auto-offroad exit detection state (lazy-initialized once CarParams exists).
   PARK_OFFROAD_MARKER = "/data/ops_patches/.park_offroad_forced"
@@ -101,22 +100,22 @@ def main():
         return 0
 
     if content.count(OLD_IMPORTS) != 1:
-        print("ERROR: expected imports block not found exactly once in hardwared.py; patch not applied")
+        print(f"ERROR: imports block anchor found {content.count(OLD_IMPORTS)}x (expected 1) in hardwared.py; patch not applied")
         return 1
     content = content.replace(OLD_IMPORTS, NEW_IMPORTS, 1)
 
     if content.count(OLD_PARAMS) != 1:
-        print("ERROR: expected params block not found exactly once in hardwared.py; patch not applied")
+        print(f"ERROR: params block anchor found {content.count(OLD_PARAMS)}x (expected 1) in hardwared.py; patch not applied")
         return 1
     content = content.replace(OLD_PARAMS, NEW_PARAMS, 1)
 
     if content.count(OLD_SHOULD_START) != 1:
-        print("ERROR: expected should_start line not found exactly once in hardwared.py; patch not applied")
+        print(f"ERROR: should_start line anchor found {content.count(OLD_SHOULD_START)}x (expected 1) in hardwared.py; patch not applied")
         return 1
     content = content.replace(OLD_SHOULD_START, NEW_SHOULD_START, 1)
 
     if content.count(OLD_LOOP) != 1:
-        print("ERROR: expected loop start not found exactly once in hardwared.py; patch not applied")
+        print(f"ERROR: loop start anchor found {content.count(OLD_LOOP)}x (expected 1) in hardwared.py; patch not applied")
         return 1
     content = content.replace(OLD_LOOP, NEW_LOOP, 1)
 
