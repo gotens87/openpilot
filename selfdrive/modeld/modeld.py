@@ -67,6 +67,17 @@ MIN_LAT_CONTROL_SPEED = 0.3
 BIG_MODEL_TIMEOUT = 60
 BIG_MODEL_LOAD_WAIT_TIMEOUT_MS = 30000
 BIG_MODEL_RUN_WAIT_TIMEOUT_MS = 3000
+LAT_SMOOTH_BP = [2.0, 8.0]
+
+
+def get_lateral_smooth_seconds(v_ego: float, maximum: float = 0.0) -> float:
+  return float(np.interp(v_ego, LAT_SMOOTH_BP, [maximum, 0.0]))
+
+
+def get_car_lateral_smooth_seconds(brand: str, v_ego: float, maximum: float) -> float:
+  if brand == "rivian":
+    return get_lateral_smooth_seconds(v_ego, maximum)
+  return maximum
 
 
 def _get_param_str(params: Params, key: str, default: str = "") -> str:
@@ -686,13 +697,15 @@ def main(demo=False):
       meta_extra = meta_main
 
     sm.update(0)
-    lat_smooth_seconds = _model_smooth_seconds(params, "LatSmoothSeconds", LAT_SMOOTH_SECONDS)
     long_smooth_seconds = _model_smooth_seconds(params, "LongSmoothSeconds", LONG_SMOOTH_SECONDS)
     long_delay = CP.longitudinalActuatorDelay + long_smooth_seconds
     desire = DH.desire
     is_rhd = sm["driverMonitoringState"].isRHD
     frame_id = sm["roadCameraState"].frameId
     v_ego = max(sm["carState"].vEgo, 0.)
+    lat_smooth_default = CP.lateralSmoothSeconds if CP.brand == "rivian" else LAT_SMOOTH_SECONDS
+    lat_smooth_maximum = _model_smooth_seconds(params, "LatSmoothSeconds", lat_smooth_default)
+    lat_smooth_seconds = get_car_lateral_smooth_seconds(CP.brand, v_ego, lat_smooth_maximum)
     lat_delay = sm["liveDelay"].lateralDelay + lat_smooth_seconds
     lateral_control_params = np.array([v_ego, lat_delay], dtype=np.float32)
     if sm.frame % 60 == 0:
