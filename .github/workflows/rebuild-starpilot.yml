@@ -1,0 +1,135 @@
+name: Rebuild StarPilot
+
+# Rebuilds branch StarPilot as: upstream Dom tip + the patch series in patches/.
+# Lives on the default branch (ops) because schedule: only fires from the default
+# branch, and StarPilot itself is force-reset to upstream content on every run.
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Rebuild even if upstream has not moved (use after editing ops_patches/)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rebuild-starpilot
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: https://github.com/firestar5683/StarPilot.git
+  UPSTREAM_BRANCH: Dom
+  TARGET_BRANCH: StarPilot
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out ops branch for patches
+        uses: actions/checkout@v4
+        with:
+          path: ops
+
+      - name: Check whether upstream moved
+        env:
+          GH_TOKEN: ${{ secrets.PATCHQUEUE_TOKEN }}
+        run: |
+          # A patchless force-push would silently ship unpatched code to the car.
+          count=$(ops/tools/apply-patchers.sh --count)
+          if [ "${count:-0}" -eq 0 ] || [ ! -d ops/ops_patches ]; then
+            echo "::error::no patchers found in ops/ops_patches/ - refusing to build"
+            exit 1
+          fi
+          echo "PATCH_COUNT=$count" >> "$GITHUB_ENV"
+
+          # ls-remote is a few KB; the shallow fetch below is ~400MB. On a 10-minute
+          # cadence, fetching unconditionally would pull ~58GB/day off upstream.
+          dom=$(git ls-remote "$UPSTREAM_REPO" "refs/heads/$UPSTREAM_BRANCH" | cut -f1)
+          echo "DOM_SHA=$dom" >> "$GITHUB_ENV"
+
+          # Our tip is Dom + N patch commits, so entry N is the base we last built on.
+          base=$(gh api "repos/$GITHUB_REPOSITORY/commits?sha=$TARGET_BRANCH&per_page=$((count + 1))" \
+                   --jq ".[$count].sha" 2>/dev/null || true)
+          [ "$base" = "null" ] && base=""
+
+          # The moved-check watches UPSTREAM only. Editing a patcher changes what we
+          # would build from the same Dom tip, and that is invisible here -- without
+          # this the car sits on stale patches until upstream happens to move.
+          if [ "${{ inputs.force }}" = "true" ]; then
+            echo "UPSTREAM_MOVED=yes" >> "$GITHUB_ENV"
+            echo "forced rebuild (patchers changed); upstream at $dom"
+          elif [ -n "$base" ] && [ "$base" = "$dom" ]; then
+            echo "UPSTREAM_MOVED=no" >> "$GITHUB_ENV"
+            echo "$TARGET_BRANCH already built on $dom, nothing to do"
+          else
+            echo "UPSTREAM_MOVED=yes" >> "$GITHUB_ENV"
+            echo "rebuild needed: upstream at $dom, last built on ${base:-unknown}"
+          fi
+
+      - name: Fetch upstream tip
+        if: env.UPSTREAM_MOVED == 'yes'
+        run: |
+          git init -q work
+          cd work
+          git remote add upstream "$UPSTREAM_REPO"
+          git fetch -q --depth=1 --no-tags upstream "$UPSTREAM_BRANCH"
+          # Pin the committer date to upstream's so an unchanged rebuild is
+          # bit-identical and the force-push below becomes a no-op.
+          echo "DOM_DATE=$(git log -1 --format=%cI FETCH_HEAD)" >> "$GITHUB_ENV"
+          echo "upstream $UPSTREAM_BRANCH tip: $DOM_SHA"
+
+      - name: Apply patch series
+        if: env.UPSTREAM_MOVED == 'yes'
+        env:
+          GIT_AUTHOR_NAME: gotens87
+          GIT_AUTHOR_EMAIL: gotens87@users.noreply.github.com
+          GIT_COMMITTER_NAME: gotens87
+          GIT_COMMITTER_EMAIL: gotens87@users.noreply.github.com
+        run: |
+          cd work
+          export GIT_COMMITTER_DATE="$DOM_DATE"
+          git checkout -q -B "$TARGET_BRANCH" "$DOM_SHA"
+          git config user.name "$GIT_AUTHOR_NAME"
+          git config user.email "$GIT_AUTHOR_EMAIL"
+
+          # Runs ops_patches/patch_*.py against this checkout (anchor-text matching),
+          # NOT `git am` on stored .patch files. Stored patches carried unified-diff
+          # hunk context that went stale on any upstream line-number shift; that cost
+          # 6 consecutive failed runs on 2026-08-11 with every anchor still present.
+          #
+          # Still fail-closed: a missing or ambiguous anchor exits non-zero here, so
+          # the job stops before the push step and StarPilot stays at last-good with
+          # its patches. No patch is ever skipped or auto-resolved.
+          if ! ../ops/tools/apply-patchers.sh "$PWD" ../ops/ops_patches; then
+            echo "::error::patcher failed - upstream restructured a patched file; anchors need updating in ops_patches/"
+            exit 1
+          fi
+
+          echo "NEW_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Push if changed
+        if: env.UPSTREAM_MOVED == 'yes'
+        env:
+          PATCHQUEUE_TOKEN: ${{ secrets.PATCHQUEUE_TOKEN }}
+        run: |
+          cd work
+          remote="https://x-access-token:${PATCHQUEUE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          current=$(git ls-remote "$remote" "refs/heads/$TARGET_BRANCH" | cut -f1)
+
+          if [ "$current" = "$NEW_SHA" ]; then
+            echo "PUSHED=no" >> "$GITHUB_ENV"
+            echo "$TARGET_BRANCH already at $NEW_SHA - nothing to do"
+            exit 0
+          fi
+
+          git push -q --force "$remote" "HEAD:refs/heads/$TARGET_BRANCH"
+          echo "PUSHED=yes" >> "$GITHUB_ENV"
+          echo "pushed $current -> $NEW_SHA"
+
+# ponytail: no job-summary step. Every value it printed (Dom sha, new sha, pushed
+# or not) is already in the step logs, which is where you look when it breaks.
