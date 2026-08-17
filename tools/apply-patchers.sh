@@ -25,8 +25,12 @@
 # or auto-resolved.
 set -euo pipefail
 
-PATCHERS=()
-SUBJECTS=()
+PATCHERS=(
+  patch_park_valet.py
+)
+SUBJECTS=(
+  "Offroad Without OBD Power: auto-offroad on park entry + exit"
+)
 # Shelved, not active -- kept in ops_patches/ for future reactivation, not
 # referenced above. Naming pending (operator's call, not auto-generated):
 #  - patch_radar_valid.py -- side-cluster VALID-bit filter, TSS-P Continental radar.
