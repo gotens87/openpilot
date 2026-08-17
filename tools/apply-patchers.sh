@@ -29,7 +29,7 @@ PATCHERS=(
   patch_park_valet.py
 )
 SUBJECTS=(
-  "park: auto-offroad on entry + exit (merged from starpilot_card + hardwared)"
+  "Offroad Without OBD Power: auto-offroad on park entry + exit"
 )
 # Shelved, not active -- kept in ops_patches/ for future reactivation, not
 # referenced above. Naming pending (operator's call, not auto-generated):
