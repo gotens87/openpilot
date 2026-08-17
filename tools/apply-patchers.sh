@@ -26,19 +26,19 @@
 set -euo pipefail
 
 PATCHERS=(
-  patch_starpilot_card.py
-  patch_hardwared.py
-  patch_cem_lightboost.py
+  patch_park_valet.py
   patch_radar_valid.py
   patch_radar_yaw.py
 )
 SUBJECTS=(
-  "starpilot_card: auto-offroad on park (entry)"
-  "hardwared: auto-offroad exit on leaving park"
-  "CEM: neutralize highway light-boost multiplier"
-  "toyota: honour side-cluster VALID bit on TSS-P Continental radar"
-  "toyota: tunable radar boresight yaw correction (default 0.0 = stock)"
+  "The Doorman: auto-offroad on park entry + exit"
+  "Bouncer: honour side-cluster VALID bit on TSS-P Continental radar"
+  "Lazy Eye: tunable radar boresight yaw correction (default 0.0 = stock)"
 )
+# Shelved, not active -- kept in ops_patches/ for future reactivation, not
+# referenced above: patch_cem_lightboost.py ("Red Light Special" -- highway
+# light-boost neutralize; pulled 2026-08-17, operator no longer sure it did
+# anything real, wants to re-test clean before trusting it again).
 
 if [ "${1:-}" = "--count" ]; then
   echo "${#PATCHERS[@]}"
