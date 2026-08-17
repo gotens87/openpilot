@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /data/ops_patches/patch_park_valet.py
-# "The Doorman" -- auto-offroad the car once it's genuinely parked (gear=P,
-# stopped ~3s), and clear that again the moment it leaves park. Two halves,
+# Auto-offroad the car once it's genuinely parked (gear=P, stopped ~3s), and
+# clear that again the moment it leaves park. Two halves,
 # one patcher, one commit: entry lives in starpilot_card.py (already runs
 # onroad with carState computed -- zero new subscriptions); exit lives in
 # hardwared.py (always-running, since card itself stops once ForceOffroad is
