@@ -78,6 +78,20 @@ class StarPilotCard:
 
     self.error_log = ERROR_LOGS_PATH / "error.txt"
 
+    # Park auto-offroad entry counters (exit lives in hardwared.py).
+    from pathlib import Path
+    self.park_offroad_counter = 0
+    self.park_offroad_threshold = 300  # dwell frames (~3s at 100Hz)
+    self.park_offroad_v_ego_threshold = 0.5  # m/s
+    self.park_offroad_marker = Path("/data/ops_patches/.park_offroad_forced")
+
+    # Boot-time cleanup of stale marker (ForceOffroad is CLEAR_ON_MANAGER_START).
+    try:
+      if self.park_offroad_marker.is_file():
+        self.park_offroad_marker.unlink()
+    except Exception:
+      pass
+
   def handle_button_event(self, key, sm, starpilot_toggles):
     if sm["carControl"].longActive and getattr(starpilot_toggles, f"experimental_mode_via_{key}"):
       self.handle_experimental_mode(sm, starpilot_toggles)
@@ -310,6 +324,22 @@ class StarPilotCard:
     starpilotCarState.distanceVeryLongPressed = self.gap_counter >= self.very_long_press_threshold
     starpilotCarState.forceCoast = self.force_coast
     starpilotCarState.isParked = carState.gearShifter == GearShifter.park
+
+    # Auto-force-offroad when genuinely parked and stopped (entry only).
+    parked_and_stopped = starpilotCarState.isParked and abs(carState.vEgo) < self.park_offroad_v_ego_threshold
+    if parked_and_stopped:
+      self.park_offroad_counter += 1
+    else:
+      self.park_offroad_counter = 0
+
+    if self.park_offroad_counter >= self.park_offroad_threshold and not self.park_offroad_marker.is_file():
+      if not self.params.get_bool("ForceOffroad"):
+        self.params.put_bool("ForceOffroad", True)
+        try:
+          self.park_offroad_marker.parent.mkdir(parents=True, exist_ok=True)
+          self.park_offroad_marker.write_text("1")
+        except Exception:
+          pass
     starpilotCarState.pauseLateral = self.pause_lateral
     starpilotCarState.pauseLongitudinal = self.pause_longitudinal
     starpilotCarState.trafficModeEnabled = self.traffic_mode_enabled
