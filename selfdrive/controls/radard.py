@@ -430,7 +430,8 @@ class RadarD:
     kf_dt = HONDA_BOSCH_A_RADAR_TS if self.honda_bosch_a_radar else radar_ts
     self.kalman_params = KalmanParams(kf_dt)
     self.g90_radar_filter = g90_radar_filter
-    self.lead_prob_filters = [FirstOrderFilter(0.0, 0.2, DT_MDL) for _ in range(2)]
+    lead_prob_dt = DT_MDL if self.honda_bosch_a_radar else radar_ts
+    self.lead_prob_filters = [FirstOrderFilter(0.0, 0.2, lead_prob_dt) for _ in range(2)]
     self.prev_lead_track_ids = [-1, -1]
     self.preferred_stale_track_ids = [-1, -1]
     self.preferred_challenger_stale_counts = [0, 0]
