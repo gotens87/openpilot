@@ -10,6 +10,7 @@ import sys
 import sysconfig
 import tarfile
 
+import io
 from io import BytesIO
 from pathlib import Path
 
@@ -1116,6 +1117,28 @@ def _get_toggle_backup_keys():
   return keys
 
 
+def _route_log_files(name):
+  """Full logs for a route as [(segment, filename, path, size)], oldest segment first."""
+  if not utilities.ROUTE_RE.fullmatch(str(name or "")):
+    return []
+
+  for footage_path in FOOTAGE_PATHS:
+    logs = []
+    try:
+      segments = utilities.get_segments_in_route(name, footage_path)
+    except OSError:
+      continue
+    for segment in sorted(segments, key=lambda s: int(s.rsplit("--", 1)[1])):
+      for filename in ROUTE_LOG_CANDIDATES:
+        path = os.path.join(footage_path, segment, filename)
+        if os.path.isfile(path):
+          logs.append((segment, filename, path, os.path.getsize(path)))
+          break
+    if logs:
+      return logs
+  return []
+
+
 def _coerce_toggle_restore_value(key, value):
   value_type = _get_param_key_type(_params_raw, key)
 
@@ -1191,6 +1214,206 @@ except TypeError:
     "/data/media/0/realdata_konik/",
     str(Paths.log_root()),
   ]
+
+# Full drive logs, newest format first. comma only accepts qlog/qcamera uploads, so these come off the device directly.
+ROUTE_LOG_CANDIDATES = ("rlog.zst", "rlog.bz2", "rlog")
+ROUTE_METADATA_WORKERS = 4
+ROUTE_METADATA_BATCH_SIZE = 8
+ROUTE_THUMBNAIL_CACHE_SECONDS = 7 * 24 * 60 * 60
+# Browsers only allow a handful of connections per origin, so a request must never
+# park on the preview queue: give up and let the card fall back, the job keeps running.
+ROUTE_THUMBNAIL_WAIT_SECONDS = 25
+# One minute per segment, matching loggerd's segment length.
+SEGMENT_DURATION_SECONDS = 60
+# Only ever remux one segment at a time; the driving stack needs the headroom. The
+# subprocess timeout is the hard bound, with a small allowance for executor handoff.
+VIDEO_REMUX_WAIT_SECONDS = utilities.VIDEO_REMUX_TIMEOUT_SECONDS + 5
+# Segment media never changes once loggerd has closed it, so let the browser keep it.
+VIDEO_CACHE_SECONDS = 7 * 24 * 60 * 60
+_VIDEO_REMUX_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="video-remux")
+_VIDEO_REMUX_FUTURES = {}
+_VIDEO_REMUX_LOCK = threading.Lock()
+_ROUTE_THUMBNAIL_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="route-thumbnail")
+_ROUTE_THUMBNAIL_FUTURES = {}
+_ROUTE_THUMBNAIL_LOCK = threading.Lock()
+
+
+def _route_scan_entries(footage_paths):
+  """Route scan entries in footage-root priority order, deduplicated by route id."""
+  entries = []
+  seen_names = set()
+  for footage_path in footage_paths:
+    try:
+      route_details = utilities.get_routes_with_segment_details(footage_path)
+    except OSError:
+      continue
+    for name, details in route_details:
+      if name in seen_names:
+        continue
+      seen_names.add(name)
+      entries.append((
+        footage_path,
+        name,
+        max(0, int(details.get("segmentCount", 0))),
+        max(0, int(details.get("firstSegmentNum", 0))),
+      ))
+  return entries
+
+
+def _route_metadata_events(entries, connect_dongle_id="", process_route=None):
+  """Yield SSE payloads while keeping queued metadata work cancellable."""
+  route_processor = process_route or utilities.process_route
+  total = len(entries)
+  yield {"routes": [], "progress": 0, "total": total, "connectDongleId": connect_dongle_id}
+  if total == 0:
+    return
+
+  executor = ThreadPoolExecutor(max_workers=ROUTE_METADATA_WORKERS, thread_name_prefix="route-metadata")
+  futures = []
+  try:
+    futures = [
+      executor.submit(route_processor, path, name, segment_count, first_segment_num)
+      for path, name, segment_count, first_segment_num in entries
+    ]
+    batch = []
+    for processed, future in enumerate(as_completed(futures), start=1):
+      try:
+        batch.append(future.result())
+      except Exception as exception:
+        print(f"Error processing route: {exception}")
+
+      if len(batch) >= ROUTE_METADATA_BATCH_SIZE or processed == total:
+        yield {"routes": batch, "progress": processed, "total": total}
+        batch = []
+  finally:
+    for future in futures:
+      future.cancel()
+    executor.shutdown(wait=False, cancel_futures=True)
+
+
+def _route_first_segment_path(name, footage_path):
+  """Oldest surviving segment of a route. loggerd ages out --0 first, so it is not always --0."""
+  try:
+    segments = utilities.get_segments_in_route(name, footage_path)
+  except OSError:
+    return None
+  return os.path.join(footage_path, segments[0]) if segments else None
+
+
+def _resolve_route_thumbnail(file_path, footage_paths=None):
+  """Resolve only <segment>/preview.png below a configured footage root."""
+  parts = Path(str(file_path or "")).parts
+  if len(parts) != 2 or parts[1] != "preview.png" or not utilities.SEGMENT_RE.fullmatch(parts[0]):
+    return None
+
+  for footage_path in footage_paths if footage_paths is not None else FOOTAGE_PATHS:
+    footage_root = Path(footage_path).resolve()
+    segment_path = (footage_root / parts[0]).resolve()
+    if segment_path.parent != footage_root or not segment_path.is_dir():
+      continue
+    preview_path = segment_path / "preview.png"
+    if preview_path.is_symlink():
+      continue
+    if preview_path.exists():
+      resolved_preview = preview_path.resolve()
+      if resolved_preview.parent != segment_path:
+        continue
+      return resolved_preview
+    return preview_path
+  return None
+
+
+def _generate_route_thumbnail(preview_path):
+  if preview_path.is_file():
+    return preview_path
+
+  for filename in ("qcamera.ts", "fcamera.hevc"):
+    source_path = preview_path.parent / filename
+    if source_path.resolve().parent == preview_path.parent and source_path.is_file() and utilities.video_to_png(source_path, preview_path) and preview_path.is_file():
+      return preview_path
+  return None
+
+
+def _remove_video_remux_future(key, future):
+  with _VIDEO_REMUX_LOCK:
+    if _VIDEO_REMUX_FUTURES.get(key) is future:
+      _VIDEO_REMUX_FUTURES.pop(key, None)
+
+
+def _get_or_create_segment_mp4(source_path):
+  """Remuxed mp4 for one segment, or None if it is not ready in time.
+
+  Concurrent requests share one ffmpeg run instead of racing to write the same file.
+  """
+  key = str(source_path)
+  created = False
+  with _VIDEO_REMUX_LOCK:
+    future = _VIDEO_REMUX_FUTURES.get(key)
+    if future is None:
+      future = _VIDEO_REMUX_EXECUTOR.submit(utilities.ffmpeg_mp4_wrap_to_path, source_path)
+      _VIDEO_REMUX_FUTURES[key] = future
+      created = True
+
+  if created:
+    future.add_done_callback(lambda completed: _remove_video_remux_future(key, completed))
+
+  try:
+    return future.result(timeout=VIDEO_REMUX_WAIT_SECONDS)
+  except TimeoutError:
+    # The callback keeps the running job deduplicated, then evicts it when done.
+    return None
+
+
+def _remove_route_thumbnail_future(key, future):
+  with _ROUTE_THUMBNAIL_LOCK:
+    if _ROUTE_THUMBNAIL_FUTURES.get(key) is future:
+      _ROUTE_THUMBNAIL_FUTURES.pop(key, None)
+
+
+def _get_or_create_route_thumbnail(file_path, footage_paths=None):
+  preview_path = _resolve_route_thumbnail(file_path, footage_paths)
+  if preview_path is None:
+    return None
+  if preview_path.is_file():
+    return preview_path
+
+  key = str(preview_path)
+  created = False
+  with _ROUTE_THUMBNAIL_LOCK:
+    future = _ROUTE_THUMBNAIL_FUTURES.get(key)
+    if future is None:
+      future = _ROUTE_THUMBNAIL_EXECUTOR.submit(_generate_route_thumbnail, preview_path)
+      _ROUTE_THUMBNAIL_FUTURES[key] = future
+      created = True
+
+  if created:
+    future.add_done_callback(lambda completed: _remove_route_thumbnail_future(key, completed))
+
+  try:
+    return future.result(timeout=ROUTE_THUMBNAIL_WAIT_SECONDS)
+  except TimeoutError:
+    # The completion callback keeps the running job deduplicated, then evicts it when done.
+    return None
+
+
+class _TarBuffer(io.RawIOBase):
+  """Collects tarfile output so a route archive can be streamed out instead of built on disk."""
+
+  def __init__(self):
+    self._chunks = []
+
+  def writable(self):
+    return True
+
+  def write(self, data):
+    self._chunks.append(bytes(data))
+    return len(data)
+
+  def pop(self):
+    data = b"".join(self._chunks)
+    self._chunks.clear()
+    return data
+
 
 KEYS = {
   "amap1": ("amap1", "", "AMapKey1", "AMap / Gaode key #1", 39),
@@ -6122,29 +6345,16 @@ def setup(app):
   @app.route("/api/routes", methods=["GET"])
   def list_routes():
     def generate():
-      routes = [
-        (path, name, segment_count)
-        for path in FOOTAGE_PATHS
-        for name, segment_count in utilities.get_routes_with_segment_counts(path)
-      ]
-      total = len(routes)
+      routes = _route_scan_entries(FOOTAGE_PATHS)
       connect_dongle_id = params.get("StockDongleId", encoding="utf-8") or params.get("DongleId", encoding="utf-8") or ""
-      yield f"data: {json.dumps({'progress': 0, 'total': total, 'connectDongleId': connect_dongle_id})}\n\n"
+      for payload in _route_metadata_events(routes, connect_dongle_id):
+        yield f"data: {json.dumps(payload)}\n\n"
 
-      with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {
-          executor.submit(utilities.process_route, path, name, segment_count): (path, name)
-          for path, name, segment_count in routes
-        }
-        for processed, future in enumerate(as_completed(futures), start=1):
-          try:
-            result = future.result()
-            yield f"data: {json.dumps({'routes': [result]})}\n\n"
-          except Exception as exception:
-            print(f"Error processing route: {exception}")
-          yield f"data: {json.dumps({'progress': processed, 'total': total})}\n\n"
-
-    return Response(generate(), mimetype="text/event-stream")
+    response = Response(generate(), mimetype="text/event-stream")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["X-Accel-Buffering"] = "no"
+    return response
 
   def _valid_route_name(name):
     return bool(utilities.ROUTE_RE.fullmatch(str(name or "")))
@@ -6156,6 +6366,8 @@ def setup(app):
 
     segment_prefix = f"{name}--"
     for footage_path in FOOTAGE_PATHS:
+      if not os.path.isdir(footage_path):
+        continue
       for segment in os.listdir(footage_path):
         if utilities.SEGMENT_RE.fullmatch(segment) and segment.startswith(segment_prefix):
           delete_file(os.path.join(footage_path, segment))
@@ -6171,6 +6383,7 @@ def setup(app):
 
     try:
       utilities.stop_dashboard_background_analysis()
+      include_preserved = request.args.get("include_preserved", "true").strip().lower() not in ("0", "false", "no", "off")
 
       route_paths = []
       seen_paths = set()
@@ -6180,18 +6393,51 @@ def setup(app):
           seen_paths.add(path)
           route_paths.append(path)
 
-      for route_path in route_paths:
-        _run_factory_reset_delete(route_path)
+      preserved_route_names = set()
+      deleted_route_names = set()
+      if include_preserved:
+        for route_path in route_paths:
+          _run_factory_reset_delete(route_path)
+      else:
+        # The preserve xattr lives on one segment, but preservation applies to the
+        # whole route in every footage root.
+        for route_path in route_paths:
+          if not os.path.isdir(route_path):
+            continue
+          for segment in os.listdir(route_path):
+            if utilities.SEGMENT_RE.fullmatch(segment) and utilities.has_preserve_attr(os.path.join(route_path, segment)):
+              preserved_route_names.add(segment.rsplit("--", 1)[0])
 
-      persisted_route_count = utilities.clear_dashboard_route_history(params)
+        for route_path in route_paths:
+          if not os.path.isdir(route_path):
+            continue
+          for segment in os.listdir(route_path):
+            if not utilities.SEGMENT_RE.fullmatch(segment):
+              continue
+            route_name = segment.rsplit("--", 1)[0]
+            if route_name in preserved_route_names:
+              continue
+            delete_file(os.path.join(route_path, segment))
+            deleted_route_names.add(route_name)
+
+      persisted_route_count = utilities.clear_dashboard_route_history(
+        params,
+        retained_route_names=preserved_route_names if not include_preserved else None,
+      )
       _STATS_RESPONSE_CACHE.update({
         "updated_at": 0.0,
         "payload": None,
       })
       return jsonify({
         "success": True,
-        "message": "All local driving routes deleted. Saved personal records were kept.",
-        "deletedPaths": len(route_paths),
+        "message": (
+          "All local driving routes deleted, including preserved routes. Saved personal records were kept."
+          if include_preserved else
+          "All non-preserved local driving routes deleted. Preserved routes were kept."
+        ),
+        "deletedPaths": len(route_paths) if include_preserved else 0,
+        "deletedRoutes": len(deleted_route_names) if not include_preserved else None,
+        "preservedRoutes": len(preserved_route_names) if not include_preserved else 0,
         "clearedDashboardRoutes": persisted_route_count,
       }), 200
     except Exception as exception:
@@ -6204,21 +6450,21 @@ def setup(app):
     if not _valid_route_name(name):
       return jsonify({"error": "Invalid route name."}), 400
 
-    preserved_routes = 0
+    preserved_routes = set()
     for footage_path in FOOTAGE_PATHS:
+      if not os.path.isdir(footage_path):
+        continue
       for segment in os.listdir(footage_path):
-        if segment.endswith("--0"):
-          segment_path = os.path.join(footage_path, segment)
-          if PRESERVE_ATTR_NAME in os.listxattr(segment_path) and os.getxattr(segment_path, PRESERVE_ATTR_NAME) == PRESERVE_ATTR_VALUE:
-            preserved_routes += 1
+        if utilities.SEGMENT_RE.fullmatch(segment) and utilities.has_preserve_attr(os.path.join(footage_path, segment)):
+          preserved_routes.add(segment.rsplit("--", 1)[0])
 
-    if preserved_routes >= PRESERVE_COUNT:
+    if name not in preserved_routes and len(preserved_routes) >= PRESERVE_COUNT:
       return {"error": f"Maximum of {PRESERVE_COUNT} preserved routes reached..."}, 400
 
     for footage_path in FOOTAGE_PATHS:
-      route_path = os.path.join(footage_path, f"{name}--0")
-      if os.path.exists(route_path):
-        os.setxattr(route_path, PRESERVE_ATTR_NAME, PRESERVE_ATTR_VALUE)
+      segment_path = _route_first_segment_path(name, footage_path)
+      if segment_path is not None:
+        os.setxattr(segment_path, PRESERVE_ATTR_NAME, PRESERVE_ATTR_VALUE)
         return {"message": "Route preserved!!"}, 200
 
     return {"error": "Route not found"}, 404
@@ -6229,9 +6475,9 @@ def setup(app):
       return jsonify({"error": "Invalid route name."}), 400
 
     for footage_path in FOOTAGE_PATHS:
-      route_path = os.path.join(footage_path, f"{name}--0")
-      if os.path.isdir(route_path) and PRESERVE_ATTR_NAME in os.listxattr(route_path):
-        os.removexattr(route_path, PRESERVE_ATTR_NAME)
+      segment_path = _route_first_segment_path(name, footage_path)
+      if segment_path is not None and utilities.has_preserve_attr(segment_path):
+        os.removexattr(segment_path, PRESERVE_ATTR_NAME)
         return {"message": "Route unpreserved!"}, 200
     return {"error": "Route not found"}, 404
 
@@ -6242,7 +6488,10 @@ def setup(app):
 
     camera = request.args.get("camera", "forward")
     for footage_path in FOOTAGE_PATHS:
-      segments = utilities.get_segments_in_route(name, footage_path)
+      try:
+        segments = utilities.get_segments_in_route(name, footage_path)
+      except OSError:
+        continue
       if segments:
         cam_file = {
           "forward": "fcamera.hevc",
@@ -6259,8 +6508,10 @@ def setup(app):
         if not input_files:
           return {"error": "No video files found"}, 404
 
-        mp4_file = utilities.ffmpeg_concat_segments_to_mp4(input_files, cache_key=f"{name}-{camera}")
-        return send_file(mp4_file, mimetype="video/mp4")
+        response = Response(utilities.ffmpeg_stream_concatenated_mp4(input_files), mimetype="video/mp4")
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Accel-Buffering"] = "no"
+        return response
 
     return {"error": "Route not found"}, 404
 
@@ -6270,30 +6521,87 @@ def setup(app):
       return jsonify({"error": "Invalid route name."}), 400
 
     for footage_path in FOOTAGE_PATHS:
-      base_path = f"{footage_path}{name}--0"
-      if os.path.exists(base_path):
+      try:
         segments = utilities.get_segments_in_route(name, footage_path)
-        if not segments:
-          break
-
+      except OSError:
+        continue
+      if segments:
+        base_path = os.path.join(footage_path, segments[0])
         segment_urls = [f"/video/{segment}" for segment in segments]
-        total_duration = sum(utilities.get_video_duration(f"{footage_path}{name}--{i}/fcamera.hevc") for i in range(len(segment_urls)))
+        # Probing each segment cost an ffprobe before playback could even start,
+        # and segments are a fixed minute anyway.
+        total_duration = len(segments) * SEGMENT_DURATION_SECONDS
         return {
           "name": name,
           "segment_urls": segment_urls,
-          "total_duration": round(total_duration),
+          "total_duration": total_duration,
           "date": utilities.get_route_start_time(base_path),
           "available_cameras": utilities.get_available_cameras(base_path),
         }, 200
     return {"error": "Route not found"}, 404
 
+  @app.route("/api/routes/<name>/logs", methods=["GET"])
+  def list_route_logs(name):
+    logs = _route_log_files(name)
+    if not logs:
+      return jsonify({"error": "No full logs are stored on the device for this route."}), 404
+
+    return jsonify({
+      "name": name,
+      "totalBytes": sum(size for *_, size in logs),
+      "segments": [
+        {
+          "segment": segment,
+          "segmentNum": int(segment.rsplit("--", 1)[1]),
+          "filename": filename,
+          "bytes": size,
+          "url": f"/api/routes/{name}/logs/{int(segment.rsplit('--', 1)[1])}",
+        }
+        for segment, filename, _, size in logs
+      ],
+    }), 200
+
+  @app.route("/api/routes/<name>/logs/<int:segment_num>", methods=["GET"])
+  def download_route_log(name, segment_num):
+    for segment, filename, path, _ in _route_log_files(name):
+      if int(segment.rsplit("--", 1)[1]) == segment_num:
+        return send_file(path, as_attachment=True, download_name=f"{segment}-{filename}")
+    return jsonify({"error": "No full log is stored on the device for this segment."}), 404
+
+  @app.route("/api/routes/<name>/logs/download", methods=["GET"])
+  def download_route_logs_archive(name):
+    logs = _route_log_files(name)
+    if not logs:
+      return jsonify({"error": "No full logs are stored on the device for this route."}), 404
+
+    def generate():
+      buffer = _TarBuffer()
+      # streamed a file at a time so a long route never needs its whole archive in memory
+      with tarfile.open(fileobj=buffer, mode="w|") as archive:
+        for segment, filename, path, _ in logs:
+          try:
+            archive.add(path, arcname=f"{segment}/{filename}")
+          except OSError:
+            continue
+          chunk = buffer.pop()
+          if chunk:
+            yield chunk
+      chunk = buffer.pop()
+      if chunk:
+        yield chunk
+
+    response = Response(generate(), mimetype="application/x-tar")
+    response.headers["Content-Disposition"] = f'attachment; filename="{name}-logs.tar"'
+    return response
+
   @app.route("/api/routes/clear_name", methods=["POST"])
+  @app.route("/api/routes/reset_name", methods=["POST"])
   def clear_route_name():
     data = request.get_json()
     route_name = data.get("name")
 
-    if not route_name:
-      return jsonify({"error": "Missing route name"}), 400
+    if not _valid_route_name(route_name):
+      return jsonify({"error": "Invalid route name"}), 400
 
     cleared = False
     original_timestamp = None
@@ -6308,7 +6616,7 @@ def setup(app):
       for segment in segments_to_process:
         segment_dir = os.path.join(footage_path, segment)
         for item in os.listdir(segment_dir):
-          if not item.endswith((".hevc", ".ts", ".png", ".gif")) and item not in utilities.LOG_CANDIDATES:
+          if utilities.is_route_marker_file(item):
             try:
               os.remove(os.path.join(segment_dir, item))
               cleared = True
@@ -6330,8 +6638,8 @@ def setup(app):
     old_name = data.get("old")
     new_name_raw = data.get("new")
 
-    if not old_name or not new_name_raw:
-      return jsonify({"error": "Missing old or new name"}), 400
+    if not _valid_route_name(old_name) or not new_name_raw:
+      return jsonify({"error": "Missing or invalid route name"}), 400
 
     new_name = utilities.secure_filename(new_name_raw)
     renamed = False
@@ -6347,7 +6655,7 @@ def setup(app):
       for segment in segments_to_process:
         segment_dir = os.path.join(footage_path, segment)
         for item in os.listdir(segment_dir):
-          if not item.endswith((".hevc", ".ts", ".png", ".gif", "rlog")):
+          if utilities.is_route_marker_file(item):
             try:
               os.remove(os.path.join(segment_dir, item))
             except OSError:
@@ -6365,7 +6673,7 @@ def setup(app):
           return jsonify({"error": f"Error creating new name file: {e}"}), 500
 
     if renamed:
-      return jsonify({"message": "Route renamed successfully!"}), 200
+      return jsonify({"message": "Route renamed successfully!", "name": new_name}), 200
     else:
       return jsonify({"error": "Route not found"}), 404
 
@@ -8701,72 +9009,65 @@ def setup(app):
 
   @app.route("/thumbnails/<path:file_path>", methods=["GET"])
   def get_thumbnail(file_path):
-    for footage_path in FOOTAGE_PATHS:
-      if os.path.exists(os.path.join(footage_path, file_path)):
-        return send_from_directory(footage_path, file_path, as_attachment=True)
-    return {"error": "Thumbnail not found"}, 404
+    preview_path = _get_or_create_route_thumbnail(file_path)
+    if preview_path is None:
+      return {"error": "Thumbnail not found"}, 404
+
+    response = send_file(
+      preview_path,
+      mimetype="image/png",
+      conditional=True,
+      max_age=ROUTE_THUMBNAIL_CACHE_SECONDS,
+    )
+    response.headers["Cache-Control"] = f"public, max-age={ROUTE_THUMBNAIL_CACHE_SECONDS}"
+    return response
 
   @app.route("/video/<path>", methods=["GET"])
   def get_video(path):
+    if not utilities.SEGMENT_RE.fullmatch(path or ""):
+      return {"error": "Invalid segment name"}, 400
+
     camera = request.args.get("camera")
     filename = {"driver": "dcamera.hevc", "wide": "ecamera.hevc"}.get(camera, "fcamera.hevc")
+
+    # qcamera.ts is a 526x330 companion to the road camera, so wrapping it costs a
+    # fraction of the full stream. It still needs the mp4 wrap - a bare MPEG-TS will
+    # not play in a <video>. Anything missing falls through to the full stream.
+    if request.args.get("quality") == "low" and filename == "fcamera.hevc":
+      for footage_path in FOOTAGE_PATHS:
+        preview_path = os.path.join(footage_path, path, "qcamera.ts")
+        if not os.path.isfile(preview_path):
+          continue
+        try:
+          preview_mp4 = _get_or_create_segment_mp4(preview_path)
+        except (FileNotFoundError, ValueError):
+          break
+        if preview_mp4 is None:
+          return {"error": "Preview video is still being prepared"}, 503
+        return send_file(
+          preview_mp4,
+          mimetype="video/mp4",
+          conditional=True,
+          max_age=VIDEO_CACHE_SECONDS,
+        )
+
     for footage_path in FOOTAGE_PATHS:
-      filepath = f"{footage_path}{path}/{filename}"
+      filepath = os.path.join(footage_path, path, filename)
       if os.path.exists(filepath):
-        file_handle = utilities.ffmpeg_mp4_wrap_process_builder(filepath)
+        try:
+          cache_path = _get_or_create_segment_mp4(filepath)
+        except (FileNotFoundError, ValueError) as error:
+          return {"error": str(error)}, 409
+        if cache_path is None:
+          return {"error": "Video is still being prepared"}, 503
 
-        file_handle.seek(0, 2)
-        file_size = file_handle.tell()
-        file_handle.seek(0)
-
-        range_header = request.headers.get('Range', None)
-        if range_header:
-          byte_start = 0
-          byte_end = file_size - 1
-
-          if range_header.startswith('bytes='):
-            range_spec = range_header[6:]
-            if '-' in range_spec:
-              start, end = range_spec.split('-', 1)
-              if start:
-                byte_start = max(0, int(start))
-              if end:
-                byte_end = min(file_size - 1, int(end))
-
-          if byte_start >= file_size:
-            file_handle.close()
-            return Response("Requested Range Not Satisfiable", 416)
-
-          byte_end = max(byte_start, byte_end)
-
-          file_handle.seek(byte_start)
-          read_length = byte_end - byte_start + 1
-          data = file_handle.read(read_length)
-
-          response = Response(
-            data,
-            206,
-            headers={
-              'Content-Range': f'bytes {byte_start}-{byte_end}/{file_size}',
-              'Accept-Ranges': 'bytes',
-              'Content-Length': str(len(data)),
-              'Content-Type': 'video/mp4'
-            }
-          )
-        else:
-          data = file_handle.read()
-          response = Response(
-            data,
-            200,
-            headers={
-              'Accept-Ranges': 'bytes',
-              'Content-Length': str(file_size),
-              'Content-Type': 'video/mp4'
-            }
-          )
-
-        file_handle.close()
-        return response
+        # send_file streams from disk and handles Range and ETag itself.
+        return send_file(
+          cache_path,
+          mimetype="video/mp4",
+          conditional=True,
+          max_age=VIDEO_CACHE_SECONDS,
+        )
     return {"error": "Video not found"}, 404
 
 def main():
