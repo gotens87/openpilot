@@ -4682,50 +4682,51 @@ def setup(app):
     try:
       with car.CarParams.from_bytes(params.get("CarParamsPersistent")) as cp:
         if tool == "doors":
-          return jsonify({"result": HARDWARE.get_device_type() != "tici" and cp.carName == "toyota"})
+          car_brand = getattr(cp, "brand", getattr(cp, "carName", ""))
+          return jsonify({"result": car_brand == "toyota"})
         elif tool == "tsk":
-          return jsonify({"result": cp.secOcRequired})
+          return jsonify({"result": getattr(cp, "secOcRequired", False)})
     except Exception:
       pass
     return jsonify({"result": False})
 
+  def _send_door_command(command, should_be_locked, success_message, action):
+    if params.get_bool("IsOnroad"):
+      return jsonify({"error": "Door controls are unavailable while driving."}), 409
+
+    try:
+      can_parser = CANParser("toyota_nodsu_pt_generated", [("DOOR_LOCKS", 3)], bus=0)
+      can_sock = messaging.sub_sock("can", timeout=100)
+
+      for _ in range(6):
+        if params.get_bool("IsOnroad"):
+          return jsonify({"error": "Door controls are unavailable while driving."}), 409
+        try:
+          with Panda(disable_checks=True) as panda:
+            panda.set_safety_mode(car.CarParams.SafetyModel.toyota)
+            panda.can_send(0x750, command, 0)
+            panda.can_send(0x750, command, 1)
+        except Exception as error:
+          cloudlog.warning("Galaxy door %s attempt failed: %s", action, error)
+          continue
+
+        time.sleep(1)
+
+        lock_status = get_lock_status(can_parser, can_sock)
+        if (lock_status == 0) == should_be_locked:
+          return {"message": success_message}, 200
+    except Exception as error:
+      cloudlog.exception("Galaxy door %s failed: %s", action, error)
+
+    return jsonify({"error": f"Unable to confirm that the doors were {action}ed."}), 502
+
   @app.route("/api/doors/lock", methods=["POST"])
   def lock_doors():
-    can_parser = CANParser("toyota_nodsu_pt_generated", [("DOOR_LOCKS", 3)], bus=0)
-    can_sock = messaging.sub_sock("can", timeout=100)
-
-    while True:
-      with Panda(disable_checks=True) as panda:
-        if not params.get_bool("IsOnroad"):
-          panda.set_safety_mode(panda.SAFETY_TOYOTA)
-        panda.can_send(0x750, LOCK_CMD, 0)
-
-      time.sleep(1)
-
-      lock_status = get_lock_status(can_parser, can_sock)
-      if lock_status == 0:
-        break
-
-    return {"message": "Doors locked!"}
+    return _send_door_command(LOCK_CMD, True, "Doors locked!", "lock")
 
   @app.route("/api/doors/unlock", methods=["POST"])
   def unlock_doors():
-    can_parser = CANParser("toyota_nodsu_pt_generated", [("DOOR_LOCKS", 3)], bus=0)
-    can_sock = messaging.sub_sock("can", timeout=100)
-
-    while True:
-      with Panda(disable_checks=True) as panda:
-        if not params.get_bool("IsOnroad"):
-          panda.set_safety_mode(panda.SAFETY_TOYOTA)
-        panda.can_send(0x750, UNLOCK_CMD, 0)
-
-      time.sleep(1)
-
-      lock_status = get_lock_status(can_parser, can_sock)
-      if lock_status != 0:
-        break
-
-    return {"message": "Doors unlocked!"}
+    return _send_door_command(UNLOCK_CMD, False, "Doors unlocked!", "unlock")
 
   @app.route("/api/error_logs", methods=["GET"])
   def get_error_logs():
@@ -6145,11 +6146,18 @@ def setup(app):
 
     return Response(generate(), mimetype="text/event-stream")
 
+  def _valid_route_name(name):
+    return bool(utilities.ROUTE_RE.fullmatch(str(name or "")))
+
   @app.route("/api/routes/<name>", methods=["DELETE"])
   def delete_route(name):
+    if not _valid_route_name(name):
+      return jsonify({"error": "Invalid route name."}), 400
+
+    segment_prefix = f"{name}--"
     for footage_path in FOOTAGE_PATHS:
       for segment in os.listdir(footage_path):
-        if segment.startswith(name):
+        if utilities.SEGMENT_RE.fullmatch(segment) and segment.startswith(segment_prefix):
           delete_file(os.path.join(footage_path, segment))
     return {"message": "Route deleted!"}, 200
 
@@ -6193,6 +6201,9 @@ def setup(app):
 
   @app.route("/api/routes/<name>/preserve", methods=["POST"])
   def preserve_route(name):
+    if not _valid_route_name(name):
+      return jsonify({"error": "Invalid route name."}), 400
+
     preserved_routes = 0
     for footage_path in FOOTAGE_PATHS:
       for segment in os.listdir(footage_path):
@@ -6214,15 +6225,21 @@ def setup(app):
 
   @app.route("/api/routes/<name>/preserve", methods=["DELETE"])
   def un_preserve_route(name):
+    if not _valid_route_name(name):
+      return jsonify({"error": "Invalid route name."}), 400
+
     for footage_path in FOOTAGE_PATHS:
       route_path = os.path.join(footage_path, f"{name}--0")
-      if PRESERVE_ATTR_NAME in os.listxattr(route_path):
+      if os.path.isdir(route_path) and PRESERVE_ATTR_NAME in os.listxattr(route_path):
         os.removexattr(route_path, PRESERVE_ATTR_NAME)
         return {"message": "Route unpreserved!"}, 200
     return {"error": "Route not found"}, 404
 
   @app.route("/video/<name>/combined", methods=["GET"])
   def get_combined_route_video(name):
+    if not _valid_route_name(name):
+      return jsonify({"error": "Invalid route name."}), 400
+
     camera = request.args.get("camera", "forward")
     for footage_path in FOOTAGE_PATHS:
       segments = utilities.get_segments_in_route(name, footage_path)
@@ -6249,6 +6266,9 @@ def setup(app):
 
   @app.route("/api/routes/<name>", methods=["GET"])
   def get_route(name):
+    if not _valid_route_name(name):
+      return jsonify({"error": "Invalid route name."}), 400
+
     for footage_path in FOOTAGE_PATHS:
       base_path = f"{footage_path}{name}--0"
       if os.path.exists(base_path):
