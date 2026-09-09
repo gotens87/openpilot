@@ -295,6 +295,8 @@ def test_ui_has_bottom_navigation_and_drawer():
   assert "gx-appbar" in shell
   assert "Search toggles" in shell
   assert ">Galaxy</span>" in shell
+  assert "gx-appbar__home" in shell
+  assert "goHome" in shell and 'navigate("/")' in shell
 
 
 def test_ui_search_visible_on_mobile_and_content_full_width():
