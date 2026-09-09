@@ -4,6 +4,43 @@
   padding: var(--padding-base) var(--padding-lg) var(--padding-xxl);
 }
 
+.ds-dev-mode-notice {
+  align-items: center;
+  background: var(--input-bg);
+  border: var(--border-style-main);
+  border-radius: var(--border-radius-lg);
+  color: var(--text-color);
+  display: flex;
+  gap: var(--padding-sm);
+  margin-bottom: var(--margin-lg);
+  padding: var(--padding-sm) var(--padding-base);
+}
+
+.ds-dev-mode-notice > i {
+  color: var(--main-fg);
+  flex: 0 0 auto;
+}
+
+.ds-dev-mode-notice > span {
+  flex: 1;
+}
+
+.ds-dev-mode-notice-btn {
+  background: var(--main-fg);
+  border: 0;
+  border-radius: var(--border-radius-base);
+  color: var(--color-black);
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-size: var(--font-size-sm);
+  padding: 0.55rem 0.8rem;
+  white-space: nowrap;
+}
+
+.ds-dev-mode-notice-btn:hover {
+  filter: brightness(1.08);
+}
+
 /* ――― Section Tabs ――― */
 .ds-tabs {
   display: flex;

@@ -6,7 +6,12 @@ import {
   shouldSubmitPersonalityPreset,
   valueFromPointer,
 } from "/assets/components/tools/personality_profiles.mjs"
-import { formatNumericParamValue, resolveVehicleUnitParam, vehicleSpeedUnit } from "/assets/mobile/js/params.js"
+import {
+  countAdvancedHiddenByDeveloperMode,
+  formatNumericParamValue,
+  resolveVehicleUnitParam,
+  vehicleSpeedUnit,
+} from "/assets/mobile/js/params.js"
 
 import { LONGITUDINAL_MODE_KEY, longitudinalModeLayout, validLongitudinalSnapshot } from "/assets/components/tools/longitudinal_mode.mjs"
 
@@ -2821,6 +2826,8 @@ export function DeviceSettings({ params }) {
         return html`<div class="ds-empty">No settings available.</div>`
       }
 
+      const hiddenAdvancedCount = countAdvancedHiddenByDeveloperMode(state.layout, state.values)
+
       // Sync DOM inputs after ArrowJS renders (safe: syncScheduled is non-reactive)
       scheduleSyncInputs()
 
@@ -2861,6 +2868,18 @@ export function DeviceSettings({ params }) {
       const visibleParams = activeSection.params.filter(p => matchesFilter(p))
 
       return html`
+          ${hiddenAdvancedCount > 0 ? html`
+            <div class="ds-dev-mode-notice" role="status">
+              <i class="bi bi-shield-lock" aria-hidden="true"></i>
+              <span>${hiddenAdvancedCount} advanced setting${hiddenAdvancedCount === 1 ? "" : "s"} hidden. Enable Developer Mode to view them.</span>
+              <button type="button" class="ds-dev-mode-notice-btn"
+                @click="${() => {
+                  if (typeof window.__theGalaxyNavigate === "function") window.__theGalaxyNavigate("/device_settings/developer")
+                }}">
+                Enable Developer Mode
+              </button>
+            </div>
+          ` : ""}
           <div class="ds-tabs" id="ds-tabs">
             ${sections.map(section => html`
               <button
