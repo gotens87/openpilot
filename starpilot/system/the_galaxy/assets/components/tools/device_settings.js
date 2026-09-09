@@ -70,7 +70,7 @@ const VEHICLE_SETTING_MAKES = {
   RemoteStartBootsComma: GM_MAKES,
   HKGRemoteStartBootsComma: HKG_MAKES,
   VoltSNG: ["Chevrolet", "Holden"],
-  GMAutoHold: ["Chevrolet", "Holden"],
+  GMAutoHold: ["Buick", "Chevrolet", "Holden"],
   VoltOnePedalMode: ["Chevrolet", "Holden"],
   RemapCancelToDistance: ["Chevrolet", "Holden"],
   JeepBrakeHold: ["Jeep"],
