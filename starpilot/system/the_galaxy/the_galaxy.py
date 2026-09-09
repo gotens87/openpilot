@@ -60,7 +60,6 @@ from openpilot.starpilot.assets.model_manager import (
   external_gpu_available,
   get_model_profile,
   is_builtin_model_key,
-  model_accelerator_catalog_artifact_metadata,
   model_accelerator_artifact_filename,
   model_key_aliases,
   model_uses_external_gpu,
@@ -7424,18 +7423,15 @@ def setup(app):
       metadata = artifact_metadata.get(canonical_key, {})
       metadata = metadata if isinstance(metadata, dict) else {}
       small_model = is_small_model_metadata({**metadata, "uses_external_gpu": requires_external_gpu})
-      lab_compatible = model_lab_manifest_eligible({**metadata, "uses_external_gpu": requires_external_gpu}, model_version)
+      lab_eligible = model_lab_manifest_eligible({**metadata, "uses_external_gpu": requires_external_gpu}, model_version)
       accelerator_artifacts = metadata.get("accelerator_artifacts", {})
       accelerator_artifacts = accelerator_artifacts if isinstance(accelerator_artifacts, dict) else {}
       chestnut_artifact = accelerator_artifacts.get("chestnut", {})
       chestnut_artifact = chestnut_artifact if isinstance(chestnut_artifact, dict) else {}
-      if not chestnut_artifact:
-        chestnut_artifact = model_accelerator_catalog_artifact_metadata(canonical_key)
       lab_artifact_available = (
         bool(chestnut_artifact)
         and str(chestnut_artifact.get("execution_device") or chestnut_artifact.get("device") or "").strip().upper() == "AMD"
       )
-      lab_eligible = lab_compatible and lab_artifact_available
       lab_artifact_path = MODELS_PATH / model_accelerator_artifact_filename(canonical_key)
       lab_artifact_installed = lab_artifact_available and file_chunked_exists(lab_artifact_path)
       existing = models_by_key.get(canonical_key)
@@ -7482,11 +7478,6 @@ def setup(app):
       existing["modelLabArtifactInstalled"] = existing["modelLabArtifactInstalled"] and lab_artifact_installed
 
     default_key = _default_model_key()
-    default_chestnut_artifact = model_accelerator_catalog_artifact_metadata(default_key)
-    default_lab_artifact_available = (
-      bool(default_chestnut_artifact)
-      and str(default_chestnut_artifact.get("execution_device") or default_chestnut_artifact.get("device") or "").strip().upper() == "AMD"
-    )
     default_entry = models_by_key.setdefault(default_key, {
       "value": default_key,
       "label": _default_model_name(),
@@ -7498,13 +7489,9 @@ def setup(app):
       "small": True,
       "modelSize": "small (inferred)",
       "manifestDeclaredSize": False,
-      "modelLabEligible": default_lab_artifact_available and model_lab_manifest_eligible(
-        artifact_metadata.get(default_key, {}), _default_model_version()
-      ),
-      "modelLabArtifactAvailable": default_lab_artifact_available,
-      "modelLabArtifactInstalled": default_lab_artifact_available and file_chunked_exists(
-        MODELS_PATH / model_accelerator_artifact_filename(default_key)
-      ),
+      "modelLabEligible": model_lab_manifest_eligible(artifact_metadata.get(default_key, {}), _default_model_version()),
+      "modelLabArtifactAvailable": False,
+      "modelLabArtifactInstalled": False,
       "released": "",
       "builtin": True,
       "communityFavorite": default_key in community_favorites,

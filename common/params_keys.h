@@ -466,6 +466,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"LeadDetectionThreshold", {PERSISTENT, INT, "35", "50", 3}},
     {"LeadIndicator", {PERSISTENT, BOOL, "0", "0", 2, SETTINGS_SIMPLE}},
     {"LeadInfo", {PERSISTENT, BOOL, "0", "0", 3}},
+    {"LeadInfoMode", {PERSISTENT, INT, "2", "2", 3}},
     {"LKASButtonControl", {PERSISTENT, INT, "5", "0", 2, SETTINGS_SIMPLE}},
     {"LockDoors", {PERSISTENT, BOOL, "1", "0", 0}},
     {"LockDoorsTimer", {PERSISTENT, INT, "0", "0", 0}},

@@ -166,6 +166,7 @@ LateralTune
 LeadDepartingAlert
 LeadDetectionThreshold
 LeadInfo
+LeadInfoMode
 LiveDelay
 LiveParameters
 LiveParametersV2
