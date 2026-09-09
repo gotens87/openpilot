@@ -90,17 +90,82 @@ app.mount("#galaxy-app")
 
 initRouter()
 
+// Disable card blur during document scrolling.
 ;(() => {
-  const bg = document.getElementById("galaxy-bg")
-  if (!bg) return
+  let timer = null
+  let scrollEnded = true
+  const touches = new Set()
+  const nativeScrollEnd = "onscrollend" in document
+  const body = document.body
+
+  const isModalEvent = (e) => {
+    const t = e.target
+    return t instanceof Element && t.closest(".gx-scrim, .gx-sheet, .gx-dialog, .gx-drawer") !== null
+  }
+
+  const setScrolling = (active) => {
+    if (active) {
+      if (!body.classList.contains("is-scrolling")) body.classList.add("is-scrolling")
+    } else if (!touches.size && body.classList.contains("is-scrolling")) {
+      body.classList.remove("is-scrolling")
+    }
+  }
+
+  const scheduleRestore = () => {
+    clearTimeout(timer)
+    timer = setTimeout(() => setScrolling(false), 120)
+  }
+
+  document.addEventListener("scroll", () => {
+    scrollEnded = false
+    setScrolling(true)
+    if (!nativeScrollEnd) scheduleRestore()
+  }, { passive: true })
+
+  document.addEventListener("scrollend", () => {
+    scrollEnded = true
+    clearTimeout(timer)
+    setScrolling(false)
+  }, { passive: true })
+
+  window.addEventListener("touchstart", (e) => {
+    if (isModalEvent(e)) return
+    for (const touch of e.changedTouches) touches.add(touch.identifier)
+  }, { passive: true })
+
+  const releaseTouches = (e) => {
+    for (const touch of e.changedTouches) touches.delete(touch.identifier)
+    if (scrollEnded) setScrolling(false)
+    else if (!nativeScrollEnd && !touches.size) scheduleRestore()
+  }
+  window.addEventListener("touchend", releaseTouches, { passive: true })
+  window.addEventListener("touchcancel", releaseTouches, { passive: true })
+
+  window.addEventListener("hashchange", () => {
+    scrollEnded = true
+    touches.clear()
+    clearTimeout(timer)
+    body.classList.remove("is-scrolling")
+  }, { passive: true })
+})()
+
+// Layer 2 Celestial Starlight Canopy Spawner
+;(() => {
+  const container = document.getElementById("galaxy-stars") || document.getElementById("galaxy-bg")
+  if (!container) return
   for (let i = 0; i < 14; i++) {
     const s = document.createElement("i")
     s.className = "galaxy-hero"
-    s.style.left = (Math.random() * 100).toFixed(2) + "%"
-    s.style.top = (Math.random() * 100).toFixed(2) + "%"
+    const inTopCanopy = Math.random() < 0.7
+    const topPercent = inTopCanopy ? Math.random() * 28 : Math.random() * 95
+    const leftPercent = inTopCanopy
+      ? Math.random() * 96 + 2
+      : Math.random() < 0.5 ? Math.random() * 12 + 2 : Math.random() * 12 + 86
+    s.style.left = leftPercent.toFixed(2) + "%"
+    s.style.top = topPercent.toFixed(2) + "%"
     s.style.animationDelay = (Math.random() * 4).toFixed(2) + "s"
-    const size = Math.random() > 0.6 ? 3 : 2
+    const size = Math.random() > 0.5 ? 6 : 4
     s.style.width = s.style.height = size + "px"
-    bg.appendChild(s)
+    container.appendChild(s)
   }
 })()
