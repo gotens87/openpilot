@@ -31,6 +31,7 @@ from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.starpilot.common.model_versions import is_tinygrad_model_version
 from openpilot.starpilot.common.lateral_delay import full_lateral_delay
 from openpilot.starpilot.common.lateral_only_experimental import lateral_only_experimental_available
+from openpilot.starpilot.common.longitudinal_mode import read_mode_values
 from openpilot.starpilot.common.accel_profile import (
   ACCELERATION_PROFILES,
   A_CRUISE_MAX_BP_CUSTOM,
@@ -623,6 +624,14 @@ class StarPilotVariables:
 
   def update(self, holiday_theme="stock", started=False, clear_update_flag=True):
     toggle = self.starpilot_toggles
+    try:
+      mode_values = read_mode_values(self.params)
+    except OSError:
+      self.params_memory.put_bool("StarPilotTogglesUpdated", True)
+      if hasattr(toggle, "longitudinal_mode_values"):
+        return
+      mode_values = {"ExperimentalMode": False, "ConditionalChill": False, "ConditionalExperimental": False}
+      clear_update_flag = False
     # CarParams uses this value to select the matching Panda safety configuration.
     toggle.tesla_cooperative_steering = self.params.get_bool("TeslaCoopSteering")
     toggle.rivian_angle_control = self.params.get_bool("RivianAngleControl")
@@ -873,8 +882,10 @@ class StarPilotVariables:
     self.migrate_prius_cluster_offset(str(toggle.car_model))
     toggle.cluster_offset = self.get_value("ClusterOffset", cast=float, condition=toggle.car_make == "toyota")
 
-    toggle.conditional_experimental_mode = toggle.openpilot_longitudinal and self.get_value("ConditionalExperimental")
-    toggle.conditional_chill_mode = toggle.openpilot_longitudinal and not toggle.conditional_experimental_mode and self.get_value("ConditionalChill")
+    toggle.longitudinal_mode_values = mode_values
+    toggle.experimental_mode = toggle.experimental_mode_available and not toggle.safe_mode and mode_values["ExperimentalMode"]
+    toggle.conditional_experimental_mode = toggle.openpilot_longitudinal and not toggle.safe_mode and mode_values["ConditionalExperimental"]
+    toggle.conditional_chill_mode = toggle.openpilot_longitudinal and not toggle.safe_mode and not toggle.conditional_experimental_mode and mode_values["ConditionalChill"]
     toggle.conditional_curves = self.get_value("CECurves", condition=toggle.conditional_experimental_mode)
     toggle.conditional_curves_lead = self.get_value("CECurvesLead", condition=toggle.conditional_curves)
     toggle.conditional_lead = self.get_value("CELead", condition=toggle.conditional_experimental_mode)

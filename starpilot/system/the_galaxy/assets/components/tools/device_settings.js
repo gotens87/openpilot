@@ -8,6 +8,8 @@ import {
 } from "/assets/components/tools/personality_profiles.mjs"
 import { formatNumericParamValue, resolveVehicleUnitParam, vehicleSpeedUnit } from "/assets/mobile/js/params.js"
 
+import { LONGITUDINAL_MODE_KEY, longitudinalModeLayout, validLongitudinalSnapshot } from "/assets/components/tools/longitudinal_mode.mjs"
+
 const endpointOptionsCache = {}
 const endpointOptionsInflight = {}
 const COLOR_UI_DEFAULTS = {
@@ -125,6 +127,9 @@ const FLM_ADVANCED_LATERAL_KEYS = new Set([
 
 // Module-level state (persists across route changes)
 const state = reactive({
+  longitudinalMode: null,
+  longitudinalModeUpdating: false,
+  longitudinalModeRequestId: 0,
   layout: [],
   allKeys: [],
   paramMetaByKey: {},
@@ -192,6 +197,7 @@ function matchesSettingValueCondition(param) {
 }
 
 function isSettingVisible(section, param) {
+  if (param.longitudinal_mode && param.longitudinal_mode !== state.longitudinalMode?.mode) return false
   if (PROFILE_HIDDEN_LAYOUT_KEYS.has(param.key) || HIDDEN_SETTING_KEYS.has(param.key) ||
       !isVehicleSettingVisible(section, param) || !matchesSettingValueCondition(param)) return false
   if (param.requires_capability && !state.values[param.requires_capability]) return false
@@ -239,6 +245,7 @@ function isParamEnabledForChildren(paramOrKey) {
   if (isGroupParam(param)) return true
 
   const key = isKey ? paramOrKey : (param && param.key)
+  if (key === LONGITUDINAL_MODE_KEY) return ["conditional_experimental", "conditional_chill"].includes(state.longitudinalMode?.mode)
   return !!(key && state.values[key])
 }
 
@@ -439,6 +446,62 @@ function syncInputs() {
   }
 }
 
+function applyLongitudinalMode(data) {
+  if (!validLongitudinalSnapshot(data)) throw new Error("Longitudinal mode state is unavailable. Refresh to retry.")
+  if (JSON.stringify(state.longitudinalMode) === JSON.stringify(data) && state.values[LONGITUDINAL_MODE_KEY] === data.mode &&
+      Object.entries(data.values).every(([key, value]) => state.values[key] === value)) return
+  state.longitudinalMode = data
+  state.values = { ...state.values, ...data.values, [LONGITUDINAL_MODE_KEY]: data.mode }
+  scheduleSyncInputs()
+}
+
+async function fetchLongitudinalMode(force = false) {
+  if (state.longitudinalModeUpdating && !force) return
+  const requestId = ++state.longitudinalModeRequestId
+  try {
+    const response = await fetch("/api/longitudinal_mode", { cache: "no-store" })
+    if (!response.ok) throw new Error("Longitudinal mode unavailable")
+    const data = await response.json()
+    if (requestId === state.longitudinalModeRequestId && (!state.longitudinalModeUpdating || force)) applyLongitudinalMode(data)
+  } catch (_error) {
+    if (requestId !== state.longitudinalModeRequestId || (state.longitudinalModeUpdating && !force)) return
+    state.longitudinalMode = null
+    state.values = { ...state.values, [LONGITUDINAL_MODE_KEY]: "" }
+    scheduleSyncInputs()
+  }
+}
+
+async function updateLongitudinalMode(targetOverride = null) {
+  const el = document.getElementById(`ds-${LONGITUDINAL_MODE_KEY}`)
+  if ((!el && !targetOverride) || getSettingLockReason({ key: LONGITUDINAL_MODE_KEY })) {
+    scheduleSyncInputs()
+    return
+  }
+  const target = targetOverride || el.value
+  const current = state.longitudinalMode
+  if (target === current.mode) return
+  const acknowledged = target === "experimental"
+  // Invalidate pre-write reads, even if they finish after forced reconciliation.
+  ++state.longitudinalModeRequestId
+  state.longitudinalModeUpdating = true
+  try {
+    const response = await fetch("/api/longitudinal_mode", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: target, expected: current.values, acknowledged }),
+    })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.error || "Longitudinal mode update failed")
+    applyLongitudinalMode(data)
+    showParamSnackbar("Longitudinal control mode updated.")
+  } catch (error) {
+    showParamSnackbar(error.message || "Longitudinal mode update failed", "error")
+  } finally {
+    await fetchLongitudinalMode(true)
+    state.longitudinalModeUpdating = false
+    scheduleSyncInputs()
+  }
+}
+
 async function fetchDefaultValues() {
   try {
     const defaultsRes = await fetch("/api/params/defaults")
@@ -549,13 +612,14 @@ async function fetchLayoutAndParams() {
     const layoutRes = await fetch("/assets/components/tools/device_settings_layout.json?v=settings-tier-1", { cache: "no-store" })
     const rawLayoutData = await layoutRes.json()
 
-    const layoutData = rawLayoutData
+    let layoutData = rawLayoutData
       .map(section => ({
         ...section,
         params: (section.params || []).filter(param => param.key !== "Model"),
       }))
       .filter(section => section.params.length > 0)
 
+    layoutData = longitudinalModeLayout(layoutData)
     state.layout = layoutData
 
     const keys = []
@@ -589,6 +653,7 @@ async function fetchLayoutAndParams() {
     state.defaultValues = {}
   }
 
+  await fetchLongitudinalMode()
   await fetchFavoriteSlots()
 
   state.loadingValues = false
@@ -876,7 +941,8 @@ async function refreshUiContextValues() {
       state.values = nextValues
       scheduleSyncInputs()
     }
-  }).catch(() => {}).finally(() => {
+  }).catch(() => {}).finally(async () => {
+    await fetchLongitudinalMode()
     uiContextPollInflight = null
   })
 
@@ -957,6 +1023,18 @@ function updateFavoriteFilter(index, event) {
 }
 
 async function updateFavoriteValue(key, checked, sourceEl = null) {
+  if (["ExperimentalMode", "ConditionalExperimental", "ConditionalChill"].includes(key)) {
+    await fetchLongitudinalMode()
+    if (state.longitudinalMode) {
+      const candidate = { ...state.longitudinalMode.values, [key]: checked }
+      if (checked && key !== "ExperimentalMode") candidate[key === "ConditionalExperimental" ? "ConditionalChill" : "ConditionalExperimental"] = false
+      const target = candidate.ConditionalExperimental ? "conditional_experimental" : candidate.ConditionalChill ? "conditional_chill" : candidate.ExperimentalMode ? "experimental" : "chill"
+      await updateLongitudinalMode(target)
+    }
+    if (sourceEl) sourceEl.checked = !!state.values[key]
+    scheduleSyncInputs()
+    return
+  }
   if (!confirmPandaFirmwareToggle(key, checked)) {
     if (sourceEl) sourceEl.checked = !!state.values[key]
     scheduleSyncInputs()
@@ -1326,6 +1404,10 @@ async function runSettingAction(param) {
 }
 
 async function updateParam(key, elType) {
+  if (key === LONGITUDINAL_MODE_KEY) {
+    await updateLongitudinalMode()
+    return
+  }
   if (String(key).toLowerCase() === "starpilotfavoriteslots") {
     await saveFavoriteSlots(state.favoriteSlots)
     return
@@ -1491,6 +1573,11 @@ const cancelButtonKeys = new Set(["CancelButtonControl", "LongCancelButtonContro
 function getSettingLockReason(param) {
   if (param?.key === "CustomPersonalities" && state.personalityMigrationRequired) {
     return "This profile data requires a verified migration before it can be edited."
+  }
+  if (param?.key === LONGITUDINAL_MODE_KEY) {
+    if (state.longitudinalModeUpdating) return "Updating longitudinal control mode…"
+    if (!state.longitudinalMode) return "Longitudinal mode state unavailable. Refresh to retry."
+    return state.longitudinalMode.locked ? state.longitudinalMode.reason : ""
   }
   if (param?.requires_offroad && state.values.IsOnroad) {
     return "This setting can only be changed while parked."
@@ -2596,7 +2683,16 @@ function renderSettingRow(p) {
             </div>
           ` : ""}
 
-          ${() => p.is_parent_toggle && (p.key === "CustomPersonalities" || isParamEnabledForChildren(p)) ? html`
+          ${() => p.key === LONGITUDINAL_MODE_KEY && isParamEnabledForChildren(p) ? html`
+            <button type="button" class="ds-manage-btn"
+              aria-controls="ds-LongitudinalControlMode-children"
+              aria-expanded="${() => state.expanded[p.key] ? "true" : "false"}"
+              @click="${() => toggleManage(p.key)}">
+              ${state.expanded[p.key] ? "Close" : "Manage"}
+              <i class="bi bi-chevron-${state.expanded[p.key] ? "up" : "down"}" aria-hidden="true"></i>
+            </button>
+          ` : ""}
+          ${() => p.key !== LONGITUDINAL_MODE_KEY && p.is_parent_toggle && (p.key === "CustomPersonalities" || isParamEnabledForChildren(p)) ? html`
             <button type="button" class="ds-manage-btn"
               aria-controls="${p.key === "CustomPersonalities" ? "personality-profiles-panel" : `ds-${p.key}-children`}"
               aria-expanded="${() => state.expanded[p.key] ? "true" : "false"}"
@@ -2639,7 +2735,8 @@ function renderSettingTree(paramsList, parentKey = null) {
     if (!hasChildParams(paramsList, param.key)) continue
     if (!isParamEnabledForChildren(param) || !state.expanded[param.key]) continue
 
-    rendered.push(html`<div id="ds-${param.key}-children" class="ds-setting-children">${() => renderSettingTree(paramsList, param.key)}</div>`)
+    const childrenId = param.key === LONGITUDINAL_MODE_KEY ? "ds-LongitudinalControlMode-children" : `ds-${param.key}-children`
+    rendered.push(html`<div id="${childrenId}" class="ds-setting-children">${() => renderSettingTree(paramsList, param.key)}</div>`)
   }
 
   return rendered
@@ -2693,10 +2790,6 @@ export function DeviceSettings({ params }) {
     <div class="ds-wrapper">
       <h2>Toggles</h2>
 
-      <div class="ds-unit-note">
-        <i class="bi bi-speedometer2"></i>
-        <span>Vehicle-unit speed settings use <strong>${() => vehicleSpeedUnit(state.values)}</strong> and follow the comma's <em>Use Metric System</em> toggle. Each control shows its adjustment step.</span>
-      </div>
 
       <div class="ds-search-row">
         <input
