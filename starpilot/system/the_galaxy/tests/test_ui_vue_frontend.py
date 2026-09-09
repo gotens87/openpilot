@@ -553,6 +553,10 @@ const handlers = { document: {}, window: {} };
 const classes = new Set();
 const timers = new Map();
 let nextTimer = 0;
+const window = {
+  scrollY: 0,
+  addEventListener: (name, fn) => { handlers.window[name] = fn; },
+};
 class Element {
   constructor(modal = false) { this.modal = modal; }
   closest() { return this.modal ? this : null; }
@@ -566,7 +570,7 @@ const document = {
 if (native) document.onscrollend = null;
 vm.runInNewContext(source.slice(source.indexOf('// Disable card blur'), source.indexOf('// Layer 2')), {
   document, Element,
-  window: { addEventListener: (name, fn) => { handlers.window[name] = fn; } },
+  window,
   setTimeout: fn => { timers.set(++nextTimer, fn); return nextTimer; },
   clearTimeout: id => timers.delete(id),
 });
@@ -575,6 +579,20 @@ const fire = (scope, name, ids = [], modal = false) => handlers[scope][name]?.({
 });
 const tick = () => { const pending = [...timers.values()]; timers.clear(); pending.forEach(fn => fn()); };
 const active = () => classes.has('is-scrolling');
+// Inertial movement can continue between delivered scroll events after release.
+fire('window', 'touchstart', [10]);
+fire('document', 'scroll');
+fire('window', 'touchend', [10]);
+if (native) fire('document', 'scrollend');
+window.scrollY = 100;
+tick();
+assert.equal(active(), true, 'finger release must not end momentum scrolling');
+window.scrollY = 160;
+tick();
+assert.equal(active(), true, 'continued movement must keep blur disabled');
+tick();
+assert.equal(active(), false, 'restore after completion and a stable position');
+fire('document', 'scrollend');
 fire('window', 'wheel');
 assert.equal(active(), false, 'wheel without document movement');
 fire('window', 'touchstart', [1, 2]);
@@ -588,12 +606,23 @@ fire('window', 'touchcancel', [2]);
 tick();
 assert.equal(active(), native, 'native completion must be authoritative');
 fire('document', 'scrollend');
+tick();
+assert.equal(active(), false);
+// More scroll events after a completion signal invalidate its pending restore.
+fire('document', 'scroll');
+fire('document', 'scrollend');
+fire('document', 'scroll');
+tick();
+assert.equal(active(), native, 'new scrolling cancels the previous native completion');
+fire('document', 'scrollend');
+tick();
 assert.equal(active(), false);
 fire('window', 'touchstart', [4]);
 fire('document', 'scroll');
 fire('document', 'scrollend');
 assert.equal(active(), true, 'hold survives completion');
 fire('window', 'touchend', [4]);
+tick();
 assert.equal(active(), false, 'release after completion cannot leave state stuck');
 fire('document', 'scroll');
 fire('window', 'hashchange');
@@ -603,6 +632,7 @@ fire('document', 'scroll');
 tick();
 assert.equal(active(), native, 'fallback only on unsupported browsers');
 fire('document', 'scrollend');
+tick();
 assert.equal(active(), false);
 """
   result = subprocess.run(

@@ -113,19 +113,25 @@ initRouter()
 
   const scheduleRestore = () => {
     clearTimeout(timer)
-    timer = setTimeout(() => setScrolling(false), 120)
+    const scrollY = window.scrollY
+    // Finger release and completion notifications can precede the last movement.
+    // Keep glass disabled until the scroll position has also settled.
+    timer = setTimeout(() => {
+      if (window.scrollY !== scrollY) scheduleRestore()
+      else setScrolling(false)
+    }, 120)
   }
 
   document.addEventListener("scroll", () => {
     scrollEnded = false
     setScrolling(true)
+    clearTimeout(timer)
     if (!nativeScrollEnd) scheduleRestore()
   }, { passive: true })
 
   document.addEventListener("scrollend", () => {
     scrollEnded = true
-    clearTimeout(timer)
-    setScrolling(false)
+    scheduleRestore()
   }, { passive: true })
 
   window.addEventListener("touchstart", (e) => {
@@ -135,8 +141,7 @@ initRouter()
 
   const releaseTouches = (e) => {
     for (const touch of e.changedTouches) touches.delete(touch.identifier)
-    if (scrollEnded) setScrolling(false)
-    else if (!nativeScrollEnd && !touches.size) scheduleRestore()
+    if (!touches.size && (scrollEnded || !nativeScrollEnd)) scheduleRestore()
   }
   window.addEventListener("touchend", releaseTouches, { passive: true })
   window.addEventListener("touchcancel", releaseTouches, { passive: true })
