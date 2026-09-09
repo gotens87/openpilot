@@ -154,23 +154,18 @@ initRouter()
   }, { passive: true })
 })()
 
-// Layer 2 Celestial Starlight Canopy Spawner
+// Layer 2: Ambient Hero Stars Spawner
 ;(() => {
-  const container = document.getElementById("galaxy-stars") || document.getElementById("galaxy-bg")
-  if (!container) return
+  const bg = document.getElementById("galaxy-bg")
+  if (!bg) return
   for (let i = 0; i < 14; i++) {
     const s = document.createElement("i")
     s.className = "galaxy-hero"
-    const inTopCanopy = Math.random() < 0.7
-    const topPercent = inTopCanopy ? Math.random() * 28 : Math.random() * 95
-    const leftPercent = inTopCanopy
-      ? Math.random() * 96 + 2
-      : Math.random() < 0.5 ? Math.random() * 12 + 2 : Math.random() * 12 + 86
-    s.style.left = leftPercent.toFixed(2) + "%"
-    s.style.top = topPercent.toFixed(2) + "%"
+    s.style.left = (Math.random() * 100).toFixed(2) + "%"
+    s.style.top = (Math.random() * 100).toFixed(2) + "%"
     s.style.animationDelay = (Math.random() * 4).toFixed(2) + "s"
-    const size = Math.random() > 0.5 ? 6 : 4
+    const size = Math.random() > 0.6 ? 3 : 2
     s.style.width = s.style.height = size + "px"
-    container.appendChild(s)
+    bg.appendChild(s)
   }
 })()

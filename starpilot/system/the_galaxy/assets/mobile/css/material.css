@@ -242,10 +242,14 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  #galaxy-bg, #galaxy-bg::before, #galaxy-bg::after, #galaxy-bg .galaxy-hero,
-  #galaxy-stars, #galaxy-stars .galaxy-hero {
+  #galaxy-bg, #galaxy-bg::before, #galaxy-bg::after, #galaxy-bg .galaxy-hero {
     animation: none !important;
   }
+}
+
+/* Keep decorative animation out of modal backdrops and drawer content. */
+body:has(.gx-scrim, .gx-underlay, .gx-drawer.open) #galaxy-bg .galaxy-hero {
+  display: none;
 }
 
 [data-theme="light"] #galaxy-bg {
@@ -623,50 +627,6 @@ body.is-scrolling .gx-tile {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   background: var(--card-scroll-bg) !important;
-}
-
-/* Layer 2: Celestial Starlight Canopy */
-#galaxy-stars {
-  position: fixed;
-  inset: 0;
-  z-index: 20;
-  pointer-events: none;
-  overflow: hidden;
-  contain: strict;
-  transform: translateZ(0);
-}
-
-#galaxy-stars .galaxy-hero {
-  position: absolute;
-  border-radius: 50%;
-  background: radial-gradient(
-    circle,
-    rgba(255, 255, 255, 0.95) 0%,
-    rgba(157, 114, 255, 0.65) 35%,
-    rgba(77, 232, 232, 0.2) 65%,
-    transparent 100%
-  );
-  box-shadow:
-    0 0 8px rgba(157, 114, 255, 0.4),
-    0 0 3px rgba(255, 255, 255, 0.8);
-  mix-blend-mode: screen;
-  will-change: transform, opacity;
-  animation: galaxy-twinkle 6s ease-in-out infinite alternate;
-}
-
-/* Keep decorative animation out of modal backdrops and drawer content. */
-body:has(.gx-scrim, .gx-underlay, .gx-drawer.open) #galaxy-stars {
-  display: none;
-}
-
-[data-theme="light"] #galaxy-stars {
-  opacity: 0.4;
-}
-
-[data-theme="light"] #galaxy-stars .galaxy-hero {
-  background: radial-gradient(circle at center, #7849e8 0%, #b38fff 60%, rgba(120, 73, 232, 0) 100%);
-  box-shadow: 0 0 4px rgba(120, 73, 232, 0.45), 0 0 8px rgba(77, 232, 232, 0.3);
-  mix-blend-mode: normal;
 }
 
 .gx-unit-note {
