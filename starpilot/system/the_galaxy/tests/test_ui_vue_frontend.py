@@ -277,7 +277,7 @@ def test_ui_eliminates_slider_toggle_flicker():
 
 def test_ui_developer_mode_banner_offers_unlock():
   banner = _read("js/components/DevModeBanner.js")
-  assert "Enable Developer Mode" in banner
+  assert "Go to Developer Tab" in banner
   assert 'navigate("/settings/developer")' in banner
   assert "advanced setting" in banner
 
