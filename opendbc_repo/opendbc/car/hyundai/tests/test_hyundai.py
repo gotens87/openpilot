@@ -130,13 +130,18 @@ def get_test_toggles() -> SimpleNamespace:
 
 
 class TestHyundaiFingerprint:
-  def test_ev6_uses_stock_hda2_communication_control_path(self):
+  def test_egmp_communication_control_paths(self):
     stock_request = bytes([0x28, 0x83, 0x01])
     radar_keepalive_request = bytes([0x28, 0x01, 0x01])
 
     assert CAR.KIA_EV6 in CANFD_RADAR_LIVE_LONGITUDINAL_CAR
     assert CAR.KIA_EV6 not in CANFD_RADAR_ECU_KEEPALIVE_CAR
     assert get_communication_control_request(CAR.KIA_EV6) == stock_request
+
+    assert CAR.HYUNDAI_IONIQ_5 in CANFD_RADAR_LIVE_LONGITUDINAL_CAR
+    assert CAR.HYUNDAI_IONIQ_5 in CANFD_RADAR_ECU_KEEPALIVE_CAR
+    assert get_communication_control_request(CAR.HYUNDAI_IONIQ_5) == stock_request
+
     assert get_communication_control_request(CAR.HYUNDAI_IONIQ_6) == radar_keepalive_request
 
   def test_carnival_hev_low_speed_torque_rate_limits(self):

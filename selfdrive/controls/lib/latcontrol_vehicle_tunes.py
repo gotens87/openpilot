@@ -335,6 +335,17 @@ GENESIS_G70_HIGH_SPEED_ERROR_DAMPING_ERROR = 0.18
 GENESIS_G70_HIGH_SPEED_ERROR_DAMPING_ERROR_WIDTH = 0.15
 GENESIS_G70_HIGH_SPEED_ERROR_DAMPING_JERK = 0.15
 GENESIS_G70_HIGH_SPEED_ERROR_DAMPING_JERK_WIDTH = 0.10
+GENESIS_G70_OUTPUT_SMOOTHING_SPEED = 40.0 * CV.MPH_TO_MS
+GENESIS_G70_OUTPUT_SMOOTHING_SPEED_WIDTH = 6.0 * CV.MPH_TO_MS
+GENESIS_G70_OUTPUT_SMOOTHING_CENTER_LAT = 0.42
+GENESIS_G70_OUTPUT_SMOOTHING_CENTER_LAT_WIDTH = 0.14
+GENESIS_G70_OUTPUT_SMOOTHING_CENTER_RC = 0.30
+GENESIS_G70_OUTPUT_SMOOTHING_CURVE_RC = 0.10
+GENESIS_G70_OUTPUT_SMOOTHING_UNWIND_RC = 0.10
+GENESIS_G70_OUTPUT_SMOOTHING_UNWIND_PHASE = 0.04
+GENESIS_G70_OUTPUT_SMOOTHING_UNWIND_PHASE_WIDTH = 0.08
+GENESIS_G70_OUTPUT_SMOOTHING_DIRECTION_CHANGE_LAT = 0.45
+GENESIS_G70_OUTPUT_SMOOTHING_DIRECTION_CHANGE_RC = 0.055
 GENESIS_G70_ANGLE_OUTPUT_TAPER_MIN = 0.45
 GENESIS_G70_ANGLE_OUTPUT_TAPER_START = 70.0
 GENESIS_G70_ANGLE_OUTPUT_TAPER_WIDTH = 6.0
@@ -3378,6 +3389,32 @@ def get_genesis_g70_high_speed_error_scale(setpoint: float, measured_lateral_acc
   reduction = (GENESIS_G70_HIGH_SPEED_ERROR_DAMPING_MAX * speed_weight * error_weight *
                (0.35 + (0.65 * jerk_weight)) * phase_weight)
   return 1.0 - reduction
+
+
+def get_genesis_g70_stabilized_output(output_torque: float, prev_output_torque: float,
+                                      desired_lateral_accel: float, desired_lateral_jerk: float,
+                                      v_ego: float, dt: float) -> float:
+  speed_weight = _sigmoid((max(v_ego, 0.0) - GENESIS_G70_OUTPUT_SMOOTHING_SPEED) /
+                          GENESIS_G70_OUTPUT_SMOOTHING_SPEED_WIDTH)
+  center_weight = _sigmoid((GENESIS_G70_OUTPUT_SMOOTHING_CENTER_LAT - abs(desired_lateral_accel)) /
+                           GENESIS_G70_OUTPUT_SMOOTHING_CENTER_LAT_WIDTH)
+  curve_weight = 1.0 - center_weight
+  response_time = (GENESIS_G70_OUTPUT_SMOOTHING_CURVE_RC * curve_weight +
+                   GENESIS_G70_OUTPUT_SMOOTHING_CENTER_RC * center_weight)
+
+  unwind_phase = -desired_lateral_accel * desired_lateral_jerk
+  unwind_weight = _sigmoid((unwind_phase - GENESIS_G70_OUTPUT_SMOOTHING_UNWIND_PHASE) /
+                           GENESIS_G70_OUTPUT_SMOOTHING_UNWIND_PHASE_WIDTH)
+  response_time += GENESIS_G70_OUTPUT_SMOOTHING_UNWIND_RC * curve_weight * unwind_weight
+
+  changing_direction = (abs(desired_lateral_accel) >= GENESIS_G70_OUTPUT_SMOOTHING_DIRECTION_CHANGE_LAT and
+                        prev_output_torque * desired_lateral_accel <= 0.0)
+  if changing_direction:
+    response_time = min(response_time, GENESIS_G70_OUTPUT_SMOOTHING_DIRECTION_CHANGE_RC)
+
+  output_alpha = dt / (max(response_time, 0.0) + dt)
+  smoothed_output = prev_output_torque + output_alpha * (output_torque - prev_output_torque)
+  return float(output_torque + speed_weight * (smoothed_output - output_torque))
 
 
 def _ioniq_5_sigmoid(x: float) -> float:

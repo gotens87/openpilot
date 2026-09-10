@@ -7,7 +7,6 @@ from opendbc.car.hyundai.values import HyundaiFlags, CAR, CarControllerParams, \
                                                    CANFD_UNSUPPORTED_LONGITUDINAL_CAR, \
                                                    CANFD_SECURITYACCESS_CAR, \
                                                    CANFD_ANGLE_LONGITUDINAL_CAR, \
-                                                   CANFD_RADAR_LIVE_LONGITUDINAL_CAR, \
                                                    CANFD_RADAR_ECU_KEEPALIVE_CAR, \
                                                    RADAR_LIVE_LONGITUDINAL_CAR, \
                                                    UNSUPPORTED_LONGITUDINAL_CAR, HyundaiSafetyFlags, \
@@ -30,7 +29,7 @@ Ecu = structs.CarParams.Ecu
 
 
 def get_communication_control_request(car_fingerprint):
-  if car_fingerprint in CANFD_RADAR_ECU_KEEPALIVE_CAR:
+  if car_fingerprint in CANFD_RADAR_ECU_KEEPALIVE_CAR and car_fingerprint != CAR.HYUNDAI_IONIQ_5:
     return bytes([uds.SERVICE_TYPE.COMMUNICATION_CONTROL, uds.CONTROL_TYPE.ENABLE_RX_DISABLE_TX,
                   uds.MESSAGE_TYPE.NORMAL])
 
