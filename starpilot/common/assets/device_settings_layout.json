@@ -3654,17 +3654,6 @@
         "settings_tier": "simple"
       },
       {
-        "key": "ClusterOffset",
-        "label": "Dashboard Speed Offset",
-        "description": "The speed offset openpilot uses to match the speed on the dashboard display.",
-        "data_type": "float",
-        "ui_type": "numeric",
-        "min": 1.0,
-        "max": 1.05,
-        "step": 0.001,
-        "settings_tier": "simple"
-      },
-      {
         "key": "SNGHack",
         "label": "Stop-and-Go Hack",
         "description": "Force stop-and-go on Lexus/Toyota vehicles without stock stop-and-go functionality.",
@@ -4880,6 +4869,19 @@
         "ui_type": "toggle",
         "is_parent_toggle": true,
         "settings_tier": "simple"
+      },
+      {
+        "key": "ClusterOffset",
+        "label": "Dashboard Speed Offset",
+        "description": "Multiplier for dashboard speed. 1x = no offset; 1.05x = 5% faster.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "unit": "x",
+        "min": 1.0,
+        "max": 1.05,
+        "step": 0.001,
+        "parent_key": "GalaxyDeveloperMode",
+        "settings_tier": "advanced"
       },
       {
         "key": "GalaxyMobileDefault",

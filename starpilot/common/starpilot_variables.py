@@ -880,7 +880,7 @@ class StarPilotVariables:
       toggle.car_model = car_model
 
     self.migrate_prius_cluster_offset(str(toggle.car_model))
-    toggle.cluster_offset = self.get_value("ClusterOffset", cast=float, condition=toggle.car_make == "toyota")
+    toggle.cluster_offset = self.get_value("ClusterOffset", cast=float)
 
     toggle.longitudinal_mode_values = mode_values
     toggle.experimental_mode = toggle.experimental_mode_available and not toggle.safe_mode and mode_values["ExperimentalMode"]
