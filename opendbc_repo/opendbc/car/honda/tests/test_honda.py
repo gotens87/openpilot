@@ -43,10 +43,6 @@ class TestHondaFingerprint:
     return commands[-1][2]
 
   def test_bosch_acc_commands_reject_fault_route_gas_brake_conflict(self):
-    # Route 00000002--aa8501ddcb broadcast P061B while Alpha Long sent
-    # approximately accel=-0.27, positive gas, and both brake bits. Drag/grade
-    # compensation calculated positive gas, so same-domain arbitration keeps
-    # propulsion without reproducing the simultaneous request.
     braking = update_honda_bosch_braking(False, 0.2, False, True)
     values = self._acc_control_values(True, -0.27, gas=160, gas_force=0.2, braking=braking)
 
@@ -68,8 +64,6 @@ class TestHondaFingerprint:
       assert active
 
   def test_bosch_acc_commands_preserve_road_load_gas_above_brake_threshold(self):
-    # Suppressing this positive drag/grade-compensated gas from raw accel
-    # causes the acceleration/coast cycle seen in full E2E road testing.
     values = self._acc_control_values(True, -0.27, gas=500, gas_force=0.3)
 
     assert values["GAS_COMMAND"] == 500

@@ -78,12 +78,9 @@ def create_acc_commands(packer, CAN, enabled, active, accel, gas, stopping_count
   control_on = 5 if enabled else 0
   if gas_force is None:
     gas_force = accel
-  # Ordinary Bosch mode is selected from road-load-adjusted gas_force in
-  # CarController. A None value retains the separate MVL crossover behavior.
   if braking is None:
     braking = gas_force < min_gas_accel
   braking = int(active and braking)
-  # Enforce actuator mutual exclusion again at the final CAN boundary.
   gas_command = gas if active and gas_force > min_gas_accel and not braking else -30000
   accel_command = accel if active else 0
   standstill = 1 if active and stopping_counter > 0 else 0
