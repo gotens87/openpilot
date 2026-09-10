@@ -8296,7 +8296,10 @@ def setup(app):
     except (TypeError, ValueError) as error:
       return jsonify({"error": str(error)}), 400
 
-    started = flm_workspace.start_flm_background_analysis(route_names, FOOTAGE_PATHS, segment_ranges)
+    try:
+      started = flm_workspace.start_flm_background_analysis(route_names, FOOTAGE_PATHS, segment_ranges)
+    except (TypeError, ValueError) as error:
+      return jsonify({"error": str(error)}), 400
     if not started:
       return jsonify({"error": "Failed to start FLM analysis."}), 500
 
