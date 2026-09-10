@@ -60,7 +60,6 @@ def test_processes_use_same_total_capacity_as_overall(tmp_path, monkeypatch, cor
   capacity = core_count * 2 * monitor.hz
   used = capacity // 4
   fixture(tmp_path, active=100 + used, idle=900 + capacity - used)
-  # /proc/stat has one row per currently online core.
   with (tmp_path / 'stat').open('a') as f:
     for i in range(1, core_count):
       f.write(f'cpu{i} 100 0 0 900 0 0 0 0\n')
@@ -79,7 +78,6 @@ def test_cpu_capacity_is_measured_across_core_hotplug(tmp_path, monkeypatch):
   fixture(tmp_path); proc(tmp_path)
   monitor = SystemMonitor(tmp_path); monitor.sample()
   now[0] = 2
-  # Four cores for one second, then eight for one second: 12 core-seconds.
   capacity = 12 * monitor.hz
   fixture(tmp_path, active=100 + monitor.hz, idle=900 + capacity - monitor.hz)
   with (tmp_path / 'stat').open('a') as f:
@@ -101,3 +99,11 @@ def test_missing_or_reset_capacity_has_no_process_percentage(tmp_path, monkeypat
   sample = monitor.sample()
   assert sample['cpuPercent'] is None
   assert sample['processes'][0]['cpu'] is None
+
+
+def test_missing_total_memory_fails_closed(tmp_path):
+  fixture(tmp_path)
+  (tmp_path / 'meminfo').write_text('MemAvailable: 512000 kB\n')
+
+  with pytest.raises(OSError, match='MemTotal'):
+    SystemMonitor(tmp_path).sample()

@@ -70,20 +70,20 @@ class SystemMonitor:
               user = pwd.getpwuid(uid).pw_name
             except KeyError:
               user = str(uid)
-            # Only executable/module names: never expose arguments or environment secrets.
             info = {'name': name.removeprefix('/data/openpilot/'), 'user': user, 'kernel': not args}
           names[identity] = info
           cpu = None
           if cpu_capacity and identity in self.previous and current >= self.previous[identity]:
-            # Same aggregate tick window as the total, including any core hotplug.
-            # 100% means all measured CPU capacity, not one fully occupied core.
             cpu = round(min(100, (current - self.previous[identity]) / cpu_capacity * 100), 1)
           rows.append({'pid': identity[0], **info, 'state': fields[0], 'cpu': cpu,
                        'memoryMiB': round(max(0, int(fields[21])) * self.page / 1048576, 1)})
         except (OSError, ValueError, IndexError):
-          continue  # Process exited or is inaccessible during this snapshot.
+          continue
       memory = {line.split(':')[0]: int(line.split()[1]) for line in (self.root / 'meminfo').read_text().splitlines() if ':' in line}
-      total = memory['MemTotal'] / 1024
+      total_kib = memory.get('MemTotal')
+      if total_kib is None or total_kib <= 0:
+        raise OSError('MemTotal is unavailable')
+      total = total_kib / 1024
       available = memory.get('MemAvailable', memory.get('MemFree', 0)) / 1024
       disk = shutil.disk_usage('/data' if Path('/data').exists() else '/')
       self.cached = {'sampledAt': time.time(), 'sampleSeconds': round(elapsed, 2) if elapsed else None,
