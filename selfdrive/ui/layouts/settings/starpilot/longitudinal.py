@@ -1108,7 +1108,7 @@ class StarPilotLongitudinalLayout(_SettingsPage):
   def _developer_feature_access(self) -> bool:
     return (
       starpilot_state.car_state.hasOpenpilotLongitudinal and
-      (self._params.get_bool("DeveloperUI") or self._params.get_bool("GalaxyDeveloperMode"))
+      (gui_app.big_ui() or self._params.get_bool("DeveloperUI") or self._params.get_bool("GalaxyDeveloperMode"))
     )
 
   def _speed_unit(self) -> str:
