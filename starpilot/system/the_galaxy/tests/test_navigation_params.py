@@ -753,6 +753,22 @@ def test_force_offroad_toggle_rejects_when_not_parked(monkeypatch):
   assert fake_params.writes == []
 
 
+def test_force_offroad_can_be_disabled_without_live_park(monkeypatch):
+  client, fake_params = _params_client(monkeypatch, {
+    "ForceOffroad": True,
+    "ForceOnroad": False,
+    "IsOnroad": False,
+  }, "tici")
+  monkeypatch.setattr(the_galaxy, "_get_vehicle_parked", lambda: False)
+
+  response = client.put("/api/params", json={"key": "ForceOffroad", "value": False})
+
+  assert response.status_code == 200
+  assert response.get_json()["updated"] == {"ForceOffroad": False, "ForceOnroad": False}
+  assert fake_params.values["ForceOffroad"] is False
+  assert fake_params.values["ForceOnroad"] is False
+
+
 def test_curve_speed_controller_reset_clears_learned_data_offroad(monkeypatch):
   client, fake_params = _params_client(monkeypatch, {
     "IsOnroad": False,
