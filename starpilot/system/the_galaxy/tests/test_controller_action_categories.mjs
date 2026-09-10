@@ -1,4 +1,3 @@
-// Run with node; optional source-derived full option fixture from browser test.
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { actionCategory, actionCategories, filterActions } from '../assets/components/tools/controller_action_picker.js'

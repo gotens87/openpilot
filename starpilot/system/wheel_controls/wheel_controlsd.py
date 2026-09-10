@@ -438,7 +438,6 @@ def cycle_driving_personality(params: Params) -> bool:
   if params.get_bool("SafeMode"):
     return False
   try:
-    # Match native UI capability selection; never use parked CP while on-road.
     cp_bytes = params.get("CarParams" if params.get_bool("IsOnroad") else "CarParamsPersistent")
     if not cp_bytes:
       return False
@@ -447,8 +446,6 @@ def cycle_driving_personality(params: Params) -> bool:
     if not available:
       return False
 
-    # Typed Params decoding truncates fractional ints and defaults corrupt text.
-    # Inspect the stored token so malformed selections cannot become Aggressive.
     current = Path(params.get_param_path("LongitudinalPersonality")).read_bytes()
     profiles = tuple(int(profile) for profile in (
       log.LongitudinalPersonality.aggressive,
@@ -460,14 +457,10 @@ def cycle_driving_personality(params: Params) -> bool:
       return False
     next_personality = profiles[(tokens.index(current) + 1) % len(profiles)]
   except Exception:
-    # Missing/malformed CP or selection: do not change effective driving state.
     return False
 
   if params.get_bool("SafeMode"):
     return False
-  # Synchronous persistence lets successive HID events see the preceding change.
-  # selfdrived's existing Params reader publishes this selection; Traffic retains
-  # its independent override. No toggle refresh or virtual speed input is needed.
   params.put_int("LongitudinalPersonality", next_personality)
   return True
 

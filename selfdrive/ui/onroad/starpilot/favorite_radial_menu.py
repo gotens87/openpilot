@@ -594,8 +594,6 @@ class FavoriteRadialMenu:
 
   def _open_picker(self, slot_index: int) -> None:
     options = self._refresh_option_catalog()
-    # This on-road picker has no numeric editor. Keep speed actions in the
-    # catalogue for activating saved slots, but configure their value in Galaxy.
     self._picker_options = [option for option in (options or []) if option.get("value_type") != "speed"]
     self._selected_slot = slot_index
     self._editing_slot = None

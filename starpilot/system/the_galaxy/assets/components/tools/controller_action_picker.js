@@ -1,9 +1,7 @@
 import { longitudinalModeLayout, LONGITUDINAL_MODE_KEY } from "./longitudinal_mode.mjs"
 
-// Presentation-only: the caller owns eligibility, persistence and speed values.
 const stylesheet = new URL("./controller_action_picker.css", import.meta.url).href
 
-// Use the same catalogue as both Toggles menus, not the API's alphabetic order.
 const layoutUrl = "/assets/components/tools/device_settings_layout.json?v=settings-tier-1"
 
 function settingsAnchor(key) {
@@ -75,8 +73,6 @@ export function filterActions(options, query = "", category = "", layout = []) {
       option.picker_description, actionCategory(option, layout), ...actionHierarchy(option, layout).map(part => part.label)].join(" ").toLocaleLowerCase().includes(word)))
 }
 
-// Native modal supplies focus containment, inert background and Escape handling.
-// Read options/guard/selection live: polling may change availability while open.
 export function openControllerActionPicker({ theme = "classic", index, trigger, getOptions, getSlot, isDisabled, onSelect, title = `Controller Action #${index + 1}`, slotAttribute = "data-controller-action-slot", noun = "actions" }) {
   if (isDisabled()) return () => {}
   if (!document.querySelector('link[data-controller-picker]')) {
@@ -116,7 +112,6 @@ export function openControllerActionPicker({ theme = "classic", index, trigger, 
   let closed = false
   let timer
   const fitViewport = () => {
-    // CSS zoom scales vh units too. Bound the modal in unzoomed layout pixels.
     let zoom = 1
     for (let node = dialog; node; node = node.parentElement) zoom *= Number.parseFloat(getComputedStyle(node).zoom) || 1
     const viewport = window.visualViewport
@@ -131,7 +126,6 @@ export function openControllerActionPicker({ theme = "classic", index, trigger, 
     window.visualViewport?.removeEventListener("resize", fitViewport)
     dialog.close()
     dialog.remove()
-    // Classic polling can replace the original card while the modal is open.
     const target = trigger?.isConnected ? trigger : document.querySelector(`[${slotAttribute}="${index}"]`)
     target?.focus({ preventScroll: true })
   }
@@ -186,7 +180,6 @@ export function openControllerActionPicker({ theme = "classic", index, trigger, 
       container.append(button)
       if (focusedKey === option.key) button.focus({ preventScroll: true })
     }
-    // The original empty option remains available independently of filters.
     add({ key: "", label: "Not configured", description: "Clear this assignment" }, "")
     if (grouped) {
       for (const name of categories) {
@@ -235,7 +228,6 @@ export function openControllerActionPicker({ theme = "classic", index, trigger, 
     }
   }
   input.addEventListener("input", () => {
-    // Search always covers the complete eligible catalogue, not the last category.
     category.value = ""
     render()
     results.scrollTop = 0
@@ -248,8 +240,6 @@ export function openControllerActionPicker({ theme = "classic", index, trigger, 
   render()
   dialog.showModal()
   input.focus()
-  // A missing layout must never hide eligible actions or block assignment.
-  // Retry on the next open; don't cache a transient failure or stale catalogue.
   fetch(layoutUrl, { cache: "no-store" }).then(response => {
     if (!response.ok) throw new Error("Settings catalogue unavailable")
     return response.json()
