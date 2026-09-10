@@ -55,8 +55,8 @@ lacks the extra non-OFF wake; optional `--regression-ref REV` can test a histori
 version that masked the DRIVE edge if available locally.
 
 Host tests cover Tesla detection, stale identity, firmware-selection combinations,
-missing files and normal update/signature behaviour. Galaxy/native settings tests
-cover Tesla-only visibility and capability checks, parked-only writes, required
+missing files and normal update/signature behaviour. Galaxy settings tests cover
+Tesla-only visibility and capability checks, parked-only writes, required
 confirmation, cancellation and firmware preflight. `host_policy.py` exercises
 actual shutdown methods with synthetic clocks and Params, without device access.
 

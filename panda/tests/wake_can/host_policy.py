@@ -34,7 +34,6 @@ def main():
   pm = SimpleNamespace(low_voltage_start_time=None,car_voltage_mV=14000,car_battery_capacity_uWh=30e6,
       params=SimpleNamespace(get_bool=lambda name:values[name]))
   toggles = SimpleNamespace(device_shutdown_time=3600,low_voltage_shutdown=11.8)
-  # Wake is deliberately independent, but not a supported input to this policy.
   pm.wake_on_can = True
   reason = lambda: ns['shutdown_reason'](pm,False,True,1.,False,toggles)
   observed = {}
@@ -44,12 +43,9 @@ def main():
     if result and 'first_shutdown' not in observed:
       observed['first_shutdown']={'monotonic_s':t,'offroad_s':t-1,'reason':result,'fresh_awake':True}
   assert observed['first_shutdown']=={'monotonic_s':3602,'offroad_s':3601,'reason':'offroad_timeout','fresh_awake':True}
-  # The one-hour constant is NOT an unconditional one-hour timeout.
   toggles.device_shutdown_time=0
   assert reason() is None
   observed['no_timeout_healthy_after_hour']=reason()
-  # Existing emergency/protective inputs stay intact; never bypass by changing ignition
-  # or setting DisablePowerDown to implement stay-awake.
   pm.car_battery_capacity_uWh=0
   assert reason()=='battery_capacity_exhausted'
   observed['exhausted']=reason()
@@ -64,7 +60,7 @@ def main():
   toggles.device_shutdown_time=3600
   for awake in [True,False]:
     pm.wake_on_can=awake
-    assert reason()=='offroad_timeout' # same answer; no telemetry seam exists yet
+    assert reason()=='offroad_timeout'
   observed['contract']='Wake-only CAN deliberately does not inhibit stock host shutdown.'
   observed['source_sha256']=hashlib.sha256(path.read_bytes()).hexdigest()
   observed['thermal']='Not modeled here; unchanged host thermal protection must be independently preserved in any extension.'

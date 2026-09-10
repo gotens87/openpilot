@@ -27,11 +27,9 @@ def between(text, start, end):
 def generate(read):
   can, main, boot, cuatro = [read(p) for p in FILES]
   independent_wake = 'bool recent_heartbeat, bool wake)' in boot
-  # Historical two-argument definitions must not include today's declaration.
   if not independent_wake:
     boot = boot.replace('#include "bootkick_declarations.h"', '')
   globals_ = between(can, 'bool ignition_can = false;', '\nbool can_silent')
-  # Added wake globals immediately precede ignition globals in candidate.
   if 'bool wake_on_can = false;' in can:
     globals_ = between(can, 'bool wake_on_can = false;', '\nbool can_silent')
   else:
