@@ -280,6 +280,10 @@ export const api = {
   getPlotsLive() { return request("/api/plots/live") },
   getGalaxySession() { return request("/api/galaxy/session") },
 
+  getTailscaleInstalled() { return request("/api/tailscale/installed", { cache: "no-store" }) },
+  setupTailscale() { return request("/api/tailscale/setup", { method: "POST" }) },
+  uninstallTailscale() { return request("/api/tailscale/uninstall", { method: "POST" }) },
+
   getThemeList() { return request("/api/themes/list") },
   getThemeDefault() { return request("/api/themes/default") },
   loadTheme(path, type) {
