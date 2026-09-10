@@ -34,6 +34,10 @@ MAX_LATERAL_ACCEL = ISO_LATERAL_ACCEL - ACCELERATION_DUE_TO_GRAVITY * 0.06
 STEER_DT = CarControllerParams.STEER_STEP * DT_CTRL
 CURVATURE_LOOKAHEAD_MIN = 0.20
 CURVATURE_LOOKAHEAD_MAX = 0.40
+MACH_E_TURN_IN_LOOKAHEAD_EXTRA = 0.40
+MACH_E_TURN_IN_MIN_CURVATURE = 0.006
+MACH_E_TURN_IN_FULL_CURVATURE = 0.009
+MACH_E_TURN_IN_LAG_CURVATURE = 0.006
 FORD_CURVATURE_LOOKAHEAD = {
   CAR.FORD_EXPLORER_MK6: 0.20,
 }
@@ -114,6 +118,7 @@ class FordLateralController:
     self.manual_turn_recovery_timer = 0.0
     self.curvature_samples = deque(maxlen=max(2, round(0.3 / STEER_DT)))
     self.curvature_last = 0.0
+    self.desired_curvature_last = 0.0
     self._frame = 0
     self._update_params()
 
@@ -179,6 +184,25 @@ class FordLateralController:
         precision = 0
     return requested, precision
 
+  def _turn_in_preview_weight(self, desired: float, predicted: float, current: float) -> float:
+    if self.CP.carFingerprint not in FORD_CONSERVATIVE_PREVIEW_CARS:
+      return 0.0
+    if desired * predicted <= 0.0 or desired * self.desired_curvature_last < 0.0:
+      return 0.0
+    if abs(desired) <= abs(self.desired_curvature_last) or abs(current) >= abs(desired):
+      return 0.0
+
+    curvature_weight = float(np.interp(
+      abs(desired),
+      [MACH_E_TURN_IN_MIN_CURVATURE, MACH_E_TURN_IN_FULL_CURVATURE],
+      [0.0, 1.0],
+    ))
+    lag_weight = float(np.clip(
+      (abs(desired) - abs(current)) / MACH_E_TURN_IN_LAG_CURVATURE,
+      0.0, 1.0,
+    ))
+    return curvature_weight * lag_weight
+
   def _manual_turn(self, CC, CS) -> bool:
     if not CC.latActive:
       self.human_turn.reset()
@@ -227,18 +251,27 @@ class FordLateralController:
       self.manual_turn_recovery_timer = 0.0
       self.curvature_samples.clear()
       self.curvature_last = 0.0
+      self.desired_curvature_last = 0.0
       return FordLateralResult()
 
     manual_turn = self._manual_turn(CC, CS)
     if manual_turn or CS.out.vEgoRaw < 0.1:
       self.curvature_samples.clear()
       self.curvature_last = 0.0
+      self.desired_curvature_last = 0.0
       return FordLateralResult(active=not (
         manual_turn and self.CP.carFingerprint in FORD_MANUAL_TURN_LATCH_CARS))
 
     v_ego = float(CS.out.vEgoRaw)
     predicted = self._predicted_curvature(v_ego, self._curvature_lookahead())
-    requested, precision = self._blend_and_scale(float(actuators.curvature), predicted, v_ego, current)
+    desired = float(actuators.curvature)
+    turn_in_weight = self._turn_in_preview_weight(desired, predicted, current)
+    if turn_in_weight > 0.0:
+      turn_in_predicted = self._predicted_curvature(
+        v_ego, self._curvature_lookahead() + MACH_E_TURN_IN_LOOKAHEAD_EXTRA)
+      predicted = float(np.interp(turn_in_weight, [0.0, 1.0], [predicted, turn_in_predicted]))
+    requested, precision = self._blend_and_scale(desired, predicted, v_ego, current)
+    self.desired_curvature_last = desired
 
     if v_ego > 9.0:
       requested = float(np.clip(requested, current - CarControllerParams.CURVATURE_ERROR,
