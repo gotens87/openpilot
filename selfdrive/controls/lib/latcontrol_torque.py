@@ -129,6 +129,7 @@ class LatControlTorque(LatControl):
     self.is_kia_stinger_2022 = CP.carFingerprint in KIA_STINGER_2022_CARS
     self.is_kia_forte = CP.carFingerprint in KIA_FORTE_CARS
     self.is_kona_non_scc = CP.carFingerprint in KONA_NON_SCC_CARS
+    self.is_kona_ev_2022 = CP.carFingerprint in KONA_EV_2022_CARS
     self.is_kia_ev6 = CP.carFingerprint in KIA_EV6_CARS
     self.is_kia_carnival = CP.carFingerprint in KIA_CARNIVAL_CARS
     self.is_tucson_4th_gen = CP.carFingerprint in TUCSON_4TH_GEN_CARS
@@ -462,6 +463,8 @@ class LatControlTorque(LatControl):
         friction_scale *= get_kia_carnival_friction_center_fade_scale(setpoint, CS.vEgo)
       elif self.is_kona_non_scc:
         friction_threshold = get_kona_non_scc_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
+      elif self.is_kona_ev_2022:
+        friction_threshold = get_kona_ev_2022_friction_threshold(CS.vEgo, setpoint)
       elif tucson_4th_gen_active:
         friction_threshold = get_tucson_4th_gen_friction_threshold(CS.vEgo, setpoint, desired_lateral_jerk)
       elif self.is_silverado:
@@ -607,6 +610,8 @@ class LatControlTorque(LatControl):
         rapid_reversal = setpoint * desired_lateral_jerk < 0.0
         if output_torque * setpoint > 0.0 or rapid_reversal:
           output_torque *= get_kona_non_scc_highway_transition_output_scale(setpoint, desired_lateral_jerk, CS.vEgo)
+      elif self.is_kona_ev_2022:
+        output_torque *= get_kona_ev_2022_center_output_scale(setpoint, CS.vEgo)
       elif rav4_tss2_active:
         output_torque *= get_rav4_tss2_center_output_scale(setpoint, CS.vEgo)
       elif rav4_prime_active:

@@ -171,6 +171,9 @@ KIA_FORTE_CARS = (
 KONA_NON_SCC_CARS = (
   HYUNDAI_CAR.HYUNDAI_KONA_NON_SCC,
 )
+KONA_EV_2022_CARS = (
+  HYUNDAI_CAR.HYUNDAI_KONA_EV_2022,
+)
 PRIUS_CARS = (
   TOYOTA_CAR.TOYOTA_PRIUS,
   TOYOTA_CAR.TOYOTA_PRIUS_RETROFIT,
@@ -1313,6 +1316,16 @@ KONA_NON_SCC_CENTER_FRICTION_THRESHOLD_LAT = 0.28
 KONA_NON_SCC_CENTER_FRICTION_THRESHOLD_LAT_WIDTH = 0.07
 KONA_NON_SCC_CENTER_FRICTION_THRESHOLD_SPEED_ONSET = 11.0
 KONA_NON_SCC_CENTER_FRICTION_THRESHOLD_SPEED_WIDTH = 2.5
+KONA_EV_2022_CENTER_FRICTION_THRESHOLD_GAIN = 0.08
+KONA_EV_2022_CENTER_FRICTION_THRESHOLD_LAT = 0.20
+KONA_EV_2022_CENTER_FRICTION_THRESHOLD_LAT_WIDTH = 0.05
+KONA_EV_2022_CENTER_FRICTION_THRESHOLD_SPEED = 18.0
+KONA_EV_2022_CENTER_FRICTION_THRESHOLD_SPEED_WIDTH = 2.5
+KONA_EV_2022_CENTER_OUTPUT_TAPER_MAX = 0.045
+KONA_EV_2022_CENTER_OUTPUT_TAPER_LAT = 0.20
+KONA_EV_2022_CENTER_OUTPUT_TAPER_LAT_WIDTH = 0.05
+KONA_EV_2022_CENTER_OUTPUT_TAPER_SPEED = 18.0
+KONA_EV_2022_CENTER_OUTPUT_TAPER_SPEED_WIDTH = 2.5
 
 TRAILER_LOAD_FULL_ASSIST_KG = 15000.0 * CV.LB_TO_KG
 TRAILER_LATERAL_MIN_SPEED = 15.0 * CV.MPH_TO_MS
@@ -2015,6 +2028,29 @@ def get_kona_non_scc_center_taper_scale(desired_lateral_accel: float, v_ego: flo
   speed_weight = float(np.interp(v_ego, [KONA_NON_SCC_CENTER_TAPER_SPEED_ONSET, KONA_NON_SCC_CENTER_TAPER_SPEED_FULL], [0.0, 1.0]))
   center_weight = float(np.interp(abs(desired_lateral_accel), [0.0, KONA_NON_SCC_CENTER_TAPER_LAT], [1.0, 0.0]))
   return 1.0 - (KONA_NON_SCC_CENTER_TAPER_MAX * speed_weight * center_weight)
+
+
+def _kona_ev_2022_center_weights(desired_lateral_accel: float, v_ego: float) -> tuple[float, float]:
+  speed_weight = _sigmoid((v_ego - KONA_EV_2022_CENTER_FRICTION_THRESHOLD_SPEED) /
+                          KONA_EV_2022_CENTER_FRICTION_THRESHOLD_SPEED_WIDTH)
+  center_weight = _sigmoid((KONA_EV_2022_CENTER_FRICTION_THRESHOLD_LAT - abs(desired_lateral_accel)) /
+                           KONA_EV_2022_CENTER_FRICTION_THRESHOLD_LAT_WIDTH)
+  return speed_weight, center_weight
+
+
+def get_kona_ev_2022_friction_threshold(v_ego: float, desired_lateral_accel: float = 0.0) -> float:
+  speed_weight, center_weight = _kona_ev_2022_center_weights(desired_lateral_accel, v_ego)
+  return get_standard_friction_threshold(v_ego) * (
+    1.0 + KONA_EV_2022_CENTER_FRICTION_THRESHOLD_GAIN * speed_weight * center_weight
+  )
+
+
+def get_kona_ev_2022_center_output_scale(desired_lateral_accel: float, v_ego: float) -> float:
+  speed_weight = _sigmoid((v_ego - KONA_EV_2022_CENTER_OUTPUT_TAPER_SPEED) /
+                          KONA_EV_2022_CENTER_OUTPUT_TAPER_SPEED_WIDTH)
+  center_weight = _sigmoid((KONA_EV_2022_CENTER_OUTPUT_TAPER_LAT - abs(desired_lateral_accel)) /
+                           KONA_EV_2022_CENTER_OUTPUT_TAPER_LAT_WIDTH)
+  return 1.0 - (KONA_EV_2022_CENTER_OUTPUT_TAPER_MAX * speed_weight * center_weight)
 
 
 def civic_bosch_modified_lateral_testing_ground_active() -> bool:

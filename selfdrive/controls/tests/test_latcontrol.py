@@ -34,6 +34,8 @@ from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
   get_hkg_canfd_base_friction_threshold,
   get_ioniq_6_2025_low_speed_center_error_scale,
   get_ioniq_6_2025_low_speed_center_friction_scale,
+  get_kona_ev_2022_center_output_scale,
+  get_kona_ev_2022_friction_threshold,
   get_kona_non_scc_center_taper_scale,
   get_kona_non_scc_friction_threshold,
   get_kona_non_scc_highway_transition_output_scale,
@@ -1387,6 +1389,40 @@ class TestLatControl:
 
     assert base_output > 0.0
     assert tapered_output == pytest.approx(base_output)
+
+  def test_kona_ev_2022_center_cleanup_is_high_speed_and_center_gated(self):
+    low_speed_threshold = get_kona_ev_2022_friction_threshold(8.0, 0.0)
+    highway_base = get_standard_friction_threshold(27.0)
+    highway_threshold = get_kona_ev_2022_friction_threshold(27.0, 0.0)
+    highway_curve_threshold = get_kona_ev_2022_friction_threshold(27.0, 0.6)
+
+    assert low_speed_threshold == pytest.approx(get_standard_friction_threshold(8.0), abs=0.001)
+    assert highway_threshold > highway_base
+    assert highway_curve_threshold == pytest.approx(highway_base, abs=0.001)
+    assert get_kona_ev_2022_center_output_scale(0.0, 27.0) < 0.96
+    assert get_kona_ev_2022_center_output_scale(0.6, 27.0) == pytest.approx(1.0, abs=0.001)
+    assert get_kona_ev_2022_center_output_scale(0.0, 8.0) == pytest.approx(1.0, abs=0.001)
+
+  def test_kona_ev_2022_center_output_taper_update_path(self, monkeypatch):
+    monkeypatch.setattr(latcontrol_torque, "get_kona_ev_2022_center_output_scale", lambda *_args: 1.0)
+    controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.HYUNDAI_KONA_EV_2022)
+    CS.vEgo = 27.0
+    base_output, _, lac_log = controller.update(
+      True, CS, VM, params, False, 0.0005, False, 0.1, None, None, starpilot_toggles,
+    )
+
+    monkeypatch.setattr(latcontrol_torque, "get_kona_ev_2022_center_output_scale", lambda *_args: 0.5)
+    tapered_controller, tapered_VM, tapered_CS, tapered_params, tapered_toggles = self._build_torque_controller(
+      HYUNDAI.HYUNDAI_KONA_EV_2022,
+    )
+    tapered_CS.vEgo = 27.0
+    tapered_output, _, _ = tapered_controller.update(
+      True, tapered_CS, tapered_VM, tapered_params, False, 0.0005, False, 0.1, None, None, tapered_toggles,
+    )
+
+    assert controller.is_kona_ev_2022
+    assert lac_log.active
+    assert tapered_output == pytest.approx(base_output * 0.5)
 
   def test_ioniq_5_center_taper_curve(self):
     assert get_ioniq_5_center_taper_scale(0.0, 25.0) < get_ioniq_5_center_taper_scale(0.0, 10.0)
