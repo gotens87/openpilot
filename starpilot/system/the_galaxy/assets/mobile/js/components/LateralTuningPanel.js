@@ -599,6 +599,33 @@ export const LateralTuningPanel = {
         </div>
       </section>
 
+      <section class="gx-card" style="margin-top: var(--sp-3);">
+        <div class="gx-section__header">
+          <i class="bi bi-collection"></i>
+          <span class="gx-section__title">Saved Tunes</span>
+        </div>
+        <div style="padding: var(--sp-4);">
+          <p style="color: var(--text-muted); line-height:1.6; margin:0 0 var(--sp-3);">Save a working FLM trial, switch between setups, then use Revert Trial to return to the exact manual settings from before FLM.</p>
+          <div v-if="!workspace.savedTunes.length" class="gx-empty">No saved tunes yet. Apply a trial, then save it here.</div>
+          <div v-for="tune in workspace.savedTunes" :key="tune.tuneId" style="border-top:1px solid var(--glass-border); padding: var(--sp-2) 0;">
+            <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:8px;">
+              <div style="min-width:0;">
+                <strong>{{ tune.name || 'Saved Tune' }}<span v-if="tune.active" style="color:var(--primary);"> (Active)</span></strong>
+                <div class="gx-row__desc">{{ tune.carFingerprint || 'Unknown car' }}{{ tune.pathLabel ? ' / ' + tune.pathLabel : '' }}</div>
+                <div class="gx-row__desc">{{ tune.genericParamCount }} generic, {{ tune.frictionCurveCount }} friction curve, {{ tune.vehicleKnobCount }} knobs</div>
+                <div class="gx-row__desc">{{ fmtAge(tune.updatedAt) }}</div>
+              </div>
+              <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;">
+                <button type="button" class="gx-btn gx-btn--tonal" :disabled="busy || tune.active" @click="applySavedTune(tune)">{{ tune.active ? 'Active' : 'Apply' }}</button>
+                <button type="button" class="gx-btn gx-btn--text" :disabled="busy" @click="renameSavedTune(tune)">Rename</button>
+                <button type="button" class="gx-btn gx-btn--text" :disabled="busy || tune.active" style="color:var(--error);" @click="deleteSavedTune(tune)">Delete</button>
+                <button type="button" class="gx-btn gx-btn--text" :disabled="busy" @click="submitTune(tune)">Firestar</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <div v-if="pending" ref="pendingEditor" class="gx-card" style="margin-top: var(--sp-3);">
         <div style="padding: var(--sp-4); display:grid; gap:10px;">
           <div class="gx-section__header" style="padding:0 0 6px;">
@@ -785,32 +812,6 @@ export const LateralTuningPanel = {
         </div>
       </section>
 
-      <section class="gx-card" style="margin-top: var(--sp-3);">
-        <div class="gx-section__header">
-          <i class="bi bi-collection"></i>
-          <span class="gx-section__title">Saved Tunes</span>
-        </div>
-        <div style="padding: var(--sp-4);">
-          <p style="color: var(--text-muted); line-height:1.6; margin:0 0 var(--sp-3);">Save a working FLM trial, switch between setups, then use Revert Trial to return to the exact manual settings from before FLM.</p>
-          <div v-if="!workspace.savedTunes.length" class="gx-empty">No saved tunes yet. Apply a trial, then save it here.</div>
-          <div v-for="tune in workspace.savedTunes" :key="tune.tuneId" style="border-top:1px solid var(--glass-border); padding: var(--sp-2) 0;">
-            <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:8px;">
-              <div style="min-width:0;">
-                <strong>{{ tune.name || 'Saved Tune' }}<span v-if="tune.active" style="color:var(--primary);"> (Active)</span></strong>
-                <div class="gx-row__desc">{{ tune.carFingerprint || 'Unknown car' }}{{ tune.pathLabel ? ' / ' + tune.pathLabel : '' }}</div>
-                <div class="gx-row__desc">{{ tune.genericParamCount }} generic, {{ tune.frictionCurveCount }} friction curve, {{ tune.vehicleKnobCount }} knobs</div>
-                <div class="gx-row__desc">{{ fmtAge(tune.updatedAt) }}</div>
-              </div>
-              <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;">
-                <button type="button" class="gx-btn gx-btn--tonal" :disabled="busy || tune.active" @click="applySavedTune(tune)">{{ tune.active ? 'Active' : 'Apply' }}</button>
-                <button type="button" class="gx-btn gx-btn--text" :disabled="busy" @click="renameSavedTune(tune)">Rename</button>
-                <button type="button" class="gx-btn gx-btn--text" :disabled="busy || tune.active" style="color:var(--error);" @click="deleteSavedTune(tune)">Delete</button>
-                <button type="button" class="gx-btn gx-btn--text" :disabled="busy" @click="submitTune(tune)">Firestar</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
     </div>
   `,
 }

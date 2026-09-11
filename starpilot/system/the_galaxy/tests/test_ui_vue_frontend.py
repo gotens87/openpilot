@@ -505,6 +505,8 @@ def test_ui_all_remaining_classic_tools_native_no_embed():
   assert "initialValue: tune.name" in lateral
   assert "export function GalaxyPrompt" in modal
   assert "inputRequired" in modal
+  assert lateral.index('>Workspace status</span>') < lateral.index('>Saved Tunes</span>')
+  assert lateral.index('>Saved Tunes</span>') < lateral.index('>Local Routes</span>')
 
 
 def test_ui_cameras_hub_vasm_and_pip_native_no_embed():
