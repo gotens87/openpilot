@@ -29,7 +29,7 @@ Ecu = structs.CarParams.Ecu
 
 
 def get_communication_control_request(car_fingerprint):
-  if car_fingerprint in CANFD_RADAR_ECU_KEEPALIVE_CAR and car_fingerprint != CAR.HYUNDAI_IONIQ_5:
+  if car_fingerprint in CANFD_RADAR_ECU_KEEPALIVE_CAR:
     return bytes([uds.SERVICE_TYPE.COMMUNICATION_CONTROL, uds.CONTROL_TYPE.ENABLE_RX_DISABLE_TX,
                   uds.MESSAGE_TYPE.NORMAL])
 

@@ -20,6 +20,7 @@ _ANGLE_OVERRIDE_CONFIRM_FRAMES = 2
 _ANGLE_REENGAGE_MAX_STEER_RATE = 2.0
 _ANGLE_MADS_MIN_SPEED = 0.44704
 _ANGLE_MADS_MAX_STEER_ANGLE = 120.0
+_ASCENT_AOL_ARM_FRAMES = 30
 _STOP_START_STARTUP_DELAY_FRAMES = 100
 # StarPilot's first populated toggle message can arrive several seconds after
 # the car controller starts while fingerprinting and settings settle.
@@ -44,6 +45,7 @@ class CarController(CarControllerBase):
     self.angle_override_confirm_frames = 0
     self.angle_lkas_active = False
     self.angle_handoff_active = False
+    self.ascent_aol_arm_frames = 0
 
     self.cruise_button_prev = 0
     self.steer_rate_counter = 0
@@ -170,6 +172,14 @@ class CarController(CarControllerBase):
 
     return self.driver_override
 
+  def _ascent_aol_ready(self, ready):
+    if not ready:
+      self.ascent_aol_arm_frames = 0
+      return False
+
+    self.ascent_aol_arm_frames = min(self.ascent_aol_arm_frames + 1, _ASCENT_AOL_ARM_FRAMES)
+    return self.ascent_aol_arm_frames >= _ASCENT_AOL_ARM_FRAMES
+
   def lateral_angle(self, CC, CS):
     if self.CP.carFingerprint == CAR.SUBARU_LEGACY_2025:
       mads_only = CC.latActive and not CC.enabled
@@ -199,6 +209,12 @@ class CarController(CarControllerBase):
         abs(CS.out.steeringAngleDeg) < _ANGLE_MADS_MAX_STEER_ANGLE
       lkas_available = CC.latActive and (not mads_only or mads_only_ok) and \
         CS.out.gearShifter == structs.CarState.GearShifter.drive and not CS.out.standstill
+      if self.CP.carFingerprint == CAR.SUBARU_ASCENT_2023:
+        if mads_only:
+          cruise_available = getattr(getattr(CS.out, "cruiseState", None), "available", True)
+          lkas_available = self._ascent_aol_ready(lkas_available and cruise_available)
+        else:
+          self.ascent_aol_arm_frames = _ASCENT_AOL_ARM_FRAMES if lkas_available else 0
 
       manual_handoff = self._angle_manual_handoff(
         CS, lkas_available, use_steering_pressed=self.CP.carFingerprint == CAR.SUBARU_OUTBACK_2023,
@@ -284,7 +300,7 @@ class CarController(CarControllerBase):
     return subarucan.create_steering_control(self.packer, apply_torque, apply_steer_req)
 
   def _lkas_status_active(self, CC):
-    if self.CP.carFingerprint == CAR.SUBARU_OUTBACK_2023:
+    if self.CP.carFingerprint in (CAR.SUBARU_ASCENT_2023, CAR.SUBARU_OUTBACK_2023):
       return self.angle_lkas_active
     return CC.latActive
 

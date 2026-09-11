@@ -144,12 +144,22 @@ def test_mach_e_preview_remains_available_on_curve_entry(controller):
 
 def test_mach_e_turn_in_preview_leads_when_path_lags(controller):
   controller.CP.carFingerprint = CAR.FORD_MUSTANG_MACH_E_MK1
-  controller.desired_curvature_last = 0.007
+  controller.desired_curvature_last = 0.004
 
   weight = controller._turn_in_preview_weight(
-    desired=0.009, predicted=0.007, current=0.006)
+    desired=0.005, preview=0.005, current=0.002)
 
-  assert weight == pytest.approx(0.5)
+  assert weight == pytest.approx(0.25)
+
+
+def test_mach_e_turn_in_preview_leads_opposite_measured_curvature(controller):
+  controller.CP.carFingerprint = CAR.FORD_MUSTANG_MACH_E_MK1
+  controller.desired_curvature_last = 0.001
+
+  weight = controller._turn_in_preview_weight(
+    desired=0.003, preview=0.009, current=-0.003)
+
+  assert weight == pytest.approx(1.0)
 
 
 def test_mach_e_turn_in_preview_is_not_carried_into_unwind(controller):
@@ -157,13 +167,27 @@ def test_mach_e_turn_in_preview_is_not_carried_into_unwind(controller):
   controller.desired_curvature_last = 0.010
 
   assert controller._turn_in_preview_weight(
-    desired=0.008, predicted=0.009, current=0.004) == 0.0
+    desired=0.008, preview=0.009, current=0.004) == 0.0
 
 
 def test_mach_e_turn_in_preview_uses_extra_model_horizon(controller, monkeypatch):
   controller.CP.carFingerprint = CAR.FORD_MUSTANG_MACH_E_MK1
   controller.sm["liveDelay"].lateralDelay = 0.4
   controller.desired_curvature_last = 0.007
+  lookaheads = []
+  monkeypatch.setattr(controller, "_predicted_curvature",
+                      lambda _v_ego, lookahead: lookaheads.append(lookahead) or 0.012)
+
+  controller.update(
+    SimpleNamespace(latActive=True), car_state(speed=8.0, curvature=0.002),
+    SimpleNamespace(curvature=0.010),
+  )
+
+  assert lookaheads == [pytest.approx(0.4), pytest.approx(1.2)]
+
+
+def test_non_mach_e_does_not_request_extra_model_horizon(controller, monkeypatch):
+  controller.sm["liveDelay"].lateralDelay = 0.4
   lookaheads = []
   monkeypatch.setattr(controller, "_predicted_curvature",
                       lambda _v_ego, lookahead: lookaheads.append(lookahead) or 0.007)
@@ -173,14 +197,14 @@ def test_mach_e_turn_in_preview_uses_extra_model_horizon(controller, monkeypatch
     SimpleNamespace(curvature=0.010),
   )
 
-  assert lookaheads == [pytest.approx(0.4), pytest.approx(0.8)]
+  assert lookaheads == [pytest.approx(0.4)]
 
 
 def test_non_mach_e_turn_in_preview_is_unchanged(controller):
   controller.desired_curvature_last = 0.007
 
   assert controller._turn_in_preview_weight(
-    desired=0.010, predicted=0.007, current=0.004) == 0.0
+    desired=0.010, preview=0.007, current=0.004) == 0.0
 
 
 def test_non_mach_e_preview_blend_is_unchanged(controller):

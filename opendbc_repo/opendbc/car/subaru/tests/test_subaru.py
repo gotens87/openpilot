@@ -8,7 +8,7 @@ from opendbc.can import CANPacker, CANParser
 from opendbc.car import Bus, fw_versions, gen_empty_fingerprint, structs
 from opendbc.car.fw_query_definitions import StdQueries
 from opendbc.car.subaru import subarucan
-from opendbc.car.subaru.carcontroller import CarController
+from opendbc.car.subaru.carcontroller import CarController, _ASCENT_AOL_ARM_FRAMES
 from opendbc.car.subaru.carstate import CarState
 from opendbc.car.subaru.fingerprints import FW_VERSIONS
 from opendbc.car.fw_versions import match_fw_to_car
@@ -692,6 +692,7 @@ def test_ascent_angle_controller_waits_for_parking_lot_safety_envelope():
     steeringRateDeg=96.0,
     steeringTorque=7.0,
     steeringPressed=False,
+    cruiseState=SimpleNamespace(available=True),
     gearShifter=structs.CarState.GearShifter.drive,
     standstill=False,
   ))
@@ -704,18 +705,74 @@ def test_ascent_angle_controller_waits_for_parking_lot_safety_envelope():
 
   CS.out.steeringAngleDeg = -100.0
   CS.out.steeringRateDeg = 0.0
+  for frame in range(2, _ASCENT_AOL_ARM_FRAMES + 1):
+    msg = controller.lateral_angle(CC, CS)
+    parser.update([(frame, [msg])])
+    assert parser.vl["ES_LKAS_ANGLE"]["LKAS_Request"] == 0
+
   msg = controller.lateral_angle(CC, CS)
-  parser.update([(2, [msg])])
+  parser.update([(_ASCENT_AOL_ARM_FRAMES + 1, [msg])])
   assert parser.vl["ES_LKAS_ANGLE"]["LKAS_Request"] == 1
 
   CS.out.gearShifter = structs.CarState.GearShifter.reverse
   msg = controller.lateral_angle(CC, CS)
-  parser.update([(12, [msg])])
+  parser.update([(_ASCENT_AOL_ARM_FRAMES + 2, [msg])])
   assert parser.vl["ES_LKAS_ANGLE"]["LKAS_Request"] == 0
   assert parser.vl["ES_LKAS_ANGLE"]["LKAS_Output"] == pytest.approx(CS.out.steeringAngleDeg)
 
 
-def test_lkas_hud_state_uses_outback_angle_request_state():
+def test_ascent_aol_does_not_arm_before_cruise_main_is_available():
+  CP = CarInterface.get_non_essential_params(CAR.SUBARU_ASCENT_2023)
+  controller = CarController({}, CP)
+  CC = SimpleNamespace(enabled=False, latActive=True, actuators=SimpleNamespace(steeringAngleDeg=5.0))
+  CS = SimpleNamespace(out=SimpleNamespace(
+    vEgoRaw=10.0,
+    steeringAngleDeg=0.0,
+    steeringRateDeg=0.0,
+    steeringTorque=0.0,
+    steeringPressed=False,
+    cruiseState=SimpleNamespace(available=False),
+    gearShifter=structs.CarState.GearShifter.drive,
+    standstill=False,
+  ))
+  parser = CANParser(DBC[CP.carFingerprint][Bus.pt], [("ES_LKAS_ANGLE", 0)], CanBus.main)
+
+  for frame in range(_ASCENT_AOL_ARM_FRAMES):
+    msg = controller.lateral_angle(CC, CS)
+    parser.update([(frame + 1, [msg])])
+
+  assert parser.vl["ES_LKAS_ANGLE"]["LKAS_Request"] == 0
+  assert controller.ascent_aol_arm_frames == 0
+
+  CS.out.cruiseState.available = True
+  msg = controller.lateral_angle(CC, CS)
+  parser.update([(_ASCENT_AOL_ARM_FRAMES + 1, [msg])])
+  assert parser.vl["ES_LKAS_ANGLE"]["LKAS_Request"] == 0
+  assert controller.ascent_aol_arm_frames == 1
+
+
+def test_ascent_angle_controller_does_not_delay_normal_engagement():
+  CP = CarInterface.get_non_essential_params(CAR.SUBARU_ASCENT_2023)
+  controller = CarController({}, CP)
+  CC = SimpleNamespace(enabled=True, latActive=True, actuators=SimpleNamespace(steeringAngleDeg=5.0))
+  CS = SimpleNamespace(out=SimpleNamespace(
+    vEgoRaw=10.0,
+    steeringAngleDeg=0.0,
+    steeringRateDeg=0.0,
+    steeringTorque=0.0,
+    steeringPressed=False,
+    gearShifter=structs.CarState.GearShifter.drive,
+    standstill=False,
+  ))
+  parser = CANParser(DBC[CP.carFingerprint][Bus.pt], [("ES_LKAS_ANGLE", 0)], CanBus.main)
+
+  msg = controller.lateral_angle(CC, CS)
+  parser.update([(1, [msg])])
+
+  assert parser.vl["ES_LKAS_ANGLE"]["LKAS_Request"] == 1
+
+
+def test_lkas_hud_state_uses_angle_request_state():
   update_source = inspect.getsource(CarController.update)
 
   assert "create_es_lkas_state(self.packer, self.frame // 10, CS.es_lkas_state_msg, self._lkas_status_active(CC)" in update_source
@@ -763,6 +820,16 @@ def test_outback_manual_steering_releases_angle_request_before_lkas_fault():
   assert parser.vl["ES_LKAS_ANGLE"]["LKAS_Request"] == 0
   assert parser.vl["ES_LKAS_ANGLE"]["LKAS_Output"] == pytest.approx(CS.out.steeringAngleDeg)
   assert not controller._lkas_status_active(CC)
+
+
+def test_ascent_hud_waits_for_angle_request():
+  CP = CarInterface.get_non_essential_params(CAR.SUBARU_ASCENT_2023)
+  controller = CarController({}, CP)
+  CC = SimpleNamespace(latActive=True)
+
+  assert not controller._lkas_status_active(CC)
+  controller.angle_lkas_active = True
+  assert controller._lkas_status_active(CC)
 
 
 def test_other_angle_cars_keep_lateral_status_behavior():

@@ -667,6 +667,10 @@ class LatControlTorque(LatControl):
         output_torque *= get_genesis_gv70_reversal_output_scale(
           setpoint, measurement, desired_lateral_jerk, CS.vEgo,
         )
+        if not CS.steeringPressed:
+          output_torque = get_genesis_gv70_stabilized_output(
+            output_torque, self.prev_output_torque, setpoint, desired_lateral_jerk, CS.vEgo, self.dt,
+          )
       elif sonata_hybrid_active:
         output_torque *= sonata_hybrid_center_taper
         output_torque *= sonata_hybrid_center_output_taper

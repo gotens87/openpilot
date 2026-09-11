@@ -20,6 +20,7 @@ from openpilot.common.realtime import DT_CTRL
 from openpilot.selfdrive.controls.lib.latcontrol_angle import (
   LatControlAngle,
   _ascent_angle_tracking_target,
+  _ascent_low_speed_angle_target,
 )
 from openpilot.selfdrive.controls.lib.latcontrol_pid import (
   LatControlPID,
@@ -54,6 +55,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
   get_rav4_tss2_pid_output,
   get_subaru_impreza_pid_output_scale,
   get_genesis_gv70_low_speed_center_overshoot_scale,
+  get_genesis_gv70_stabilized_output,
   get_genesis_g70_high_speed_transition_scale,
   get_genesis_g70_stabilized_output,
   normalize_flm_overrides,
@@ -203,8 +205,18 @@ class TestLatControl:
   def test_ascent_angle_tracking_correction_is_bounded_and_handoff_safe(self):
     assert _ascent_angle_tracking_target(10.0, 0.0, 20.0, False) == pytest.approx(12.5)
     assert _ascent_angle_tracking_target(40.0, 0.0, 20.0, False) == pytest.approx(48.0)
-    assert _ascent_angle_tracking_target(10.0, 0.0, 4.0, False) == pytest.approx(10.0)
+    assert _ascent_angle_tracking_target(10.0, 0.0, 9.0, False) == pytest.approx(10.0)
+    assert 10.0 < _ascent_angle_tracking_target(10.0, 0.0, 12.0, False) < 12.5
+    assert _ascent_angle_tracking_target(40.0, 0.0, 4.0, False) == pytest.approx(48.0)
     assert _ascent_angle_tracking_target(10.0, 0.0, 20.0, True) == pytest.approx(10.0)
+
+  def test_ascent_low_speed_filter_is_center_gated_and_handoff_safe(self):
+    filtered = _ascent_low_speed_angle_target(10.0, 0.0, 4.0, False, DT_CTRL)
+
+    assert 0.0 < filtered < 10.0
+    assert _ascent_low_speed_angle_target(10.0, 0.0, 10.0, False, DT_CTRL) == pytest.approx(10.0)
+    assert _ascent_low_speed_angle_target(40.0, 0.0, 4.0, False, DT_CTRL) == pytest.approx(40.0)
+    assert _ascent_low_speed_angle_target(10.0, 0.0, 4.0, True, DT_CTRL) == pytest.approx(10.0)
 
   def test_torque_log_exposes_friction_controller_state(self):
     controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(GM.CHEVROLET_BOLT_ACC_2022_2023)
@@ -1723,6 +1735,45 @@ class TestLatControl:
     assert controller.starpilot_lateral_state.frictionThreshold > get_standard_friction_threshold(25.0)
     assert base_output != 0.0
     assert tapered_output == pytest.approx(base_output * 0.5)
+
+  def test_genesis_gv70_output_stabilizer_is_speed_and_phase_aware(self):
+    low_speed = get_genesis_gv70_stabilized_output(-0.2, 0.2, 0.1, -0.4, 5.0, DT_CTRL)
+    high_speed_center = get_genesis_gv70_stabilized_output(-0.2, 0.2, 0.1, -0.4, 30.0, DT_CTRL)
+    high_speed_wind = get_genesis_gv70_stabilized_output(0.1, 0.3, 0.8, 0.5, 30.0, DT_CTRL)
+    high_speed_unwind = get_genesis_gv70_stabilized_output(0.1, 0.3, 0.8, -0.5, 30.0, DT_CTRL)
+    high_speed_direction_change = get_genesis_gv70_stabilized_output(-0.3, 0.3, -0.8, -0.5, 30.0, DT_CTRL)
+
+    assert low_speed == pytest.approx(-0.2, abs=0.005)
+    assert abs(high_speed_center - 0.2) < abs(low_speed - 0.2)
+    assert high_speed_unwind > high_speed_wind > 0.1
+    assert abs(high_speed_direction_change - 0.3) > abs(high_speed_center - 0.2)
+
+  def test_genesis_gv70_output_stabilizer_update_path(self, monkeypatch):
+    calls = []
+
+    def stabilized_output(output_torque, prev_output_torque, desired_lateral_accel,
+                          desired_lateral_jerk, v_ego, dt):
+      calls.append((output_torque, prev_output_torque, desired_lateral_accel,
+                    desired_lateral_jerk, v_ego, dt))
+      return 0.123
+
+    monkeypatch.setattr(latcontrol_torque, "get_genesis_gv70_stabilized_output", stabilized_output)
+    controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.GENESIS_GV70_ELECTRIFIED_1ST_GEN)
+    CS.vEgo = 25.0
+    output, _, lac_log = controller.update(
+      True, CS, VM, params, False, 0.0002, False, 0.2, None, None, starpilot_toggles,
+    )
+
+    assert calls
+    assert lac_log.active
+    assert output == pytest.approx(-0.123)
+
+    call_count = len(calls)
+    CS.steeringPressed = True
+    controller.update(
+      True, CS, VM, params, False, 0.0002, False, 0.2, None, None, starpilot_toggles,
+    )
+    assert len(calls) == call_count
 
   def test_genesis_g70_low_speed_output_guard_update_path(self):
     controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.GENESIS_G70_2020)

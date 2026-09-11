@@ -1,6 +1,6 @@
 import { api, showSnackbar } from "../api.js"
 import { usePolling } from "../composables.js"
-import { GalaxyConfirm } from "./GalaxyModal.js"
+import { GalaxyConfirm, GalaxyPrompt } from "./GalaxyModal.js"
 import { GxNotice } from "./GxNotice.js"
 
 const MAX_ROUTES = 250
@@ -479,6 +479,11 @@ export const LateralTuningPanel = {
     startPending(kind, opts = {}) {
       this.pending = { kind, tuneId: opts.tuneId || "" }
       this.pendingName = opts.name || ""
+      this.$nextTick(() => {
+        const editor = this.$refs.pendingEditor
+        editor?.scrollIntoView({ behavior: "smooth", block: "center" })
+        editor?.querySelector("input")?.focus()
+      })
     },
     cancelPending() { this.pending = null; this.pendingName = "" },
     async confirmPending() {
@@ -519,6 +524,18 @@ export const LateralTuningPanel = {
     },
     async applySavedTune(tune) {
       await this.runWith(() => api.flmApplySavedTune(tune.tuneId), "Saved tune applied.")
+    },
+    async renameSavedTune(tune) {
+      if (!tune?.tuneId || this.busy) return
+      const name = await GalaxyPrompt({
+        title: "Rename Saved Tune",
+        message: `Choose a new name for “${tune.name || "Saved Tune"}”.`,
+        initialValue: tune.name || "",
+        placeholder: "Name this tune...",
+        confirmLabel: "Rename",
+      })
+      if (name === null) return
+      await this.runWith(() => api.flmRenameSavedTune(tune.tuneId, name), "Tune renamed.")
     },
     async submitTune(tune) {
       const ok = await GalaxyConfirm({
@@ -582,7 +599,7 @@ export const LateralTuningPanel = {
         </div>
       </section>
 
-      <div v-if="pending" class="gx-card" style="margin-top: var(--sp-3);">
+      <div v-if="pending" ref="pendingEditor" class="gx-card" style="margin-top: var(--sp-3);">
         <div style="padding: var(--sp-4); display:grid; gap:10px;">
           <div class="gx-section__header" style="padding:0 0 6px;">
             <i class="bi bi-pencil-square"></i>
@@ -786,7 +803,7 @@ export const LateralTuningPanel = {
               </div>
               <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;">
                 <button type="button" class="gx-btn gx-btn--tonal" :disabled="busy || tune.active" @click="applySavedTune(tune)">{{ tune.active ? 'Active' : 'Apply' }}</button>
-                <button type="button" class="gx-btn gx-btn--text" :disabled="busy" @click="startPending('rename', { tuneId: tune.tuneId, name: tune.name })">Rename</button>
+                <button type="button" class="gx-btn gx-btn--text" :disabled="busy" @click="renameSavedTune(tune)">Rename</button>
                 <button type="button" class="gx-btn gx-btn--text" :disabled="busy || tune.active" style="color:var(--error);" @click="deleteSavedTune(tune)">Delete</button>
                 <button type="button" class="gx-btn gx-btn--text" :disabled="busy" @click="submitTune(tune)">Firestar</button>
               </div>
