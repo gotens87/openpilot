@@ -880,7 +880,7 @@ def test_mach_e_signaled_manual_turn_yields_until_inputs_settle(controller):
     result = controller.update(CC, car_state(), actuators)
     assert not result.active
 
-  result = controller.update(CC, car_state(), actuators)
+  result = controller.update(CC, car_state(curvature=0.006), actuators)
   assert result.active
   assert result.curvature > 0.0
 
@@ -901,7 +901,7 @@ def test_mach_e_manual_turn_waits_for_wheel_to_unwind(controller):
   for _ in range(4):
     result = controller.update(CC, car_state(steering_angle=-10.0), actuators)
     assert not result.active
-  result = controller.update(CC, car_state(steering_angle=-10.0), actuators)
+  result = controller.update(CC, car_state(curvature=0.006, steering_angle=-10.0), actuators)
   assert result.active
 
 
@@ -921,8 +921,40 @@ def test_mach_e_left_manual_turn_waits_for_wheel_to_unwind(controller):
   for _ in range(4):
     result = controller.update(CC, car_state(steering_angle=10.0), actuators)
     assert not result.active
-  result = controller.update(CC, car_state(steering_angle=10.0), actuators)
+  result = controller.update(CC, car_state(curvature=-0.006, steering_angle=10.0), actuators)
   assert result.active
+
+
+@pytest.mark.parametrize("sign", (-1.0, 1.0))
+def test_mach_e_manual_turn_waits_for_path_agreement_after_driver_release(controller, sign):
+  controller.CP.carFingerprint = CAR.FORD_MUSTANG_MACH_E_MK1
+  CC = SimpleNamespace(latActive=True, actuators=SimpleNamespace(curvature=sign * 0.009))
+  turning = car_state(steering_pressed=True, steering_angle=-sign * 30.0,
+                      steering_torque=-sign * 2.0, left_blinker=sign < 0.0,
+                      right_blinker=sign > 0.0)
+  assert not controller.update(CC, turning, CC.actuators).active
+  for _ in range(40):
+    result = controller.update(CC, car_state(curvature=sign * 0.001,
+                                              steering_angle=-sign * 5.0), CC.actuators)
+    assert not result.active
+    assert result.curvature == 0.0
+  assert controller.manual_turn_direction == sign
+
+  result = controller.update(CC, car_state(curvature=sign * 0.008,
+                                            steering_angle=-sign * 5.0), CC.actuators)
+  assert result.active
+  assert controller.manual_turn_direction == 0.0
+
+
+def test_mach_e_manual_turn_releases_for_opposite_path_request(controller):
+  controller.CP.carFingerprint = CAR.FORD_MUSTANG_MACH_E_MK1
+  CC = SimpleNamespace(latActive=True, actuators=SimpleNamespace(curvature=-0.009))
+  assert not controller.update(CC, car_state(steering_pressed=True, steering_angle=30.0,
+                                              steering_torque=2.0, left_blinker=True), CC.actuators).active
+  CC.actuators.curvature = 0.009
+  for _ in range(4):
+    assert not controller.update(CC, car_state(curvature=-0.001), CC.actuators).active
+  assert controller.update(CC, car_state(curvature=-0.001), CC.actuators).active
 
 
 def test_non_mach_e_signaled_turn_does_not_latch(controller):
@@ -988,5 +1020,7 @@ def test_mach_e_manual_turn_latch_resets_with_lateral_control(controller):
     right_blinker=True)
 
   assert not controller.update(SimpleNamespace(latActive=True), turning, actuators).active
+  assert controller.manual_turn_direction == 1.0
   assert not controller.update(SimpleNamespace(latActive=False), turning, actuators).active
+  assert controller.manual_turn_direction == 0.0
   assert controller.update(SimpleNamespace(latActive=True), car_state(), actuators).active

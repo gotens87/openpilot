@@ -1630,8 +1630,8 @@ class TestHyundaiFingerprint:
     CP = CarInterface.get_params(CAR.HYUNDAI_ELANTRA_2021, gen_empty_fingerprint(), [], True, False, False, toggles)
 
     assert CP.longitudinalActuatorDelay == pytest.approx(0.22)
-    assert CP.stopAccel == pytest.approx(-0.85)
-    assert CP.stoppingDecelRate == pytest.approx(0.35)
+    assert CP.stopAccel == pytest.approx(-1.1)
+    assert CP.stoppingDecelRate == pytest.approx(0.55)
 
   def test_elantra_hev_2024_longitudinal_delay_matches_observed_response(self):
     toggles = get_test_toggles()

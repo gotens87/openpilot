@@ -42,8 +42,8 @@ IONIQ_6_RESPONSE_MULTIPLIER = 1.2
 IONIQ_6_CANFD_SCC_ACCEL_STEP = (6.0 / 50.0) * IONIQ_6_RESPONSE_MULTIPLIER
 IONIQ_6_CANFD_SCC_DECEL_STEP = (15.0 / 50.0) * IONIQ_6_RESPONSE_MULTIPLIER
 EV9_CANFD_SCC_DECEL_STEP = 10.0 / 50.0
-RAY_PEDAL_COMMAND_CAP = 0.35  # Ray firmware voltage scaling is route-derived; validate before raising.
-RAY_PEDAL_RATE_UP = 0.012     # per 25 Hz command (0.30 normalized pedal per second)
+RAY_PEDAL_COMMAND_CAP = 0.45
+RAY_PEDAL_RATE_UP = 0.02
 RAY_PEDAL_RATE_DOWN = 0.06
 GENESIS_G90_STOP_HOLD_SPEED_BP = [0.0, 0.03, 0.08, 0.16, 0.3, 0.5, 0.8, 1.2, 2.0, 3.0]
 GENESIS_G90_STOP_HOLD_ACCEL_V = [-0.10, -0.10, -0.12, -0.18, -0.30, -0.50, -0.75, -1.00, -1.40, -1.80]
@@ -809,12 +809,12 @@ class CarController(CarControllerBase):
 
     # Button messages
     if not self.long_active_ecu:
-      if self.cancel_counter > CANCEL_BUTTON_DELAY_FRAMES:
-        can_sends.append(hyundaican.create_clu11(self.packer, self.frame, CS.clu11, Buttons.CANCEL, self.CP))
-      elif self._ray_pedal and CC.enabled and CS.out.cruiseState.enabled:
-        if (self.frame - self.last_button_frame) * DT_CTRL > 0.1:
+      if self._ray_pedal and CC.enabled and CS.out.cruiseState.enabled:
+        if (self.frame - self.last_button_frame) * DT_CTRL > 0.04:
           can_sends.append(hyundaican.create_clu11(self.packer, self.frame, CS.clu11, Buttons.CANCEL, self.CP))
           self.last_button_frame = self.frame
+      elif self.cancel_counter > CANCEL_BUTTON_DELAY_FRAMES:
+        can_sends.append(hyundaican.create_clu11(self.packer, self.frame, CS.clu11, Buttons.CANCEL, self.CP))
       elif CC.cruiseControl.resume and not self._ray_pedal:
         # send resume at a max freq of 10Hz
         if (self.frame - self.last_button_frame) * DT_CTRL > 0.1:
@@ -829,11 +829,11 @@ class CarController(CarControllerBase):
     if self._ray_pedal and self.frame % 4 == 0:
       pedal_ready = CS.ray_pedal_valid and CS.ray_pedal_state == 0
       pedal_active = (CC.longActive and pedal_ready and not CC.cruiseControl.override and
-                      not CS.out.gasPressed and not CS.out.brakePressed and
-                      not CS.out.cruiseState.enabled)
+                      not CS.out.gasPressed and not CS.out.brakePressed)
       if pedal_active:
-        target = float(np.clip(accel / CarControllerParams.ACCEL_MAX * RAY_PEDAL_COMMAND_CAP,
-                               0.0, RAY_PEDAL_COMMAND_CAP))
+        pedal_offset = float(np.interp(CS.out.vEgo, [0., 2., 4., 8., 12., 20.],
+                                       [0.08, 0.13, 0.18, 0.25, 0.30, 0.32]))
+        target = float(np.clip(pedal_offset + accel * 0.32, 0.0, RAY_PEDAL_COMMAND_CAP))
         self._ray_pedal_gas_last = rate_limit(
           target, self._ray_pedal_gas_last, -RAY_PEDAL_RATE_DOWN, RAY_PEDAL_RATE_UP,
         )

@@ -167,23 +167,23 @@ def test_ray_controller_heartbeats_and_only_actuates_when_ready(speed):
   controller.frame = 16
   messages = controller.create_can_msgs(True, 0, False, 0.0, 2.0, False,
                                         hud, actuators, CS, CC, 2, 0)
-  assert next(dat for addr, dat, bus in messages if addr == 0x200 and bus == 0)[:4] == bytes(4)
-  assert any(addr == 0x4F1 and bus == 0 for addr, _, bus in messages)  # cancel stock CC
+  assert next(dat for addr, dat, bus in messages if addr == 0x200 and bus == 0)[4] & 0x80
+  assert any(addr == 0x4F1 and bus == 0 and dat[0] & 7 == 4 for addr, dat, bus in messages)
 
   CS.out.cruiseState.enabled = False
   CS.out.brakePressed = True
   assert pedal_msg(2.0, 20)[:4] == bytes(4)
   CS.out.brakePressed = False
   assert pedal_msg(2.0, 24)[4] & 0x80
-  assert controller._ray_pedal_gas_last == pytest.approx(0.012)
+  assert controller._ray_pedal_gas_last == pytest.approx(0.02)
   assert pedal_msg(2.0, 28)[4] & 0x80
-  assert controller._ray_pedal_gas_last == pytest.approx(0.024)
+  assert controller._ray_pedal_gas_last == pytest.approx(0.04)
   CS.out.brakePressed = True
   assert pedal_msg(2.0, 32)[:4] == bytes(4)
   assert controller._ray_pedal_gas_last == 0.0
   CS.out.brakePressed = False
   assert pedal_msg(2.0, 36)[4] & 0x80
-  assert controller._ray_pedal_gas_last == pytest.approx(0.012)
+  assert controller._ray_pedal_gas_last == pytest.approx(0.02)
 
   CC.longActive = False
   assert pedal_msg(2.0, 40)[:4] == bytes(4)
@@ -197,6 +197,11 @@ def test_ray_controller_heartbeats_and_only_actuates_when_ready(speed):
   for fault in range(1, 6):
     CS.ray_pedal_state = fault
     assert pedal_msg(2.0, 48 + 4 * fault)[:4] == bytes(4)
+
+  CS.ray_pedal_state = 0
+  CS.out.vEgo = 10.0
+  assert pedal_msg(0.0, 72)[4] & 0x80
+  assert pedal_msg(-1.0, 76)[:4] == bytes(4)
 
 
 @pytest.mark.parametrize("candidate", [CAR.KIA_RAY_EV, CAR.HYUNDAI_KONA_EV_NON_SCC])
@@ -236,6 +241,7 @@ def test_ray_stock_cruise_cancellation_survives_accelerator_override(candidate):
     assert pedal[:4] == bytes(4)
     assert not (pedal[4] & 0x80)
     assert not cancel_frames(messages(24))  # retain the existing cancellation rate limit
+    assert cancel_frames(messages(25))
     assert cancel_frames(messages(32))
 
   CS.out.cruiseState.enabled = False

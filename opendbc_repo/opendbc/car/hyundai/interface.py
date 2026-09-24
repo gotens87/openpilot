@@ -333,8 +333,8 @@ class CarInterface(CarInterfaceBase):
 
     if candidate == CAR.HYUNDAI_ELANTRA_2021:
       ret.longitudinalActuatorDelay = 0.22
-      ret.stopAccel = -0.85
-      ret.stoppingDecelRate = 0.35
+      ret.stopAccel = -1.1
+      ret.stoppingDecelRate = 0.55
 
     if candidate == CAR.HYUNDAI_ELANTRA_HEV_2024:
       ret.longitudinalActuatorDelay = 0.22

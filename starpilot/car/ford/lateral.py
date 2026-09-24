@@ -159,6 +159,7 @@ class FordLateralController:
     self.human_turn = HumanTurnDetector()
     self.manual_turn_latched = False
     self.manual_turn_recovery_timer = 0.0
+    self.manual_turn_direction = 0.0
     self.curvature_samples = deque(maxlen=max(2, round(0.3 / STEER_DT)))
     self.curvature_last = 0.0
     self.desired_curvature_last = 0.0
@@ -373,11 +374,12 @@ class FordLateralController:
     ))
     return speed_weight * curvature_weight * preview_weight * acceleration_weight
 
-  def _manual_turn(self, CC, CS) -> bool:
+  def _manual_turn(self, CC, CS, desired: float) -> bool:
     if not CC.latActive:
       self.human_turn.reset()
       self.manual_turn_latched = False
       self.manual_turn_recovery_timer = 0.0
+      self.manual_turn_direction = 0.0
       return False
     detected = self.human_turn.update(
       self.human_turn_enabled, CS.out.steeringPressed, CS.out.steeringAngleDeg)
@@ -387,6 +389,7 @@ class FordLateralController:
     if not self.human_turn_enabled:
       self.manual_turn_latched = False
       self.manual_turn_recovery_timer = 0.0
+      self.manual_turn_direction = 0.0
       return False
 
     blinker_direction = float(CS.out.rightBlinker) - float(CS.out.leftBlinker)
@@ -397,9 +400,14 @@ class FordLateralController:
     )
     if detected or driver_turning_with_signal:
       self.manual_turn_latched = True
+      if blinker_direction != 0.0:
+        self.manual_turn_direction = blinker_direction
+      elif self.manual_turn_direction == 0.0:
+        self.manual_turn_direction = -float(np.sign(CS.out.steeringAngleDeg))
 
     if not self.manual_turn_latched:
       self.manual_turn_recovery_timer = 0.0
+      self.manual_turn_direction = 0.0
       return False
 
     if (CS.out.steeringPressed or blinker_direction != 0.0 or
@@ -408,8 +416,14 @@ class FordLateralController:
     else:
       self.manual_turn_recovery_timer += STEER_DT
       if self.manual_turn_recovery_timer + 1e-9 >= MANUAL_TURN_RECOVERY_SECONDS:
-        self.manual_turn_latched = False
-        self.manual_turn_recovery_timer = 0.0
+        current = self._current_curvature(CS)
+        if (self.manual_turn_direction * desired > 0.0 and
+            self.manual_turn_direction * (desired - current) > CarControllerParams.CURVATURE_ERROR):
+          self.manual_turn_recovery_timer = MANUAL_TURN_RECOVERY_SECONDS
+        else:
+          self.manual_turn_latched = False
+          self.manual_turn_recovery_timer = 0.0
+          self.manual_turn_direction = 0.0
 
     return self.manual_turn_latched
 
@@ -419,12 +433,13 @@ class FordLateralController:
       self.human_turn.reset()
       self.manual_turn_latched = False
       self.manual_turn_recovery_timer = 0.0
+      self.manual_turn_direction = 0.0
       self.curvature_samples.clear()
       self.curvature_last = 0.0
       self.desired_curvature_last = 0.0
       return FordLateralResult()
 
-    manual_turn = self._manual_turn(CC, CS)
+    manual_turn = self._manual_turn(CC, CS, float(actuators.curvature))
     if manual_turn or CS.out.vEgoRaw < 0.1:
       self.curvature_samples.clear()
       self.curvature_last = 0.0
