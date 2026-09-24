@@ -60,8 +60,8 @@ def test_mach_e_unwind_preview_speed_and_direction(controller, monkeypatch, sign
 @pytest.mark.parametrize("desired,last,current,preview", (
   (0.010, 0.009, 0.011, 0.004),
   (0.010, 0.010, 0.011, 0.004),
-  (0.010, 0.011, 0.009, 0.004),
-  (0.010, 0.011, 0.010, 0.004),
+  (0.010, 0.011, 0.003, 0.004),
+  (0.010, 0.011, 0.004, 0.004),
   (0.010, -0.011, 0.011, 0.004),
   (0.010, 0.011, -0.011, 0.004),
   (0.010, 0.011, 0.011, -0.004),
@@ -87,8 +87,26 @@ def test_mach_e_unwind_lag_ramps_continuously(controller, monkeypatch):
   controller.CP.carFingerprint = CAR.FORD_MUSTANG_MACH_E_MK1
   controller.desired_curvature_last = 0.011
   monkeypatch.setattr(controller, "_predicted_curvature", lambda *_: 0.004)
-  assert controller._unwind_preview(0.010, 0.009, 0.01025, 10.0) == pytest.approx(0.0065)
+  assert controller._unwind_preview(0.010, 0.009, 0.005, 10.0) == pytest.approx(0.0065)
+  assert controller._unwind_preview(0.010, 0.009, 0.01025, 10.0) == pytest.approx(0.004)
   assert controller._unwind_preview(0.010, -0.009, 0.011, 10.0) == -0.009
+
+
+@pytest.mark.parametrize("sign", (-1, 1))
+def test_mach_e_unwind_anticipates_opening_curve_before_current_request_is_met(controller, monkeypatch, sign):
+  controller.CP.carFingerprint = CAR.FORD_MUSTANG_MACH_E_MK1
+  controller.desired_curvature_last = sign * 0.012
+  monkeypatch.setattr(controller, "_predicted_curvature", lambda *_: sign * 0.006)
+  assert controller._unwind_preview(sign * 0.011, sign * 0.009, sign * 0.008, 11.0) == pytest.approx(sign * 0.006)
+  controller.desired_curvature_last = sign * 0.010
+  assert controller._unwind_preview(sign * 0.011, sign * 0.009, sign * 0.008, 11.0) == sign * 0.009
+
+
+def test_mach_e_unwind_preserves_existing_release_when_current_exceeds_desired(controller, monkeypatch):
+  controller.CP.carFingerprint = CAR.FORD_MUSTANG_MACH_E_MK1
+  controller.desired_curvature_last = 0.009
+  monkeypatch.setattr(controller, "_predicted_curvature", lambda *_: 0.0079)
+  assert controller._unwind_preview(0.008, 0.008, 0.0085, 10.0) == pytest.approx(0.0079)
 
 
 @pytest.mark.parametrize("driver,lane_change,active", ((False, False, True), (True, False, True),

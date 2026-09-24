@@ -201,6 +201,8 @@ class CarInterface(CarInterfaceBase):
       if ret.flags & HyundaiFlags.CANFD_ANGLE_STEERING:
         ret.steerControlType = structs.CarParams.SteerControlType.angle
         ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CANFD_ANGLE_STEERING.value
+        if candidate == CAR.KIA_SPORTAGE_HEV_2026:
+          ret.safetyConfigs[-1].safetyParam |= HyundaiStarPilotSafetyFlags.CANFD_NO_STOCK_LKA.value
       if candidate == CAR.HYUNDAI_IONIQ_6:
         # Keep lateral active through stops: zeroing torque at standstill dropped the
         # stop-turn hold and forced a rate-limit re-ramp from zero on every pull-away

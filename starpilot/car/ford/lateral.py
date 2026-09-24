@@ -45,6 +45,7 @@ MACH_E_TURN_IN_FULL_CURVATURE = 0.008
 MACH_E_TURN_IN_LAG_CURVATURE = 0.006
 MACH_E_UNWIND_LOOKAHEAD_EXTRA = 0.80
 MACH_E_UNWIND_FULL_LAG_CURVATURE = 0.0005
+MACH_E_UNWIND_PREVIEW_LAG_CURVATURE = 0.002
 MACH_E_DIRECTION_CHANGE_MIN_SPEED = 9.0
 MACH_E_DIRECTION_CHANGE_LOOKAHEAD_RAMP_SPEED = 10.0
 MACH_E_DIRECTION_CHANGE_LOOKAHEAD_FULL_SPEED = 12.0
@@ -232,14 +233,17 @@ class FordLateralController:
       return predicted
     if desired * current <= 0.0 or desired * predicted <= 0.0 or desired * self.desired_curvature_last <= 0.0:
       return predicted
-    if abs(desired) >= abs(self.desired_curvature_last) or abs(current) <= abs(desired):
+    if abs(desired) >= abs(self.desired_curvature_last):
       return predicted
     preview = self._predicted_curvature(v_ego, self._curvature_lookahead() + MACH_E_UNWIND_LOOKAHEAD_EXTRA)
-    if desired * preview <= 0.0 or abs(preview) >= min(abs(desired), abs(predicted)):
+    if desired * preview <= 0.0 or abs(preview) >= min(abs(desired), abs(predicted), abs(current)):
       return predicted
     speed_weight = float(np.interp(v_ego, [5.0, 7.0, 12.0, 15.0], [0.0, 1.0, 1.0, 0.0]))
     curvature_weight = float(np.interp(abs(desired), [0.002, 0.008], [0.0, 1.0]))
     lag_weight = float(np.interp(abs(current) - abs(desired), [0.0, MACH_E_UNWIND_FULL_LAG_CURVATURE], [0.0, 1.0]))
+    preview_lag_weight = float(np.interp(
+      abs(current) - abs(preview), [0.0, MACH_E_UNWIND_PREVIEW_LAG_CURVATURE], [0.0, 1.0]))
+    lag_weight = max(lag_weight, preview_lag_weight)
     return predicted + speed_weight * curvature_weight * lag_weight * (preview - predicted)
 
   def _turn_in_preview_weight(self, desired: float, preview: float, current: float) -> float:

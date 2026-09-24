@@ -552,6 +552,13 @@ class TestHyundaiFingerprint:
     CP = CarInterface.get_params(CAR.KIA_SPORTAGE_HEV_2026, fingerprint, [], False, False, False, None)
     assert CP.flags & HyundaiFlags.SEND_LFA
 
+  @pytest.mark.parametrize("candidate", list(CAR))
+  def test_no_stock_lka_safety_flag_is_sportage_only(self, candidate):
+    CP = CarInterface.get_params(candidate, gen_empty_fingerprint(), [], False, False, False, None)
+    if CP.flags & HyundaiFlags.CANFD:
+      assert bool(CP.safetyConfigs[-1].safetyParam & HyundaiStarPilotSafetyFlags.CANFD_NO_STOCK_LKA) == \
+        (candidate == CAR.KIA_SPORTAGE_HEV_2026)
+
   def test_smart_mdps_allows_low_speed_steering(self):
     candidate = CAR.HYUNDAI_IONIQ_EV_LTD
 
