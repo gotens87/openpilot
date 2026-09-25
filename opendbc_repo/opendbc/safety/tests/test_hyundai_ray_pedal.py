@@ -21,8 +21,8 @@ def test_ray_pedal_tx_isolation_and_limits(param):
 
   has_ray_signature = param in (0x9405, 0x9C05)
   assert tx(0) is has_ray_signature
-  assert tx(0.45) is has_ray_signature
-  assert not tx(0.46)
+  assert tx(0.70) is has_ray_signature
+  assert not tx(0.71)
   assert not tx(1.0)
 
   if has_ray_signature:

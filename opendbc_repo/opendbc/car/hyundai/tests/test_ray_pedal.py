@@ -203,6 +203,14 @@ def test_ray_controller_heartbeats_and_only_actuates_when_ready(speed):
   assert pedal_msg(0.0, 72)[4] & 0x80
   assert pedal_msg(-1.0, 76)[:4] == bytes(4)
 
+  CS.out.vEgo = 12.0
+  for frame in range(80, 80 + 4 * 40, 4):
+    pedal_msg(1.5, frame)
+  assert 0.69 <= controller._ray_pedal_gas_last <= 0.70
+  for frame in range(240, 240 + 4 * 12, 4):
+    dat = pedal_msg(-1.5, frame)
+  assert dat[:4] == bytes(4)
+
 
 @pytest.mark.parametrize("candidate", [CAR.KIA_RAY_EV, CAR.HYUNDAI_KONA_EV_NON_SCC])
 def test_ray_stock_cruise_cancellation_survives_accelerator_override(candidate):

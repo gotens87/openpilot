@@ -42,7 +42,7 @@ IONIQ_6_RESPONSE_MULTIPLIER = 1.2
 IONIQ_6_CANFD_SCC_ACCEL_STEP = (6.0 / 50.0) * IONIQ_6_RESPONSE_MULTIPLIER
 IONIQ_6_CANFD_SCC_DECEL_STEP = (15.0 / 50.0) * IONIQ_6_RESPONSE_MULTIPLIER
 EV9_CANFD_SCC_DECEL_STEP = 10.0 / 50.0
-RAY_PEDAL_COMMAND_CAP = 0.45
+RAY_PEDAL_COMMAND_CAP = 0.70
 RAY_PEDAL_RATE_UP = 0.02
 RAY_PEDAL_RATE_DOWN = 0.06
 GENESIS_G90_STOP_HOLD_SPEED_BP = [0.0, 0.03, 0.08, 0.16, 0.3, 0.5, 0.8, 1.2, 2.0, 3.0]
@@ -832,8 +832,9 @@ class CarController(CarControllerBase):
                       not CS.out.gasPressed and not CS.out.brakePressed)
       if pedal_active:
         pedal_offset = float(np.interp(CS.out.vEgo, [0., 2., 4., 8., 12., 20.],
-                                       [0.08, 0.13, 0.18, 0.25, 0.30, 0.32]))
-        target = float(np.clip(pedal_offset + accel * 0.32, 0.0, RAY_PEDAL_COMMAND_CAP))
+                                       [0.08, 0.13, 0.25, 0.44, 0.63, 0.68]))
+        pedal_gain = 0.65 if accel < 0.0 else 0.22
+        target = float(np.clip(pedal_offset + accel * pedal_gain, 0.0, RAY_PEDAL_COMMAND_CAP))
         self._ray_pedal_gas_last = rate_limit(
           target, self._ray_pedal_gas_last, -RAY_PEDAL_RATE_DOWN, RAY_PEDAL_RATE_UP,
         )
