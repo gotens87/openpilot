@@ -145,6 +145,7 @@ def test_ray_controller_heartbeats_and_only_actuates_when_ready(speed):
   )
   hud = SimpleNamespace(
     visualAlert=CarControl.HUDControl.VisualAlert.none,
+    setSpeed=20.0,
     leftLaneVisible=True, rightLaneVisible=True,
     leftLaneDepart=False, rightLaneDepart=False,
   )
@@ -206,10 +207,34 @@ def test_ray_controller_heartbeats_and_only_actuates_when_ready(speed):
   CS.out.vEgo = 12.0
   for frame in range(80, 80 + 4 * 40, 4):
     pedal_msg(1.5, frame)
-  assert 0.69 <= controller._ray_pedal_gas_last <= 0.70
+  assert controller._ray_pedal_gas_last == pytest.approx(0.55)
   for frame in range(240, 240 + 4 * 12, 4):
     dat = pedal_msg(-1.5, frame)
   assert dat[:4] == bytes(4)
+
+  for frame in range(288, 288 + 4 * 40, 4):
+    pedal_msg(1.5, frame)
+  assert controller._ray_pedal_gas_last == pytest.approx(0.55)
+  hud.setSpeed = 12.0
+  pedal_msg(1.5, 448)
+  assert controller._ray_pedal_gas_last == pytest.approx(0.55 * 0.65)
+  hud.setSpeed = 11.8
+  dat = pedal_msg(1.5, 452)
+  assert controller._ray_pedal_gas_last == pytest.approx(0.55 * 0.65 * 0.6)
+  assert dat[4] & 0x80
+  hud.setSpeed = 11.4
+  assert pedal_msg(1.5, 456)[:4] == bytes(4)
+  hud.setSpeed = float('nan')
+  assert pedal_msg(1.5, 460)[:4] == bytes(4)
+  hud.setSpeed = 20.0
+  assert pedal_msg(-0.3, 464)[:4] == bytes(4)
+  CS.out.vEgo = 15.0
+  hud.setSpeed = 53.0 / 3.6
+  pedal_msg(-0.16, 468)
+  assert controller._ray_pedal_gas_last < 0.1
+  CS.out.vEgo = 12.0
+  hud.setSpeed = 8.0 / 3.6
+  assert pedal_msg(-0.3, 472)[:4] == bytes(4)
 
 
 @pytest.mark.parametrize("candidate", [CAR.KIA_RAY_EV, CAR.HYUNDAI_KONA_EV_NON_SCC])
@@ -229,6 +254,7 @@ def test_ray_stock_cruise_cancellation_survives_accelerator_override(candidate):
   )
   hud = SimpleNamespace(
     visualAlert=CarControl.HUDControl.VisualAlert.none,
+    setSpeed=20.0,
     leftLaneVisible=True, rightLaneVisible=True, leftLaneDepart=False, rightLaneDepart=False,
   )
   actuators = SimpleNamespace(longControlState=CarControl.Actuators.LongControlState.off)

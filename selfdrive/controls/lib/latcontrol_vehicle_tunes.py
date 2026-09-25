@@ -3341,8 +3341,10 @@ def get_genesis_g70_friction_jerk_deadzone(v_ego: float, desired_lateral_accel: 
       GENESIS_G70_CURVE_UNWIND_FRICTION_JERK_DEADZONE_JERK_WIDTH
     )
     overshoot_weight = _sigmoid((overshoot - 0.08) / 0.10)
+    boundary_weight = get_genesis_g70_overshoot_blend(desired_lateral_accel, measured_lateral_accel)
+    boundary_weight *= min(abs(desired_lateral_jerk) / 0.15, 1.0)
     deadzone += (GENESIS_G70_CURVE_UNWIND_FRICTION_JERK_DEADZONE_MAX * curve_speed_weight *
-                 curve_onset_weight * curve_cutoff_weight * jerk_weight * overshoot_weight)
+                 curve_onset_weight * curve_cutoff_weight * jerk_weight * overshoot_weight * boundary_weight)
   return deadzone
 
 
@@ -3398,6 +3400,13 @@ def get_genesis_g70_angle_output_scale(steering_angle_deg: float, output_torque:
   return 1.0 - ((1.0 - GENESIS_G70_ANGLE_OUTPUT_TAPER_MIN) * angle_weight)
 
 
+def get_genesis_g70_overshoot_blend(setpoint: float, measured_lateral_accel: float) -> float:
+  if setpoint * measured_lateral_accel <= 0.0:
+    return 0.0
+  overshoot = max(abs(measured_lateral_accel) - abs(setpoint), 0.0)
+  return float(np.interp(abs(setpoint), [0.10, 0.35], [0.0, 1.0]) * min(overshoot / 0.15, 1.0))
+
+
 def get_genesis_g70_unwind_ff_scale(setpoint: float, measured_lateral_accel: float,
                                     desired_lateral_jerk: float, v_ego: float) -> float:
   if setpoint * desired_lateral_jerk >= 0.0 or setpoint * measured_lateral_accel <= 0.0:
@@ -3412,7 +3421,9 @@ def get_genesis_g70_unwind_ff_scale(setpoint: float, measured_lateral_accel: flo
                          GENESIS_G70_UNWIND_FF_JERK_WIDTH)
   speed_weight = _sigmoid((v_ego - GENESIS_G70_UNWIND_FF_SPEED) /
                           GENESIS_G70_UNWIND_FF_SPEED_WIDTH)
-  return 1.0 - GENESIS_G70_UNWIND_FF_REDUCTION_MAX * overshoot_weight * jerk_weight * speed_weight
+  boundary_weight = get_genesis_g70_overshoot_blend(setpoint, measured_lateral_accel)
+  boundary_weight *= min(abs(desired_lateral_jerk) / 0.15, 1.0)
+  return 1.0 - GENESIS_G70_UNWIND_FF_REDUCTION_MAX * overshoot_weight * jerk_weight * speed_weight * boundary_weight
 
 
 def get_genesis_g70_high_speed_error_scale(setpoint: float, measured_lateral_accel: float,
@@ -3427,9 +3438,11 @@ def get_genesis_g70_high_speed_error_scale(setpoint: float, measured_lateral_acc
                           GENESIS_G70_HIGH_SPEED_ERROR_DAMPING_ERROR_WIDTH)
   jerk_weight = _sigmoid((abs(desired_lateral_jerk) - GENESIS_G70_HIGH_SPEED_ERROR_DAMPING_JERK) /
                          GENESIS_G70_HIGH_SPEED_ERROR_DAMPING_JERK_WIDTH)
-  phase_weight = 1.0 if setpoint * desired_lateral_jerk < 0.0 else 0.45
+  unwind_jerk = -math.copysign(1.0, setpoint) * desired_lateral_jerk
+  phase_weight = float(np.interp(unwind_jerk, [0.0, 0.15], [0.45, 1.0]))
   reduction = (GENESIS_G70_HIGH_SPEED_ERROR_DAMPING_MAX * speed_weight * error_weight *
-               (0.35 + (0.65 * jerk_weight)) * phase_weight)
+               (0.35 + (0.65 * jerk_weight)) * phase_weight *
+               get_genesis_g70_overshoot_blend(setpoint, measured_lateral_accel))
   return 1.0 - reduction
 
 

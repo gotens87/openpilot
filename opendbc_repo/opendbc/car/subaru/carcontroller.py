@@ -46,6 +46,7 @@ class CarController(CarControllerBase):
     self.angle_override_confirm_frames = 0
     self.angle_lkas_active = False
     self.angle_handoff_active = False
+    self.ascent_angle_initialized = False
     self.ascent_aol_arm_frames = 0
 
     self.cruise_button_prev = 0
@@ -204,6 +205,10 @@ class CarController(CarControllerBase):
       return subarucan.create_steering_control_angle(self.packer, apply_steer, lkas_active, self.angle_bus)
 
     if self.CP.carFingerprint in (CAR.SUBARU_ASCENT_2023, CAR.SUBARU_OUTBACK_2023):
+      if self.CP.carFingerprint == CAR.SUBARU_ASCENT_2023 and not self.ascent_angle_initialized:
+        self.apply_steer_last = CS.out.steeringAngleDeg
+        self.ascent_angle_initialized = True
+
       mads_only = CC.latActive and not CC.enabled
       mads_only_ok = CS.out.vEgoRaw > _ANGLE_MADS_MIN_SPEED and \
         abs(CS.out.steeringAngleDeg) < _ANGLE_MADS_MAX_STEER_ANGLE
@@ -223,7 +228,7 @@ class CarController(CarControllerBase):
         manual_handoff = self._angle_manual_handoff(CS, lkas_available)
       lkas_active = lkas_available and not manual_handoff
 
-      if lkas_active and not self.angle_lkas_active:
+      if lkas_active and not self.angle_lkas_active and self.CP.carFingerprint != CAR.SUBARU_ASCENT_2023:
         self.apply_steer_last = CS.out.steeringAngleDeg
 
       apply_steer = apply_std_steer_angle_limits(
