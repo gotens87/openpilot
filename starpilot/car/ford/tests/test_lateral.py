@@ -131,6 +131,75 @@ def test_understeer_error_preserves_other_fords(controller):
 
 
 @pytest.mark.parametrize("sign", (-1, 1))
+@pytest.mark.parametrize("speed,expected", ((8.0, 0.002), (8.5, 0.004), (9.0, 0.006), (12.0, 0.006),
+                                          (14.0, 0.006), (15.0, 0.004), (16.0, 0.002)))
+def test_mach_e_unwind_error_tracks_opening_path_before_direction_changes(controller, sign, speed, expected):
+  controller.CP.carFingerprint = CAR.FORD_MUSTANG_MACH_E_MK1
+  controller.CP.flags = FordFlags.CANFD
+  controller.model = SimpleNamespace(orientationRate=SimpleNamespace(z=[0.0] * 33))
+  assert controller._curvature_error_limit(
+    sign * 0.001, sign * 0.002, sign * 0.005, speed, False, False, sign * 0.001) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("sign", (-1, 1))
+@pytest.mark.parametrize("requested,preview,expected", ((0.003, 0.001, 0.002), (0.002, 0.001, 0.004),
+                                                       (0.001, 0.001, 0.006), (0.001, 0.004, 0.002),
+                                                       (0.001, 0.003, 0.002), (0.001, 0.002, 0.004),
+                                                       (0.001, -0.0002, 0.006), (0.001, 0.0, 0.006),
+                                                       (0.0, 0.0, 0.006)))
+def test_mach_e_unwind_error_requires_measured_lag_and_opening_preview(controller, sign, requested, preview, expected):
+  controller.CP.carFingerprint = CAR.FORD_MUSTANG_MACH_E_MK1
+  controller.CP.flags = FordFlags.CANFD
+  controller.model = SimpleNamespace(orientationRate=SimpleNamespace(z=[0.0] * 33))
+  assert controller._curvature_error_limit(
+    sign * requested, sign * 0.002, sign * 0.005, 12.0, False, False, sign * preview) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("fingerprint,flags,driver,lane_change", (
+  (CAR.FORD_MUSTANG_MACH_E_MK1, FordFlags.CANFD, True, False),
+  (CAR.FORD_MUSTANG_MACH_E_MK1, FordFlags.CANFD, False, True),
+  (CAR.FORD_MUSTANG_MACH_E_MK1, 0, False, False),
+  (CAR.FORD_EDGE_MK2, FordFlags.CANFD, False, False),
+  (CAR.FORD_EXPLORER_MK6, FordFlags.CANFD, False, False),
+  (CAR.FORD_F_150_MK14, FordFlags.CANFD, False, False),
+))
+def test_unwind_error_preserves_takeover_lane_changes_and_other_fords(controller, fingerprint, flags, driver, lane_change):
+  controller.CP.carFingerprint = fingerprint
+  controller.CP.flags = flags
+  controller.model = SimpleNamespace(orientationRate=SimpleNamespace(z=[0.0] * 33))
+  assert controller._curvature_error_limit(0.001, 0.002, 0.005, 12.0, driver, lane_change, 0.001) == 0.002
+
+
+@pytest.mark.parametrize("model", (None, SimpleNamespace(orientationRate=SimpleNamespace(z=[0.0] * 16))))
+def test_mach_e_unwind_error_requires_model_preview(controller, model):
+  controller.CP.carFingerprint = CAR.FORD_MUSTANG_MACH_E_MK1
+  controller.CP.flags = FordFlags.CANFD
+  controller.model = model
+  assert controller._curvature_error_limit(0.001, 0.002, 0.005, 12.0, False, False, 0.001) == 0.002
+
+
+@pytest.mark.parametrize("sign", (-1, 1))
+def test_mach_e_curve_exit_releases_without_waiting_for_left_right_reversal(controller, monkeypatch, sign):
+  controller.CP.carFingerprint = CAR.FORD_MUSTANG_MACH_E_MK1
+  controller.CP.flags = FordFlags.CANFD
+  controller.model = SimpleNamespace(orientationRate=SimpleNamespace(z=[0.0] * 33),
+                                     meta=SimpleNamespace(laneChangeState=0, laneChangeDirection=0))
+  controller.curvature_last = sign * 0.004
+  controller.desired_curvature_last = sign * 0.003
+  monkeypatch.setattr(controller, "_predicted_curvature", lambda *_: sign * 0.001)
+  commands = []
+  for _ in range(4):
+    result = controller.update(SimpleNamespace(latActive=True), car_state(speed=12.0, curvature=sign * 0.005),
+                               SimpleNamespace(curvature=sign * 0.002))
+    assert result.active
+    assert result.path_angle == 0.0
+    commands.append(sign * result.curvature)
+  assert commands[0] == pytest.approx(0.004 - 0.0018)
+  assert commands[-1] == pytest.approx(0.0016)
+  assert commands[-1] < 0.005 - 0.002
+
+
+@pytest.mark.parametrize("sign", (-1, 1))
 @pytest.mark.parametrize("speed,expected", ((8.0, 0.002), (8.5, 0.004), (9.0, 0.006), (9.5, 0.006), (10.0, 0.006),
                                           (12.0, 0.006), (15.0, 0.004), (16.0, 0.002)))
 def test_mach_e_planned_curve_error_uses_preview_request_before_action_builds(controller, sign, speed, expected):

@@ -13,6 +13,7 @@ from openpilot.common.pid import PIDController
 from openpilot.selfdrive.controls.lib.drive_helpers import MIN_SPEED
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import *  # noqa: F403
+from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import get_genesis_g70_center_measurement_damping_gain
 
 # At higher speeds (25+mph) we can assume:
 # Lateral acceleration achieved by a specific car correlates to
@@ -561,6 +562,11 @@ class LatControlTorque(LatControl):
             ff, self.gv70_previous_feedforward, setpoint, desired_lateral_jerk, CS.vEgo, self.dt,
           )
         self.gv70_previous_feedforward = ff
+      if self.is_genesis_g70:
+        damping_gain = 0.0 if CS.steeringPressed else get_genesis_g70_center_measurement_damping_gain(
+          CS.vEgo, setpoint, measurement, desired_lateral_jerk,
+        )
+        self.pid._k_d = [[0.0], [damping_gain]]
       freeze_integrator = (steer_limited_by_safety or CS.steeringPressed or
                            CS.vEgo < self.low_speed_reset_threshold or unwind_detected)
       error_rate = 0.0 if self.is_genesis_gv70 and CS.steeringPressed else -measurement_rate

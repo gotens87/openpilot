@@ -366,6 +366,10 @@ GENESIS_G70_OUTPUT_SMOOTHING_CENTER_RC = 0.18
 GENESIS_G70_OUTPUT_SMOOTHING_CURVE_RC = 0.10
 GENESIS_G70_OUTPUT_SMOOTHING_RELEASE_RC = 0.03
 GENESIS_G70_OUTPUT_SMOOTHING_OVERSHOOT = 0.08
+GENESIS_G70_CENTER_MEASUREMENT_DAMPING_MAX = 0.06
+GENESIS_G70_CENTER_MEASUREMENT_DAMPING_SPEED_BP = [50.0 * CV.MPH_TO_MS, 60.0 * CV.MPH_TO_MS]
+GENESIS_G70_CENTER_MEASUREMENT_DAMPING_LAT_BP = [0.15, 0.35]
+GENESIS_G70_CENTER_MEASUREMENT_DAMPING_JERK_BP = [0.20, 0.50]
 GENESIS_G70_HIGHWAY_STABILIZER_CENTER_LAT_BP = [1.4, 1.8]
 GENESIS_G70_HIGHWAY_STABILIZER_CURVE_EXIT_LAT = 0.15
 GENESIS_G70_ANGLE_OUTPUT_TAPER_MIN = 0.45
@@ -3572,6 +3576,15 @@ def get_genesis_g70_highway_turn_in_output_scale(output_torque: float, setpoint:
   tracking_weight = np.interp(abs(measured_lateral_accel / setpoint),
                               GENESIS_G70_HIGHWAY_TURN_IN_TRACKING_BP, [0.0, 1.0, 0.0])
   return 1.0 - GENESIS_G70_HIGHWAY_TURN_IN_OUTPUT_REDUCTION * speed_weight * curve_weight * jerk_weight * tracking_weight
+
+
+def get_genesis_g70_center_measurement_damping_gain(v_ego: float, desired_lateral_accel: float,
+                                                   measured_lateral_accel: float, desired_lateral_jerk: float) -> float:
+  speed_weight = np.interp(v_ego, GENESIS_G70_CENTER_MEASUREMENT_DAMPING_SPEED_BP, [0.0, 1.0])
+  center_weight = np.interp(max(abs(desired_lateral_accel), abs(measured_lateral_accel)),
+                            GENESIS_G70_CENTER_MEASUREMENT_DAMPING_LAT_BP, [1.0, 0.0])
+  jerk_weight = np.interp(abs(desired_lateral_jerk), GENESIS_G70_CENTER_MEASUREMENT_DAMPING_JERK_BP, [1.0, 0.0])
+  return float(GENESIS_G70_CENTER_MEASUREMENT_DAMPING_MAX * speed_weight * center_weight * jerk_weight)
 
 
 def get_genesis_g70_stabilized_output(output_torque: float, prev_output_torque: float,

@@ -61,6 +61,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
   get_genesis_gv70_low_speed_center_overshoot_scale,
   get_genesis_gv70_stabilized_output,
   get_genesis_g70_stabilized_output,
+  get_genesis_g70_center_measurement_damping_gain,
   normalize_flm_overrides,
   set_flm_runtime_overrides,
 )
@@ -1040,6 +1041,73 @@ class TestLatControl:
     assert calls
     assert lac_log.active
     assert output == pytest.approx(-0.123)
+
+  @pytest.mark.parametrize("mph,desired,measured,jerk,expected", [
+    (65.0, 0.0, 0.10, 0.0, 0.06),
+    (50.0, 0.0, 0.10, 0.0, 0.0),
+    (55.0, 0.0, 0.10, 0.0, 0.03),
+    (65.0, 0.25, 0.10, 0.0, 0.03),
+    (65.0, 0.0, 0.25, 0.0, 0.03),
+    (65.0, 0.35, 0.10, 0.0, 0.0),
+    (65.0, 0.0, 0.35, 0.0, 0.0),
+    (65.0, 0.0, 0.10, 0.35, 0.03),
+    (65.0, 0.0, 0.10, 0.50, 0.0),
+  ])
+  def test_genesis_g70_center_measurement_damping_gates(self, mph, desired, measured, jerk, expected):
+    for direction in [-1.0, 1.0]:
+      gain = get_genesis_g70_center_measurement_damping_gain(
+        mph * 0.44704, desired * direction, measured * direction, jerk * direction,
+      )
+      assert gain == pytest.approx(expected)
+
+  @pytest.mark.parametrize("direction", [-1.0, 1.0])
+  def test_genesis_g70_center_measurement_damping_update_path(self, direction):
+    controller, VM, CS, params, toggles = self._build_torque_controller(HYUNDAI.GENESIS_G70_2020)
+    CS.vEgo = 65.0 * 0.44704
+    CS.steeringAngleDeg = 0.0
+    controller.update(True, CS, VM, params, False, 0.0, False, 0.2, None, None, toggles)
+    CS.steeringAngleDeg = -direction * 0.5
+    output, _, moving_log = controller.update(True, CS, VM, params, False, 0.0, False, 0.2, None, None, toggles)
+    assert moving_log.d * direction < 0.0
+    assert abs(moving_log.d) <= 0.15
+    assert abs(output) <= controller.steer_max
+
+    for _ in range(150):
+      _, _, steady_log = controller.update(True, CS, VM, params, False, 0.0, False, 0.2, None, None, toggles)
+    assert steady_log.d == pytest.approx(0.0, abs=1e-6)
+
+    CS.steeringPressed = True
+    CS.steeringAngleDeg = 0.0
+    _, _, driver_log = controller.update(True, CS, VM, params, False, 0.0, False, 0.2, None, None, toggles)
+    assert driver_log.d == 0.0
+
+    CS.steeringPressed = False
+    controller.update(False, CS, VM, params, False, 0.0, False, 0.2, None, None, toggles)
+    _, _, resumed_log = controller.update(True, CS, VM, params, False, 0.0, False, 0.2, None, None, toggles)
+    assert resumed_log.d == 0.0
+
+    CS.vEgo = 40.0 * 0.44704
+    CS.steeringAngleDeg = -direction * 0.5
+    _, _, low_speed_log = controller.update(True, CS, VM, params, False, 0.0, False, 0.2, None, None, toggles)
+    assert low_speed_log.d == 0.0
+
+    CS.vEgo = 65.0 * 0.44704
+    curvature = direction * 0.8 / CS.vEgo ** 2
+    controller.curvature_request_buffer = deque([curvature] * controller.request_buffer_len,
+                                               maxlen=controller.request_buffer_len)
+    _, _, curve_log = controller.update(True, CS, VM, params, False, curvature, False, 0.2, None, None, toggles)
+    assert curve_log.d == 0.0
+
+  @pytest.mark.parametrize("car_name", [HYUNDAI.GENESIS_GV70_1ST_GEN, HYUNDAI.KIA_EV6, HYUNDAI.HYUNDAI_IONIQ_6])
+  def test_genesis_g70_center_measurement_damping_does_not_change_other_cars(self, monkeypatch, car_name):
+    def unexpected_damping(*_args):
+      pytest.fail("G70 center damping reached another vehicle")
+
+    monkeypatch.setattr(latcontrol_torque, "get_genesis_g70_center_measurement_damping_gain", unexpected_damping)
+    controller, VM, CS, params, toggles = self._build_torque_controller(car_name)
+    CS.vEgo = 65.0 * 0.44704
+    controller.update(True, CS, VM, params, False, 0.0, False, 0.2, None, None, toggles)
+    assert controller.pid.d == 0.0
 
   def test_sonata_hybrid_center_output_taper_is_mid_speed_and_center_gated(self):
     low_speed = get_sonata_hybrid_center_output_scale(0.0, 8.0)
