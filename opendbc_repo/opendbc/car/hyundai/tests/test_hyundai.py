@@ -1863,6 +1863,37 @@ class TestHyundaiFingerprint:
     assert exact
     assert matches == {candidate}
 
+  @pytest.mark.parametrize("alpha_long", (False, True))
+  @pytest.mark.parametrize("alt_buttons", (False, True))
+  @pytest.mark.parametrize("signal, value, button_type", (
+    ("LDA_BTN", 1, ButtonType.lkas),
+    ("ADAPTIVE_CRUISE_MAIN_BTN", 1, ButtonType.mainCruise),
+    ("CRUISE_BUTTONS", Buttons.RES_ACCEL, ButtonType.accelCruise),
+    ("CRUISE_BUTTONS", Buttons.SET_DECEL, ButtonType.decelCruise),
+    ("CRUISE_BUTTONS", Buttons.CANCEL, ButtonType.cancel),
+  ))
+  def test_k4_2025_2026_physical_button_events(self, alpha_long, alt_buttons, signal, value, button_type):
+    toggles = get_test_toggles()
+    fingerprint = gen_empty_fingerprint()
+    if not alt_buttons:
+      fingerprint[0][0x1CF] = 8
+    CP = CarInterface.get_params(CAR.KIA_K4_2025, fingerprint, [], alpha_long, False, False, toggles)
+    FPCP = CarInterface.get_starpilot_params(CAR.KIA_K4_2025, fingerprint, [], CP, toggles)
+    car_state = CarState(CP, FPCP)
+    parsers = car_state.get_can_parsers(CP)
+    packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
+
+    def update(button_value, frame):
+      msg = packer.make_can_msg(car_state.cruise_btns_msg_canfd, CanBus(CP).ECAN, {signal: button_value})
+      parsers[Bus.pt].update([(frame * 10_000_000, [msg])])
+      return car_state.update(parsers, toggles)[0].buttonEvents
+
+    assert not update(0, 1)
+    pressed = update(value, 2)
+    assert [(event.type, event.pressed) for event in pressed] == [(button_type, True)]
+    released = update(0, 3)
+    assert [(event.type, event.pressed) for event in released] == [(button_type, False)]
+
   @pytest.mark.parametrize("camera_fw", [
     b'\xf1\x00CL4 MFC  AT CAN LHD 1.00 1.02 99210-GG000 240708',
     b'\xf1\x00CL4 MFC  AT USA LHD 1.00 1.02 99210-GG000 240708',
