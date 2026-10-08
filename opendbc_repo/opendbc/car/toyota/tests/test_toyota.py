@@ -85,10 +85,47 @@ class TestToyotaInterfaces:
       SimpleNamespace(force_torque_controller=True, nnff=False, nnff_lite=False),
     )
 
-    assert default_params.lateralTuning.which() == "pid"
+    assert default_params.lateralTuning.which() == "torque"
     assert forced_params.lateralTuning.which() == "torque"
+    assert default_params.lateralTuning.to_dict() == forced_params.lateralTuning.to_dict()
     assert forced_params.lateralTuning.torque.latAccelFactor == pytest.approx(1.7)
     assert forced_params.lateralTuning.torque.friction == pytest.approx(0.14)
+
+  @pytest.mark.parametrize("candidate", list(CAR))
+  def test_toyota_default_controller_preserves_native_angle_path(self, candidate):
+    fingerprint = {bus: {} for bus in range(8)}
+    default_params = CarInterface.get_params(
+      candidate, fingerprint, [], False, False, False,
+      SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False),
+    )
+    forced_params = CarInterface.get_params(
+      candidate, fingerprint, [], False, False, False,
+      SimpleNamespace(force_torque_controller=True, nnff=False, nnff_lite=False),
+    )
+
+    if candidate in ANGLE_CONTROL_CAR:
+      assert default_params.steerControlType == CarParams.SteerControlType.angle
+      assert default_params.lateralTuning.which() == "pid"
+      assert default_params.safetyConfigs[0].safetyParam & ToyotaSafetyFlags.LTA.value
+    else:
+      assert default_params.steerControlType == CarParams.SteerControlType.torque
+      assert default_params.lateralTuning.which() == "torque"
+      assert not default_params.safetyConfigs[0].safetyParam & ToyotaSafetyFlags.LTA.value
+
+    assert default_params.to_dict() == forced_params.to_dict()
+
+  @pytest.mark.parametrize("candidate", [CAR.TOYOTA_RAV4_TSS2, CAR.TOYOTA_RAV4_TSS2_2022, CAR.TOYOTA_RAV4_PRIME])
+  @pytest.mark.parametrize("eps_version", [b'\x028965B0R01400', b'8965B42181\x00\x00\x00\x00\x00\x00', b'8965B0R01200'])
+  def test_rav4_rack_variants_default_to_torque(self, candidate, eps_version):
+    params = CarInterface.get_params(
+      candidate, {bus: {} for bus in range(8)}, [CarParams.CarFw(ecu=Ecu.eps, fwVersion=eps_version)],
+      False, False, False,
+      SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False),
+    )
+
+    assert params.lateralTuning.which() == "torque"
+    assert params.steerActuatorDelay == pytest.approx(0.12)
+    assert params.steerControlType == CarParams.SteerControlType.torque
 
   def test_prius_force_torque_controller_preserves_vehicle_tune(self):
     fingerprint = {bus: {} for bus in range(8)}
