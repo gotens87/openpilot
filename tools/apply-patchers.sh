@@ -31,7 +31,7 @@ PATCHERS=(
 )
 SUBJECTS=(
   "Offroad Without OBD Power: auto-offroad on park entry + exit"
-  "Radar: un-mirror Continental lateral position"
+  "Toyota TSS-P: left is left again"
 )
 # Shelved, not active -- kept in ops_patches/ for future reactivation, not
 # referenced above. Naming pending (operator's call, not auto-generated):
