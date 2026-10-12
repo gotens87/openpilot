@@ -6,14 +6,18 @@
 # generic LONG_FILTER tune untouched. The ACCEL_MAX 1.5 cap the tune was
 # developed against is gated on its own independent marker,
 # /data/ops_patches/camry_accel_cap (also read once at import), so the cap
-# can run with or without the rest of the tune.
+# can run with or without the rest of the tune. The 0.8 positive feedforward
+# scale is gated the same way on /data/ops_patches/camry_hybrid_ff, but
+# applies only while the tune itself is active; with the ff marker absent
+# the feedforward path is left stock.
 #
-# values.py: both markers + gates; camry_accel_cap holds ACCEL_MAX at 1.5
+# values.py: all three markers + gates; camry_accel_cap holds ACCEL_MAX at 1.5
 #   (panda allows 2.0 either way), and stoppingDecelRate 0.3 goes through the
 #   existing helper behind the tune marker only.
-# carcontroller.py: THS hybrid ki tune, 0.8 positive feedforward scale, 8x
-#   integral-mismatch unwind, and the permit-braking coast band / no-lead
-#   sign-flip limiter (both reused from prius_longitudinal, not duplicated).
+# carcontroller.py: THS hybrid ki tune, 8x integral-mismatch unwind, and the
+#   permit-braking coast band / no-lead sign-flip limiter (both reused from
+#   prius_longitudinal, not duplicated), all behind the tune marker alone;
+#   the 0.8 positive feedforward scale behind tune AND camry_hybrid_ff.
 import os
 import sys
 
@@ -33,6 +37,7 @@ import re"""),
     ("""def stopping_decel_rate(CP):""",
      """CAMRY_HYBRID_TUNE = os.path.isfile("/data/ops_patches/camry_hybrid_tune")
 CAMRY_ACCEL_CAP = os.path.isfile("/data/ops_patches/camry_accel_cap")
+CAMRY_HYBRID_FF = os.path.isfile("/data/ops_patches/camry_hybrid_ff")
 
 
 def camry_hybrid_tune(CP) -> bool:
@@ -45,13 +50,18 @@ def camry_accel_cap(CP) -> bool:
               CP.flags & ToyotaFlags.HYBRID and CP.flags & ToyotaFlags.LONG_FILTER)
 
 
+def camry_hybrid_ff(CP) -> bool:
+  return bool(CAMRY_HYBRID_FF and CP.carFingerprint == CAR.TOYOTA_CAMRY and
+              CP.flags & ToyotaFlags.HYBRID and CP.flags & ToyotaFlags.LONG_FILTER)
+
+
 def stopping_decel_rate(CP):
   if camry_hybrid_tune(CP) and CP.openpilotLongitudinalControl:
     return 0.3"""),
   ],
   "carcontroller.py": [
     ("""from opendbc.car.toyota.values import CAR, CarControllerParams, ToyotaFlags, TOYOTA_AUTO_HOLD_CARS, uses_toyota_auto_hold_aeb""",
-     """from opendbc.car.toyota.values import CAR, CarControllerParams, ToyotaFlags, TOYOTA_AUTO_HOLD_CARS, camry_hybrid_tune, uses_toyota_auto_hold_aeb"""),
+     """from opendbc.car.toyota.values import CAR, CarControllerParams, ToyotaFlags, TOYOTA_AUTO_HOLD_CARS, camry_hybrid_ff, camry_hybrid_tune, uses_toyota_auto_hold_aeb"""),
     ("""  if prius or CP.flags & ToyotaFlags.TSS2:""",
      """  if prius or camry_hybrid_tune(CP) or CP.flags & ToyotaFlags.TSS2:"""),
     ("""                       rate=1 / (DT_CTRL * 3))
@@ -71,7 +81,8 @@ def get_camry_hybrid_feedforward(accel):
 class CarController(CarControllerBase):"""),
     ("""    self.prius_longitudinal = prius_longitudinal.enabled(CP)""",
      """    self.prius_longitudinal = prius_longitudinal.enabled(CP)
-    self.camry_hybrid_tune = camry_hybrid_tune(CP)"""),
+    self.camry_hybrid_tune = camry_hybrid_tune(CP)
+    self.camry_hybrid_ff = camry_hybrid_ff(CP)"""),
     ("""          unwind = ACCEL_PID_UNWIND * (8. if self.prius_longitudinal and pcm_accel_cmd * self.long_pid.i < 0. else 1.)""",
      """          unwind = ACCEL_PID_UNWIND * (8. if (self.prius_longitudinal or self.camry_hybrid_tune) and pcm_accel_cmd * self.long_pid.i < 0. else 1.)"""),
     ("""          pcm_accel_cmd = self.long_pid.update(error_future,
@@ -82,7 +93,7 @@ class CarController(CarControllerBase):"""),
      """          feedforward = pcm_accel_cmd
           if self.prius_longitudinal:
             feedforward = prius_longitudinal.get_prius_feedforward(feedforward, CS.out.vEgo)
-          elif self.camry_hybrid_tune:
+          elif self.camry_hybrid_tune and self.camry_hybrid_ff:
             # the THS eCVT over-responds to positive requests, scale them down
             feedforward = get_camry_hybrid_feedforward(feedforward)
 

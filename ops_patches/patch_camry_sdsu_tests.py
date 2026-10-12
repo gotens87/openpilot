@@ -13,6 +13,7 @@ DEPENDENCIES = [
   ("radar_interface.py", "def _update_tssp(self, updated_messages):"),
   ("values.py", "def camry_hybrid_tune(CP) -> bool:"),
   ("values.py", "def camry_accel_cap(CP) -> bool:"),
+  ("values.py", "def camry_hybrid_ff(CP) -> bool:"),
 ]
 
 TEST_FILE = r'''import unittest
@@ -25,7 +26,7 @@ from opendbc.car.structs import CarParams
 from opendbc.car.toyota.carcontroller import CarController
 from opendbc.car.toyota.interface import CarInterface
 from opendbc.car.toyota.radar_interface import RadarInterface
-from opendbc.car.toyota.values import CAR, DBC, ToyotaFlags, CarControllerParams, camry_accel_cap, camry_hybrid_tune, stopping_decel_rate
+from opendbc.car.toyota.values import CAR, DBC, ToyotaFlags, CarControllerParams, camry_accel_cap, camry_hybrid_ff, camry_hybrid_tune, stopping_decel_rate
 
 Ecu = CarParams.Ecu
 
@@ -77,6 +78,7 @@ class TestCamrySdsuParams(unittest.TestCase):
     cp = get_camry(SDSU_FINGERPRINT)
     self.assertFalse(camry_hybrid_tune(cp))
     self.assertFalse(camry_accel_cap(cp))
+    self.assertFalse(camry_hybrid_ff(cp))
     self.assertEqual(CarControllerParams(cp).ACCEL_MAX, 2.0)
     self.assertIsNone(stopping_decel_rate(cp))
     controller = CarController({Bus.pt: DBC[cp.carFingerprint][Bus.pt]}, cp)
