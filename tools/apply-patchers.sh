@@ -48,12 +48,14 @@ case "$PATCHER_SET" in
       patch_tssp_radar.py
       patch_camry_hybrid_tune.py
       patch_camry_sdsu_tests.py
+      patch_park_offroad.py
     )
     SUBJECTS=(
       "Toyota TSS-P Camry: openpilot longitudinal via sDSU"
       "Toyota TSS-P Camry: Continental radar parser"
       "Toyota Camry Hybrid: opt-in longitudinal tune"
       "Toyota TSS-P Camry: sDSU port regression tests"
+      "Offroad Without OBD Power: auto-offroad on park entry + exit"
     )
     ;;
   *)
