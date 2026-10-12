@@ -7,6 +7,10 @@
 #   apply-patchers.sh <checkout-dir> [patchers-dir]   apply + commit
 #   apply-patchers.sh --count                          print patcher count, exit
 #
+# Patcher-set selection: PATCHER_SET env var = default|domathon. Unset = default
+# (the Dom series below). An env var, not a flag, so rebuild-starpilot.yml's
+# positional call -- and --count, which runs after selection -- needs no edit.
+#
 # Caller owns git identity and dates (the Action pins GIT_COMMITTER_DATE to Dom's
 # so an unchanged rebuild is bit-identical; make-patches.sh pins both to a fixed
 # epoch so regenerated patches are byte-stable).
@@ -25,14 +29,39 @@
 # or auto-resolved.
 set -euo pipefail
 
-PATCHERS=(
-  patch_park_valet.py
-  patch_radar_lat_sign.py
-)
-SUBJECTS=(
-  "Offroad Without OBD Power: auto-offroad on park entry + exit"
-  "Toyota TSS-P: left is left again"
-)
+PATCHER_SET=${PATCHER_SET:-default}
+
+case "$PATCHER_SET" in
+  default)
+    PATCHERS=(
+      patch_park_valet.py
+      patch_radar_lat_sign.py
+    )
+    SUBJECTS=(
+      "Offroad Without OBD Power: auto-offroad on park entry + exit"
+      "Toyota TSS-P: left is left again"
+    )
+    ;;
+  domathon)
+    PATCHERS=(
+      patch_sdsu_long.py
+      patch_tssp_radar.py
+      patch_camry_hybrid_tune.py
+      patch_camry_sdsu_tests.py
+    )
+    SUBJECTS=(
+      "Toyota TSS-P Camry: openpilot longitudinal via sDSU"
+      "Toyota TSS-P Camry: Continental radar parser"
+      "Toyota Camry Hybrid: opt-in longitudinal tune"
+      "Toyota TSS-P Camry: sDSU port regression tests"
+    )
+    ;;
+  *)
+    echo "apply-patchers: unknown PATCHER_SET '$PATCHER_SET' (want: default|domathon)" >&2
+    exit 1
+    ;;
+esac
+
 # Shelved, not active -- kept in ops_patches/ for future reactivation, not
 # referenced above. Naming pending (operator's call, not auto-generated):
 #  - patch_radar_valid.py -- side-cluster VALID-bit filter, TSS-P Continental radar.
@@ -91,4 +120,4 @@ for f in $(git diff --name-only "$START"..HEAD | grep '\.py$' || true); do
     || { echo "::error::patched $f does not compile"; exit 1; }
 done
 
-echo "applied ${#PATCHERS[@]} patchers"
+echo "applied ${#PATCHERS[@]} patchers (set: $PATCHER_SET)"
