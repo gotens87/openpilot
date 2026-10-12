@@ -102,6 +102,11 @@ jobs:
           python-version: '3.12'
 
       - name: Run opendbc Toyota tests
+        env:
+          # Tests run from work/opendbc_repo, but the openpilot python package lives
+          # at the work/ root; without this, test_tx_hook_on_wrong_safety_mode dies
+          # on ModuleNotFoundError: No module named openpilot.
+          PYTHONPATH: ${{ github.workspace }}/work
         run: |
           cd work/opendbc_repo
           pip install numpy tqdm pycapnp pycryptodome pytest hypothesis parameterized cffi
