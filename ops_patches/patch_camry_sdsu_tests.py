@@ -2,6 +2,10 @@
 # /data/ops_patches/patch_camry_sdsu_tests.py
 # Regression tests for the TSS-P Camry sDSU port. Installs a new test file;
 # fails if the port patchers haven't run, so tests can't land without the code.
+# The tune tests assert every camry hybrid tune part defaults off; each part
+# is gated on its own /data/ops_patches/ marker: camry_ki, camry_unwind,
+# camry_coast, camry_signflip, camry_stop_ramp, camry_hybrid_ff,
+# camry_accel_cap.
 import os
 import sys
 
@@ -11,9 +15,7 @@ TEST_PATH = os.path.join(TOYOTA, "tests", "test_camry_sdsu.py")
 DEPENDENCIES = [
   ("interface.py", "camry_sdsu = candidate == CAR.TOYOTA_CAMRY"),
   ("radar_interface.py", "def _update_tssp(self, updated_messages):"),
-  ("values.py", "def camry_hybrid_tune(CP) -> bool:"),
-  ("values.py", "def camry_accel_cap(CP) -> bool:"),
-  ("values.py", "def camry_hybrid_ff(CP) -> bool:"),
+  ("values.py", "def camry_part(CP, part) -> bool:"),
 ]
 
 TEST_FILE = r'''import unittest
@@ -26,7 +28,7 @@ from opendbc.car.structs import CarParams
 from opendbc.car.toyota.carcontroller import CarController
 from opendbc.car.toyota.interface import CarInterface
 from opendbc.car.toyota.radar_interface import RadarInterface
-from opendbc.car.toyota.values import CAR, DBC, ToyotaFlags, CarControllerParams, camry_accel_cap, camry_hybrid_ff, camry_hybrid_tune, stopping_decel_rate
+from opendbc.car.toyota.values import CAR, DBC, ToyotaFlags, CarControllerParams, camry_part, stopping_decel_rate
 
 Ecu = CarParams.Ecu
 
@@ -34,6 +36,8 @@ SDSU_FINGERPRINT = {0: {0x2FF: 4}, 1: {}, 2: {}}
 RADAR_FILTER_FINGERPRINT = {0: {0x2AA: 8}, 1: {}, 2: {}}
 EMPTY_FINGERPRINT = {0: {}, 1: {}, 2: {}}
 HYBRID_FW = [CarParams.CarFw.new_message(ecu=Ecu.hybrid, fwVersion=b"\x0281E00600\x00\x00\x00\x00\x00\x00\x00")]
+CAMRY_TUNE_PARTS = ("camry_ki", "camry_unwind", "camry_coast", "camry_signflip",
+                    "camry_stop_ramp", "camry_hybrid_ff", "camry_accel_cap")
 
 
 def get_camry(fp):
@@ -76,13 +80,16 @@ class TestCamrySdsuParams(unittest.TestCase):
 
   def test_tune_flags_default_off(self):
     cp = get_camry(SDSU_FINGERPRINT)
-    self.assertFalse(camry_hybrid_tune(cp))
-    self.assertFalse(camry_accel_cap(cp))
-    self.assertFalse(camry_hybrid_ff(cp))
+    for part in CAMRY_TUNE_PARTS:
+      with self.subTest(part=part):
+        self.assertFalse(camry_part(cp, part))
     self.assertEqual(CarControllerParams(cp).ACCEL_MAX, 2.0)
     self.assertIsNone(stopping_decel_rate(cp))
     controller = CarController({Bus.pt: DBC[cp.carFingerprint][Bus.pt]}, cp)
-    self.assertFalse(controller.camry_hybrid_tune)
+    self.assertFalse(controller.camry_unwind)
+    self.assertFalse(controller.camry_coast)
+    self.assertFalse(controller.camry_signflip)
+    self.assertFalse(controller.camry_hybrid_ff)
 
 
 class TestCamryStandstillLatch(unittest.TestCase):

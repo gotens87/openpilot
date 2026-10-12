@@ -1,23 +1,30 @@
 #!/usr/bin/env python3
 # /data/ops_patches/patch_camry_hybrid_tune.py
-# Camry Hybrid longitudinal tune, ported and gated behind a runtime marker:
-# active iff /data/ops_patches/camry_hybrid_tune exists, read once at process
-# start (a reboot applies a change). With the marker absent the car runs the
-# generic LONG_FILTER tune untouched. The ACCEL_MAX 1.5 cap the tune was
-# developed against is gated on its own independent marker,
-# /data/ops_patches/camry_accel_cap (also read once at import), so the cap
-# can run with or without the rest of the tune. The 0.8 positive feedforward
-# scale is gated the same way on /data/ops_patches/camry_hybrid_ff, but
-# applies only while the tune itself is active; with the ff marker absent
-# the feedforward path is left stock.
+# Camry Hybrid longitudinal tune, split into independent parts. Every part is
+# gated behind its own runtime marker under /data/ops_patches/, read once at
+# process start (a reboot applies a change), and defaults OFF; with no
+# markers the car runs the generic LONG_FILTER tune untouched. No part
+# depends on another part's marker, so any single part flips with a file +
+# reboot, no code change.
 #
-# values.py: all three markers + gates; camry_accel_cap holds ACCEL_MAX at 1.5
-#   (panda allows 2.0 either way), and stoppingDecelRate 0.3 goes through the
-#   existing helper behind the tune marker only.
-# carcontroller.py: THS hybrid ki tune, 8x integral-mismatch unwind, and the
-#   permit-braking coast band / no-lead sign-flip limiter (both reused from
-#   prius_longitudinal, not duplicated), all behind the tune marker alone;
-#   the 0.8 positive feedforward scale behind tune AND camry_hybrid_ff.
+# markers (all /data/ops_patches/<name>):
+#   camry_ki        THS hybrid ki tune
+#   camry_unwind    8x integral-mismatch unwind
+#   camry_coast     permit-braking coast band
+#   camry_signflip  no-lead cruise sign-flip limiter
+#   camry_stop_ramp stoppingDecelRate 0.3
+#   camry_hybrid_ff 0.8 positive feedforward scale
+#   camry_accel_cap hold ACCEL_MAX at 1.5 (panda allows 2.0 either way)
+#
+# values.py: camry_part(CP, part) helper (TOYOTA_CAMRY + HYBRID + LONG_FILTER
+#   scoping, marker existence cached once at import) plus the camry_stop_ramp
+#   gate in stopping_decel_rate and the camry_accel_cap gate in
+#   CarControllerParams.
+# carcontroller.py: camry_ki in the ki selection; camry_unwind on the
+#   integral-mismatch unwind; camry_coast on the permit-braking coast band
+#   and camry_signflip on the no-lead sign-flip limiter (both reused from
+#   prius_longitudinal, not duplicated); camry_hybrid_ff alone on the 0.8
+#   positive feedforward scale.
 import os
 import sys
 
@@ -32,38 +39,30 @@ import re"""),
     if CP.flags & ToyotaFlags.RAISED_ACCEL_LIMIT:
       self.ACCEL_MAX = 2.0""",
      """  def __init__(self, CP):
-    if CP.flags & ToyotaFlags.RAISED_ACCEL_LIMIT and not camry_accel_cap(CP):
+    if CP.flags & ToyotaFlags.RAISED_ACCEL_LIMIT and not camry_part(CP, "camry_accel_cap"):
       self.ACCEL_MAX = 2.0"""),
     ("""def stopping_decel_rate(CP):""",
-     """CAMRY_HYBRID_TUNE = os.path.isfile("/data/ops_patches/camry_hybrid_tune")
-CAMRY_ACCEL_CAP = os.path.isfile("/data/ops_patches/camry_accel_cap")
-CAMRY_HYBRID_FF = os.path.isfile("/data/ops_patches/camry_hybrid_ff")
+     """# camry hybrid tune parts: each part is on iff /data/ops_patches/<part>
+# exists, checked once at import (touch the file and reboot to flip a part)
+CAMRY_MARKERS = {part: os.path.isfile(f"/data/ops_patches/{part}") for part in
+                 ("camry_ki", "camry_unwind", "camry_coast", "camry_signflip",
+                  "camry_stop_ramp", "camry_hybrid_ff", "camry_accel_cap")}
 
 
-def camry_hybrid_tune(CP) -> bool:
-  return bool(CAMRY_HYBRID_TUNE and CP.carFingerprint == CAR.TOYOTA_CAMRY and
-              CP.flags & ToyotaFlags.HYBRID and CP.flags & ToyotaFlags.LONG_FILTER)
-
-
-def camry_accel_cap(CP) -> bool:
-  return bool(CAMRY_ACCEL_CAP and CP.carFingerprint == CAR.TOYOTA_CAMRY and
-              CP.flags & ToyotaFlags.HYBRID and CP.flags & ToyotaFlags.LONG_FILTER)
-
-
-def camry_hybrid_ff(CP) -> bool:
-  return bool(CAMRY_HYBRID_FF and CP.carFingerprint == CAR.TOYOTA_CAMRY and
+def camry_part(CP, part) -> bool:
+  return bool(CAMRY_MARKERS[part] and CP.carFingerprint == CAR.TOYOTA_CAMRY and
               CP.flags & ToyotaFlags.HYBRID and CP.flags & ToyotaFlags.LONG_FILTER)
 
 
 def stopping_decel_rate(CP):
-  if camry_hybrid_tune(CP) and CP.openpilotLongitudinalControl:
+  if camry_part(CP, "camry_stop_ramp") and CP.openpilotLongitudinalControl:
     return 0.3"""),
   ],
   "carcontroller.py": [
     ("""from opendbc.car.toyota.values import CAR, CarControllerParams, ToyotaFlags, TOYOTA_AUTO_HOLD_CARS, uses_toyota_auto_hold_aeb""",
-     """from opendbc.car.toyota.values import CAR, CarControllerParams, ToyotaFlags, TOYOTA_AUTO_HOLD_CARS, camry_hybrid_ff, camry_hybrid_tune, uses_toyota_auto_hold_aeb"""),
+     """from opendbc.car.toyota.values import CAR, CarControllerParams, ToyotaFlags, TOYOTA_AUTO_HOLD_CARS, camry_part, uses_toyota_auto_hold_aeb"""),
     ("""  if prius or CP.flags & ToyotaFlags.TSS2:""",
-     """  if prius or camry_hybrid_tune(CP) or CP.flags & ToyotaFlags.TSS2:"""),
+     """  if prius or camry_part(CP, "camry_ki") or CP.flags & ToyotaFlags.TSS2:"""),
     ("""                       rate=1 / (DT_CTRL * 3))
 
 
@@ -81,10 +80,12 @@ def get_camry_hybrid_feedforward(accel):
 class CarController(CarControllerBase):"""),
     ("""    self.prius_longitudinal = prius_longitudinal.enabled(CP)""",
      """    self.prius_longitudinal = prius_longitudinal.enabled(CP)
-    self.camry_hybrid_tune = camry_hybrid_tune(CP)
-    self.camry_hybrid_ff = camry_hybrid_ff(CP)"""),
+    self.camry_unwind = camry_part(CP, "camry_unwind")
+    self.camry_coast = camry_part(CP, "camry_coast")
+    self.camry_signflip = camry_part(CP, "camry_signflip")
+    self.camry_hybrid_ff = camry_part(CP, "camry_hybrid_ff")"""),
     ("""          unwind = ACCEL_PID_UNWIND * (8. if self.prius_longitudinal and pcm_accel_cmd * self.long_pid.i < 0. else 1.)""",
-     """          unwind = ACCEL_PID_UNWIND * (8. if (self.prius_longitudinal or self.camry_hybrid_tune) and pcm_accel_cmd * self.long_pid.i < 0. else 1.)"""),
+     """          unwind = ACCEL_PID_UNWIND * (8. if (self.prius_longitudinal or self.camry_unwind) and pcm_accel_cmd * self.long_pid.i < 0. else 1.)"""),
     ("""          pcm_accel_cmd = self.long_pid.update(error_future,
                                                speed=CS.out.vEgo,
                                                feedforward=(prius_longitudinal.get_prius_feedforward(pcm_accel_cmd, CS.out.vEgo)
@@ -93,7 +94,7 @@ class CarController(CarControllerBase):"""),
      """          feedforward = pcm_accel_cmd
           if self.prius_longitudinal:
             feedforward = prius_longitudinal.get_prius_feedforward(feedforward, CS.out.vEgo)
-          elif self.camry_hybrid_tune and self.camry_hybrid_ff:
+          elif self.camry_hybrid_ff:
             # the THS eCVT over-responds to positive requests, scale them down
             feedforward = get_camry_hybrid_feedforward(feedforward)
 
@@ -104,7 +105,7 @@ class CarController(CarControllerBase):"""),
     ("""        if self.prius_longitudinal:
           self.permit_braking = prius_longitudinal.update_permit_braking(
             self.permit_braking, net_acceleration_request_min, stopping, long_active, CS.out.vEgo, lead)""",
-     """        if self.prius_longitudinal or self.camry_hybrid_tune:
+     """        if self.prius_longitudinal or self.camry_coast:
           self.permit_braking = prius_longitudinal.update_permit_braking(
             self.permit_braking, net_acceleration_request_min, stopping, long_active, CS.out.vEgo, lead)"""),
     ("""        if self.prius_longitudinal:
@@ -112,7 +113,7 @@ class CarController(CarControllerBase):"""),
             pcm_accel_cmd, actuators.accel, stopping, CS.out.vEgo, CS.out.cruiseState.speed, lead)
           pcm_accel_cmd = prius_longitudinal.limit_prius_stopping_accel(
             pcm_accel_cmd, actuators.accel, stopping, CS.out.vEgo, lead)""",
-     """        if self.prius_longitudinal or self.camry_hybrid_tune:
+     """        if self.prius_longitudinal or self.camry_signflip:
           pcm_accel_cmd = prius_longitudinal.limit_no_lead_cruise_sign_flip(
             pcm_accel_cmd, actuators.accel, stopping, CS.out.vEgo, CS.out.cruiseState.speed, lead)
         if self.prius_longitudinal:
