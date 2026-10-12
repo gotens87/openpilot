@@ -8,11 +8,12 @@ import sys
 TOYOTA = "/data/openpilot/opendbc_repo/opendbc/car/toyota"
 TEST_PATH = os.path.join(TOYOTA, "tests", "test_camry_sdsu.py")
 
-DEPENDENCIES = {
-  "interface.py": "camry_sdsu = candidate == CAR.TOYOTA_CAMRY",
-  "radar_interface.py": "def _update_tssp(self, updated_messages):",
-  "values.py": "def camry_hybrid_tune(CP) -> bool:",
-}
+DEPENDENCIES = [
+  ("interface.py", "camry_sdsu = candidate == CAR.TOYOTA_CAMRY"),
+  ("radar_interface.py", "def _update_tssp(self, updated_messages):"),
+  ("values.py", "def camry_hybrid_tune(CP) -> bool:"),
+  ("values.py", "def camry_accel_cap(CP) -> bool:"),
+]
 
 TEST_FILE = r'''import unittest
 
@@ -24,7 +25,7 @@ from opendbc.car.structs import CarParams
 from opendbc.car.toyota.carcontroller import CarController
 from opendbc.car.toyota.interface import CarInterface
 from opendbc.car.toyota.radar_interface import RadarInterface
-from opendbc.car.toyota.values import CAR, DBC, ToyotaFlags, CarControllerParams, camry_hybrid_tune, stopping_decel_rate
+from opendbc.car.toyota.values import CAR, DBC, ToyotaFlags, CarControllerParams, camry_accel_cap, camry_hybrid_tune, stopping_decel_rate
 
 Ecu = CarParams.Ecu
 
@@ -72,9 +73,10 @@ class TestCamrySdsuParams(unittest.TestCase):
     # radar traffic is only expected with the filter hardware present
     self.assertTrue(cp.radarUnavailable)
 
-  def test_tune_flag_defaults_off(self):
+  def test_tune_flags_default_off(self):
     cp = get_camry(SDSU_FINGERPRINT)
     self.assertFalse(camry_hybrid_tune(cp))
+    self.assertFalse(camry_accel_cap(cp))
     self.assertEqual(CarControllerParams(cp).ACCEL_MAX, 2.0)
     self.assertIsNone(stopping_decel_rate(cp))
     controller = CarController({Bus.pt: DBC[cp.carFingerprint][Bus.pt]}, cp)
@@ -162,7 +164,7 @@ def main():
     print(f"ERROR: {os.path.dirname(TEST_PATH)} missing")
     return 1
 
-  for name, marker in DEPENDENCIES.items():
+  for name, marker in DEPENDENCIES:
     path = os.path.join(TOYOTA, name)
     if not os.path.isfile(path):
       print(f"ERROR: {path} missing")

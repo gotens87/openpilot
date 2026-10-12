@@ -3,11 +3,14 @@
 # Camry Hybrid longitudinal tune, ported and gated behind a runtime marker:
 # active iff /data/ops_patches/camry_hybrid_tune exists, read once at process
 # start (a reboot applies a change). With the marker absent the car runs the
-# generic LONG_FILTER tune untouched.
+# generic LONG_FILTER tune untouched. The ACCEL_MAX 1.5 cap the tune was
+# developed against is gated on its own independent marker,
+# /data/ops_patches/camry_accel_cap (also read once at import), so the cap
+# can run with or without the rest of the tune.
 #
-# values.py: the marker + gate, ACCEL_MAX back to 1.5 for the flagged car
-#   (the tune was developed against 1.5; panda allows 2.0 either way), and
-#   stoppingDecelRate 0.3 through the existing helper.
+# values.py: both markers + gates; camry_accel_cap holds ACCEL_MAX at 1.5
+#   (panda allows 2.0 either way), and stoppingDecelRate 0.3 goes through the
+#   existing helper behind the tune marker only.
 # carcontroller.py: THS hybrid ki tune, 0.8 positive feedforward scale, 8x
 #   integral-mismatch unwind, and the permit-braking coast band / no-lead
 #   sign-flip limiter (both reused from prius_longitudinal, not duplicated).
@@ -25,14 +28,20 @@ import re"""),
     if CP.flags & ToyotaFlags.RAISED_ACCEL_LIMIT:
       self.ACCEL_MAX = 2.0""",
      """  def __init__(self, CP):
-    if CP.flags & ToyotaFlags.RAISED_ACCEL_LIMIT and not camry_hybrid_tune(CP):
+    if CP.flags & ToyotaFlags.RAISED_ACCEL_LIMIT and not camry_accel_cap(CP):
       self.ACCEL_MAX = 2.0"""),
     ("""def stopping_decel_rate(CP):""",
      """CAMRY_HYBRID_TUNE = os.path.isfile("/data/ops_patches/camry_hybrid_tune")
+CAMRY_ACCEL_CAP = os.path.isfile("/data/ops_patches/camry_accel_cap")
 
 
 def camry_hybrid_tune(CP) -> bool:
   return bool(CAMRY_HYBRID_TUNE and CP.carFingerprint == CAR.TOYOTA_CAMRY and
+              CP.flags & ToyotaFlags.HYBRID and CP.flags & ToyotaFlags.LONG_FILTER)
+
+
+def camry_accel_cap(CP) -> bool:
+  return bool(CAMRY_ACCEL_CAP and CP.carFingerprint == CAR.TOYOTA_CAMRY and
               CP.flags & ToyotaFlags.HYBRID and CP.flags & ToyotaFlags.LONG_FILTER)
 
 
