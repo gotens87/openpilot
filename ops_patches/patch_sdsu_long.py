@@ -10,7 +10,11 @@
 #   parser entry and the SDSU distance button all follow from LONG_FILTER.
 # carcontroller.py: run the TSS-P standstill latch for every LONG_FILTER car,
 #   not just the Prius. Without it RELEASE_STANDSTILL stays 1 on this hybrid
-#   and the PCM never latches standstill-hold.
+#   and the PCM never latches standstill-hold. The marker file
+#   /data/ops_patches/camry_sng (os.path.isfile, checked once at import)
+#   restores the old SNG hack: the latch is never set and always cleared, so
+#   the car auto-resumes from standstill behind a lead. No marker = stock
+#   latch behaviour. The auto-hold / brake_hold path is untouched.
 # carstate.py: keep LDA_ON_MESSAGE off non-Prius TSS-P cars; there it pulses
 #   with the stock LDA toggle, it is not a button.
 import os
@@ -36,11 +40,31 @@ EDITS = {
                                         bool(ret.flags & ToyotaFlags.DISABLE_RADAR.value))"""),
   ],
   "carcontroller.py": [
+    ("""import math
+import numpy as np""",
+     """import math
+import os
+import numpy as np"""),
+    ("""VisualAlert = structs.CarControl.HUDControl.VisualAlert""",
+     """VisualAlert = structs.CarControl.HUDControl.VisualAlert
+
+# /data/ops_patches/camry_sng (read once at import) restores the old SNG-hack
+# behaviour on the TSS-P long path: never latch standstill, always clear it,
+# so the car auto-resumes from standstill behind a lead
+CAMRY_SNG_HACK = os.path.isfile("/data/ops_patches/camry_sng")"""),
     ("""      if self.prius_longitudinal:
         if CS.out.standstill and not self.last_standstill:""",
      """      # TSS-P PCMs latch a standstill request that must be explicitly released to move again
       if self.CP.flags & ToyotaFlags.LONG_FILTER:
         if CS.out.standstill and not self.last_standstill:"""),
+    ("""        if CS.out.standstill and not self.last_standstill:
+          self.standstill_req = True""",
+     """        if CS.out.standstill and not self.last_standstill and not CAMRY_SNG_HACK:
+          self.standstill_req = True"""),
+    ("""        if CS.pcm_acc_status != 8 or CC.cruiseControl.resume:
+          self.standstill_req = False""",
+     """        if CS.pcm_acc_status != 8 or CC.cruiseControl.resume or CAMRY_SNG_HACK:
+          self.standstill_req = False"""),
   ],
   "carstate.py": [
     ("""    if self.CP.flags & (ToyotaFlags.TSS2 | ToyotaFlags.LONG_FILTER) or self.CP.carFingerprint == CAR.TOYOTA_PRIUS_RETROFIT:
