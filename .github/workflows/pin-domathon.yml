@@ -1,0 +1,83 @@
+name: Pin Domathon
+
+# Pins branch Domathon to an exact commit from upstream SecretGoodStarPilot,
+# chosen by the operator at dispatch time. Unlike rebuild-starpilot.yml there is
+# no patch series and no new commit: the pushed ref IS the upstream sha, so a
+# rollback is just a re-run with an older sha. workflow_dispatch only -- a pinned
+# mirror must not move on a schedule.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'Full 40-hex commit on upstream SecretGoodStarPilot to pin Domathon to'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pin-domathon
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: https://github.com/firestar5683/StarPilot.git
+  UPSTREAM_BRANCH: SecretGoodStarPilot
+  TARGET_BRANCH: Domathon
+
+jobs:
+  pin:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate input
+        env:
+          INPUT_SHA: ${{ inputs.sha }}
+        run: |
+          if ! printf '%s\n' "$INPUT_SHA" | grep -qxE '[0-9a-f]{40}'; then
+            echo "::error::sha must be a full 40-character lowercase hex commit, got '$INPUT_SHA'"
+            exit 1
+          fi
+          echo "PIN_SHA=$INPUT_SHA" >> "$GITHUB_ENV"
+
+      - name: Check sha is on SecretGoodStarPilot
+        env:
+          GH_TOKEN: ${{ secrets.PATCHQUEUE_TOKEN }}
+        run: |
+          # The compare API answers the ancestry question without cloning a ~6k-file
+          # repo: base=branch, head=sha, so behind/identical means the sha is an
+          # ancestor-or-equal of the SecretGoodStarPilot tip. ahead/diverged means it
+          # belongs to some other branch; an unknown sha 404s and fails the step.
+          upstream=${UPSTREAM_REPO#https://github.com/}
+          status=$(gh api "repos/${upstream%.git}/compare/${UPSTREAM_BRANCH}...${PIN_SHA}" --jq .status)
+          echo "compare $UPSTREAM_BRANCH...$PIN_SHA: $status"
+          if [ "$status" != behind ] && [ "$status" != identical ]; then
+            echo "::error::$PIN_SHA is not reachable from $UPSTREAM_BRANCH (compare: $status) - refusing to pin"
+            exit 1
+          fi
+
+      - name: Pin Domathon
+        env:
+          PATCHQUEUE_TOKEN: ${{ secrets.PATCHQUEUE_TOKEN }}
+        run: |
+          # PAT, not GITHUB_TOKEN: the pushed tree contains .github/workflows, which
+          # GITHUB_TOKEN is not permitted to push.
+          remote="https://x-access-token:${PATCHQUEUE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          current=$(git ls-remote "$remote" "refs/heads/$TARGET_BRANCH" | cut -f1)
+
+          if [ "$current" = "$PIN_SHA" ]; then
+            echo "$TARGET_BRANCH already at $PIN_SHA - nothing to do"
+            exit 0
+          fi
+
+          git init -q work
+          cd work
+          git remote add upstream "$UPSTREAM_REPO"
+          git fetch -q --depth=1 --no-tags upstream "$PIN_SHA"
+
+          # --force because pinning an older sha (rollback) is a non-fast-forward.
+          git push -q --force "$remote" "$PIN_SHA:refs/heads/$TARGET_BRANCH"
+          echo "pinned $TARGET_BRANCH: ${current:-none} -> $PIN_SHA"
+
+# ponytail: no job-summary step. The pinned sha and pushed-or-not are in the step
+# logs, which is where you look when it breaks.
