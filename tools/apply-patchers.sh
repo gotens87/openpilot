@@ -49,6 +49,7 @@ case "$PATCHER_SET" in
       patch_camry_hybrid_tune.py
       patch_camry_sdsu_tests.py
       patch_park_offroad.py
+      patch_camry_cem.py
     )
     SUBJECTS=(
       "Toyota TSS-P Camry: openpilot longitudinal via sDSU"
@@ -56,6 +57,7 @@ case "$PATCHER_SET" in
       "Toyota Camry Hybrid: opt-in longitudinal tune"
       "Toyota TSS-P Camry: sDSU port regression tests"
       "Offroad Without OBD Power: auto-offroad on park entry + exit"
+      "Toyota TSS-P Camry: conditional experimental mode (marker camry_cem)"
     )
     ;;
   *)
