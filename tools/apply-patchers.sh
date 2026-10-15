@@ -50,6 +50,7 @@ case "$PATCHER_SET" in
       patch_camry_sdsu_tests.py
       patch_park_offroad.py
       patch_camry_cem.py
+      patch_fan_floor.py
     )
     SUBJECTS=(
       "Toyota TSS-P Camry: openpilot longitudinal via sDSU"
@@ -58,6 +59,7 @@ case "$PATCHER_SET" in
       "Toyota TSS-P Camry: sDSU port regression tests"
       "Offroad Without OBD Power: auto-offroad on park entry + exit"
       "Toyota TSS-P Camry: conditional experimental mode (marker camry_cem)"
+      "comma 3: raise ignition-on fan floor for degraded fan (marker fan_floor)"
     )
     ;;
   *)
