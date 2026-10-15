@@ -55,9 +55,12 @@ def _create_tssp_radar_can_parser(CP):
 
 def _create_wheel_speed_can_parser(CP):
   return CANParser(DBC[CP.carFingerprint][Bus.pt], [("WHEEL_SPEEDS", 80)], 0)"""),
-    ("""class RadarInterface(RadarInterfaceBase):
-  def __init__(self, CP):
-    super().__init__(CP)
+    ("""    self.ars510 = None
+    if CP.carFingerprint in ARS510_RADAR_CAR and CP.flags & ToyotaFlags.ARS510_RADAR and not CP.radarUnavailable:
+      parser = Ars510FusedRadarInterface if CP.flags & ToyotaFlags.ARS510_FUSED else Ars510AccRadarInterface
+      self.ars510 = parser(CP)
+      self.rcp = None
+      return
     if CP.flags & ToyotaFlags.TSS2:
       self.RADAR_A_MSGS = list(range(0x180, 0x190))
       self.RADAR_B_MSGS = list(range(0x190, 0x1a0))
@@ -70,9 +73,12 @@ def _create_wheel_speed_can_parser(CP):
     self.rcp = None if CP.radarUnavailable else _create_radar_can_parser(CP)
     self.trigger_msg = self.RADAR_B_MSGS[-1]
     self.updated_messages = set()""",
-     """class RadarInterface(RadarInterfaceBase):
-  def __init__(self, CP):
-    super().__init__(CP)
+     """    self.ars510 = None
+    if CP.carFingerprint in ARS510_RADAR_CAR and CP.flags & ToyotaFlags.ARS510_RADAR and not CP.radarUnavailable:
+      parser = Ars510FusedRadarInterface if CP.flags & ToyotaFlags.ARS510_FUSED else Ars510AccRadarInterface
+      self.ars510 = parser(CP)
+      self.rcp = None
+      return
     self.radar_acc_tssp = CP.carFingerprint in RADAR_ACC_TSSP_CAR
 
     if self.radar_acc_tssp:
