@@ -51,7 +51,6 @@ case "$PATCHER_SET" in
       patch_park_offroad.py
       patch_camry_cem.py
       patch_fan_floor.py
-      patch_fan_alarm.py
       patch_fan_reboot_retry.py
     )
     SUBJECTS=(
@@ -62,7 +61,6 @@ case "$PATCHER_SET" in
       "Offroad Without OBD Power: auto-offroad on park entry + exit"
       "Toyota TSS-P Camry: conditional experimental mode (marker camry_cem)"
       "comma 3: raise ignition-on fan floor for degraded fan (marker fan_floor)"
-      "comma 3: loud repeating fan-failure alarm"
       "comma 3: reboot to retry a dead fan after ignition-on"
     )
     ;;
