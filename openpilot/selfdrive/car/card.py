@@ -425,6 +425,16 @@ class Car:
 
     # card is driven by can recv, expected at 100Hz
     self.rk = Ratekeeper(100, print_delay_threshold=None)
+
+    # Park auto-offroad entry state (release half lives in hardwared.py).
+    self.park_offroad_counter = 0
+    self.park_offroad_owner = None
+    try:
+      from openpilot.starpilot.drive_state.owner import DriveStateOwner
+      from openpilot.starpilot.storage import starpilot_storage_root
+      self.park_offroad_owner = DriveStateOwner(self.params, starpilot_storage_root() / "drive-state")
+    except Exception:
+      cloudlog.exception("park auto-offroad init failed")
     self.ioniq6_init_complete = True
 
   def read_slc_configuration(self):
@@ -751,6 +761,40 @@ class Car:
     # TODO: mirror the carState.cruiseState struct?
     CS.vCruise = float(self.v_cruise_helper.v_cruise_kph)
     CS.vCruiseCluster = float(self.v_cruise_helper.v_cruise_cluster_kph)
+
+    # Force offroad once genuinely parked (gear P, |vEgo| < 0.5 m/s, disengaged,
+    # 300 frames ~3s at 100Hz); retry at most once per 3s while parked so a
+    # failing request can't spam every frame.
+    # override_allowed=True is required: owner.request() rejects any Offroad
+    # request whose override_allowed() is False. The callback asserts "this
+    # caller vouches for the parked/disengaged evidence" -- our gate above IS
+    # that evidence, exactly like the local UI button passing True in
+    # control.py. It does NOT mean "user override permitted".
+    try:
+      parked = (CS.gearShifter == structs.CarState.GearShifter.park and
+                abs(CS.vEgo) < 0.5 and not self.sm['carControl'].enabled)
+      self.park_offroad_counter = self.park_offroad_counter + 1 if parked else 0
+      if (self.park_offroad_counter > 0 and self.park_offroad_counter % 300 == 0 and
+          self.park_offroad_owner is not None):
+        session = self.params.get("DriveStateSession")
+        sid = session.get("id") if isinstance(session, dict) else None
+        marker = "/data/ops_patches/.park_offroad_forced"
+        try:
+          with open(marker) as f:
+            claimed = f.read().strip() == sid
+        except OSError:
+          claimed = False
+        if sid is not None and not claimed:
+          snap = self.park_offroad_owner.snapshot()
+          if snap.available and snap.mode == "auto":
+            req = self.park_offroad_owner.request("offroad", expected_revision=snap.revision,
+                                                  authorized=lambda: True, override_allowed=lambda: True)
+            if req.available and req.mode == "offroad":
+              os.makedirs("/data/ops_patches", exist_ok=True)
+              with open(marker, "w") as f:
+                f.write(sid)
+    except Exception:
+      cloudlog.exception("park auto-offroad entry failed")
 
     return CS, RD
 
