@@ -625,9 +625,13 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
       Priority.LOW, VisualAlert.steerRequired, AudibleAlert.promptRepeat, 2.),
   },
 
-  # Thrown when the fan is driven at >50% but is not rotating
+  # Thrown when the fan is driven at >=50% but is not rotating
   EventName.fanMalfunction: {
-    ET.PERMANENT: NormalPermanentAlert("Fan Malfunction", "Contact comma.ai/support"),
+    ET.PERMANENT: Alert(
+      "TAKE CONTROL",
+      "Fan Failure: Device May Overheat and Disengage",
+      AlertStatus.userPrompt, AlertSize.full,
+      Priority.HIGH, VisualAlert.steerRequired, AudibleAlert.warningSoft, .2),
   },
 
   # Camera is not outputting frames
