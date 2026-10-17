@@ -1,5 +1,6 @@
 import copy
 import math
+import os
 
 from opendbc.can import CANDefine, CANParser
 from opendbc.car import Bus, DT_CTRL, create_button_events, structs
@@ -13,6 +14,22 @@ from opendbc.car.toyota.values import ToyotaFlags, CAR, DBC, STEER_THRESHOLD, EP
 
 ButtonType = structs.CarState.ButtonEvent.Type
 SteerControlType = structs.CarParams.SteerControlType
+
+
+def _camry_cluster_ratio():
+  if not os.path.isfile("/data/ops_patches/camry_cluster_speed"):
+    return None
+  try:
+    with open("/data/ops_patches/camry_cluster_speed") as f:
+      ratio = float(f.read().strip())
+  except (OSError, ValueError):
+    return 1.04
+  return ratio if 1.0 <= ratio <= 1.10 else 1.04
+
+
+# /data/ops_patches/camry_cluster_speed (read once at import) scales the UI
+# cluster speed to match the Camry dash's ~4% over-read; None = stock 1.015
+CAMRY_CLUSTER_RATIO = _camry_cluster_ratio()
 
 # These steering fault definitions seem to be common across LKA (torque) and LTA (angle):
 # - high steer rate fault: goes to 21 or 25 for 1 frame, then 9 for 2 seconds
@@ -95,7 +112,9 @@ class CarState(CarStateBase):
       cp.vl["WHEEL_SPEEDS"]["WHEEL_SPEED_RL"],
       cp.vl["WHEEL_SPEEDS"]["WHEEL_SPEED_RR"],
     )
-    ret.vEgoCluster = ret.vEgo * 1.015  # minimum of all the cars
+    # on the sDSU long path, the marker-controlled ratio matches the UI speed to the Camry dash
+    cluster_ratio = CAMRY_CLUSTER_RATIO if (self.CP.flags & ToyotaFlags.LONG_FILTER and CAMRY_CLUSTER_RATIO is not None) else 1.015
+    ret.vEgoCluster = ret.vEgo * cluster_ratio  # minimum of all the cars
 
     ret.standstill = abs(ret.vEgoRaw) < 1e-3
 
@@ -192,8 +211,9 @@ class CarState(CarStateBase):
       self.pcm_follow_distance = cp.vl["PCM_CRUISE_2"]["PCM_FOLLOW_DISTANCE"]
 
     buttonEvents = []
-    if self.CP.flags & (ToyotaFlags.TSS2 | ToyotaFlags.LONG_FILTER) or self.CP.carFingerprint == CAR.TOYOTA_PRIUS_RETROFIT:
-      # lkas button is wired to the camera
+    # on TSS-P, LDA_ON_MESSAGE pulses with the stock LDA toggle, so only treat it as a button on the Prius
+    if (self.CP.flags & ToyotaFlags.TSS2 or self.CP.carFingerprint == CAR.TOYOTA_PRIUS_RETROFIT or
+        (self.CP.flags & ToyotaFlags.LONG_FILTER and self.CP.carFingerprint == CAR.TOYOTA_PRIUS)):
       prev_lkas_button = self.lkas_button
       self.lkas_button = cp_cam.vl["LKAS_HUD"]["LDA_ON_MESSAGE"]
 
