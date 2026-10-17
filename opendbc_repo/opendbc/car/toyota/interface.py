@@ -124,7 +124,7 @@ class CarInterface(CarInterfaceBase):
     if 0x3F6 in fingerprint[0] and ret.flags & ToyotaFlags.TSS2:
       ret.flags |= ToyotaFlags.HAS_BSM.value
 
-    ret.radarUnavailable = Bus.radar not in DBC[candidate]
+    ret.radarUnavailable = Bus.radar not in DBC[candidate] or (candidate == CAR.TOYOTA_CAMRY and not camry_sdsu)
 
     # since we don't yet parse radar on TSS2 radar-based ACC cars, gate longitudinal behind alpha toggle
     if ret.flags & ToyotaFlags.RADAR_ACC:
