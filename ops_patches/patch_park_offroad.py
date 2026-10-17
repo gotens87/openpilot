@@ -1,13 +1,23 @@
 #!/usr/bin/env python3
 # "Offroad Without OBD Power" -- park auto-offroad for a constantly powered
 # comma (2018 Camry Hybrid, TSS-P, ignition never drops at park). Force the
-# device offroad once genuinely parked (gear=P, |vEgo| < 0.5 m/s, ~3s dwell)
-# and release it the moment the gear leaves P. On 7.0 both halves go through
-# the native drive-state owner (snapshot + request with expected_revision,
-# authorized/override_allowed callbacks) instead of the removed ForceOffroad
-# param: entry requests "offroad" from card.py (runs onroad, carState in hand,
-# no new subscribers), release requests "auto" from hardwared.py (always runs,
-# card stops once offroad) by parsing GEAR_PACKET(_HYBRID) off CAN like before.
+# device offroad once genuinely parked (gear=P, |vEgo| < 0.5 m/s, disengaged,
+# ~3s dwell) and release it the moment the gear leaves P. On 7.0 both halves
+# go through the native drive-state owner (snapshot + request with
+# expected_revision, authorized/override_allowed callbacks) instead of the
+# removed ForceOffroad param: entry requests "offroad" from card.py (runs
+# onroad, carState in hand, no new subscribers), release requests "auto" from
+# hardwared.py (always runs, card stops once offroad) by parsing
+# GEAR_PACKET(_HYBRID) off CAN like before.
+#
+# Callback semantics that matter here: DriveStateOwner.request() rejects ANY
+# Offroad request whose override_allowed() returns False ("Park the vehicle
+# and disengage before forcing Offroad"). override_allowed means "this caller
+# vouches for the parked/disengaged physical evidence" -- the local UI button
+# passes True (control.py DriveStateControl.change), and the entry gate below
+# IS our physical evidence, so it must pass True as well. Passing False makes
+# every entry attempt raise Rejected and the marker is never written.
+#
 # The marker file carries the DriveStateSession id, so we only ever release a
 # force we applied this manager session -- a stale marker after reboot is just
 # deleted (manager re-initializes the request to auto, so nothing stays stuck),
@@ -34,10 +44,17 @@ CARD_NEW_INIT = """    self.rk = Ratekeeper(100, print_delay_threshold=None)
 CARD_OLD_PARK = "    CS.vCruiseCluster = float(self.v_cruise_helper.v_cruise_cluster_kph)"
 CARD_NEW_PARK = """    CS.vCruiseCluster = float(self.v_cruise_helper.v_cruise_cluster_kph)
 
-    # Force offroad once genuinely parked (gear P, |vEgo| < 0.5 m/s, 300 frames ~3s at 100Hz);
-    # retry at most once per 3s while parked so a failing request can't spam every frame.
+    # Force offroad once genuinely parked (gear P, |vEgo| < 0.5 m/s, disengaged,
+    # 300 frames ~3s at 100Hz); retry at most once per 3s while parked so a
+    # failing request can't spam every frame.
+    # override_allowed=True is required: owner.request() rejects any Offroad
+    # request whose override_allowed() is False. The callback asserts "this
+    # caller vouches for the parked/disengaged evidence" -- our gate above IS
+    # that evidence, exactly like the local UI button passing True in
+    # control.py. It does NOT mean "user override permitted".
     try:
-      parked = CS.gearShifter == structs.CarState.GearShifter.park and abs(CS.vEgo) < 0.5
+      parked = (CS.gearShifter == structs.CarState.GearShifter.park and
+                abs(CS.vEgo) < 0.5 and not self.sm['carControl'].enabled)
       self.park_offroad_counter = self.park_offroad_counter + 1 if parked else 0
       if (self.park_offroad_counter > 0 and self.park_offroad_counter % 300 == 0 and
           self.park_offroad_owner is not None):
@@ -53,7 +70,7 @@ CARD_NEW_PARK = """    CS.vCruiseCluster = float(self.v_cruise_helper.v_cruise_c
           snap = self.park_offroad_owner.snapshot()
           if snap.available and snap.mode == "auto":
             req = self.park_offroad_owner.request("offroad", expected_revision=snap.revision,
-                                                  authorized=lambda: True, override_allowed=lambda: False)
+                                                  authorized=lambda: True, override_allowed=lambda: True)
             if req.available and req.mode == "offroad":
               os.makedirs("/data/ops_patches", exist_ok=True)
               with open(marker, "w") as f:
