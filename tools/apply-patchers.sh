@@ -53,6 +53,7 @@ case "$PATCHER_SET" in
       patch_fan_floor.py
       patch_fan_reboot_retry.py
       patch_camry_smooth_onset.py
+      patch_camry_small_step.py
     )
     SUBJECTS=(
       "Toyota TSS-P Camry: openpilot longitudinal via sDSU"
@@ -64,6 +65,7 @@ case "$PATCHER_SET" in
       "comma 3: raise ignition-on fan floor for degraded fan (marker fan_floor)"
       "comma 3: reboot to retry a dead fan after ignition-on"
       "Toyota Camry Hybrid: smoother cruise accel onset (marker camry_smooth_onset)"
+      "Toyota Camry Hybrid: fix unnatural throttle control on small set-speed changes (marker camry_small_step)"
     )
     ;;
   *)
