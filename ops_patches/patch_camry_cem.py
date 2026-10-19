@@ -3,10 +3,10 @@
 # Conditional Experimental Mode (CEM) startup.
 #
 # feature_runtime.py: upstream feature_enabled(params, cp, 'conditional', env)
-#   now routes capability through starpilot/feature_capabilities.py
-#   (longitudinal_supported: openpilotLongitudinalControl True, not
-#   passive/dashcamOnly/notCar, GM additionally validated by its native
-#   safety-word configuration). With the marker file
+#   admits only the Ioniq 6 (ioniq6_long_eligible) and GM long cars
+#   (gm_long_supported); both require not pcmCruise, so on this pcmCruise=True
+#   Camry the gate is False and every caller (selfdrived, plannerd, radard,
+#   ui) declines to construct the CEM owners at all. With the marker file
 #   /data/ops_patches/camry_cem present (os.path.isfile, read once at import)
 #   the 'conditional' feature additionally admits a brand == 'toyota' CarParams
 #   passing experimental_available() (openpilotLongitudinalControl True, not
@@ -39,18 +39,21 @@ from openpilot.starpilot.conditional_mode.runtime_settings import experimental_a
 
 # /data/ops_patches/camry_cem (read once at import) also admits a TSS-P Toyota
 # with openpilot longitudinal (the sDSU LONG_FILTER Camry from patch_sdsu_long)
-# to the conditional-mode startup gate upstream now routes through
-# feature_capabilities.longitudinal_supported. Absent marker = upstream
-# admission exactly.
+# to the conditional-mode startup gate upstream reserves for the Ioniq 6 and
+# GM long cars. Absent marker = upstream admission exactly.
 CAMRY_CEM = os.path.isfile("/data/ops_patches/camry_cem")
 
 
 def _toyota_cem_capable(cp) -> bool:
   # experimental_available: openpilotLongitudinalControl, not passive/dashcamOnly/notCar
   return bool(CAMRY_CEM and getattr(cp, 'brand', None) == 'toyota' and experimental_available(cp))"""),
-    ("""  capable = display_supported(cp) if feature in ('slc', 'vision') else longitudinal_supported(cp)""",
-     """  capable = display_supported(cp) if feature in ('slc', 'vision') else longitudinal_supported(cp)
-  capable = capable or (feature == 'conditional' and _toyota_cem_capable(cp))"""),
+    ("""  capable = cp is not None and (ioniq6_long_eligible(cp) or
+                                (feature in ('conditional', 'curve', 'slc', 'profile') and gm_long_supported(cp)) or
+                                (feature in ('slc', 'vision') and gm_display_supported(cp)))""",
+     """  capable = cp is not None and (ioniq6_long_eligible(cp) or
+                                (feature == 'conditional' and _toyota_cem_capable(cp)) or
+                                (feature in ('conditional', 'curve', 'slc', 'profile') and gm_long_supported(cp)) or
+                                (feature in ('slc', 'vision') and gm_display_supported(cp)))"""),
   ],
 }
 
