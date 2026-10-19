@@ -25,6 +25,7 @@ import numpy as np
 from opendbc.can import CANParser, CANPacker
 from opendbc.car import Bus, structs
 from opendbc.car.structs import CarParams
+from opendbc.car.toyota import carcontroller
 from opendbc.car.toyota.carcontroller import CarController
 from opendbc.car.toyota.interface import CarInterface
 from opendbc.car.toyota.radar_interface import RadarInterface
@@ -100,10 +101,11 @@ class TestCamryStandstillLatch(unittest.TestCase):
     self.parser = CANParser(DBC[self.cp.carFingerprint][Bus.pt], [("ACC_CONTROL", 33)], 0)
     self.now = 1_000_000_000
 
-  def step(self, standstill, pcm_acc_status, resume=False):
+  def step(self, standstill, pcm_acc_status, resume=False, long_active=True):
     self.state.out.standstill = standstill
     self.state.pcm_acc_status = pcm_acc_status
     command = structs.CarControl()
+    command.longActive = long_active
     command.cruiseControl.resume = resume
     command = command.as_reader()
     release = None
@@ -123,6 +125,27 @@ class TestCamryStandstillLatch(unittest.TestCase):
     self.assertEqual(self.step(True, 8), 0)   # still waiting on the PCM
     self.assertEqual(self.step(True, 7), 1)   # PCM latched the stop: release
     self.assertEqual(self.step(True, 8, resume=True), 1)  # resume releases
+
+  def test_inactive_standstill_keeps_latch(self):
+    # upstream behaviour, marker off: long inactive at a stop must not release the PCM hold
+    self.assertEqual(self.step(False, 8, long_active=False), 1)  # driving: released
+    self.assertEqual(self.step(True, 8, long_active=False), 0)   # stop edge: latch
+    self.assertEqual(self.step(True, 7, long_active=False), 0)   # PCM latched, but inactive: hold stays requested
+    self.assertEqual(self.step(True, 8, resume=True, long_active=False), 0)  # resume while inactive: hold stays requested
+    self.assertEqual(self.step(True, 7), 1)  # long active again: normal release
+
+  def test_sng_hack_never_latches(self):
+    # camry_sng marker: never latch, never re-latch when inactive, so the car
+    # auto-resumes from standstill behind a lead
+    carcontroller.CAMRY_SNG_HACK = True
+    try:
+      self.assertEqual(self.step(False, 8, long_active=False), 1)
+      self.assertEqual(self.step(True, 8, long_active=False), 1)   # stop edge: no latch
+      self.assertEqual(self.step(True, 8, long_active=False), 1)   # inactive at stop: stays released
+      self.assertEqual(self.step(True, 8, resume=True, long_active=False), 1)
+      self.assertEqual(self.step(True, 8), 1)  # engaged stop edge: still no latch
+    finally:
+      carcontroller.CAMRY_SNG_HACK = False
 
 
 class TestCamryTsspRadar(unittest.TestCase):

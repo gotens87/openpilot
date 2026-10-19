@@ -73,6 +73,11 @@ CAMRY_SNG_HACK = os.path.isfile("/data/ops_patches/camry_sng")"""),
           self.standstill_req = False""",
      """        if CS.pcm_acc_status != 8 or CC.cruiseControl.resume or CAMRY_SNG_HACK:
           self.standstill_req = False"""),
+    ("""        if not long_active and CS.out.standstill:
+          self.standstill_req = True""",
+     """        # camry_sng never latches standstill, so the inactive-at-stop re-latch must not either
+        if not long_active and CS.out.standstill and not CAMRY_SNG_HACK:
+          self.standstill_req = True"""),
   ],
   "carstate.py": [
     ("""import copy
