@@ -52,8 +52,6 @@ case "$PATCHER_SET" in
       patch_camry_cem.py
       patch_fan_floor.py
       patch_fan_reboot_retry.py
-      patch_camry_smooth_onset.py
-      patch_camry_small_step.py
       patch_camry_cruise_shaper.py
       patch_ops_settings.py
     )
@@ -66,8 +64,6 @@ case "$PATCHER_SET" in
       "Toyota TSS-P Camry: conditional experimental mode (marker camry_cem)"
       "comma 3: raise ignition-on fan floor for degraded fan (marker fan_floor)"
       "comma 3: reboot to retry a dead fan after ignition-on"
-      "Toyota Camry Hybrid: smoother cruise accel onset (marker camry_smooth_onset)"
-      "Toyota Camry Hybrid: fix unnatural throttle control on small set-speed changes (marker camry_small_step)"
       "Toyota Camry Hybrid: fix unnatural throttle control (marker camry_cruise_shaper)"
       "Ops settings: enforce desired params and feature markers once per boot"
     )
@@ -88,6 +84,13 @@ esac
 #  - patch_radar_yaw.py -- tunable radar boresight yaw correction (default 0.0 =
 #    stock). Pulled 2026-08-17: one ambiguous on-road test (chevron pulled left at
 #    +0.095deg), never conclusively resolved, needs a real retest.
+#
+# Retired, not shelved -- dropped from the active set when upstream reworked
+# get_cruise_accel (a_target_prev / decel_start slew); files kept in
+# ops_patches/ for history only:
+#  - patch_camry_smooth_onset.py -- marker was already off; no longer applies.
+#  - patch_camry_small_step.py -- superseded by patch_camry_cruise_shaper.py
+#    (the shaper never needed its cap: a pulse owns the candidate while active).
 
 if [ "${1:-}" = "--count" ]; then
   echo "${#PATCHERS[@]}"

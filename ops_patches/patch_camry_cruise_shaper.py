@@ -1,49 +1,59 @@
 #!/usr/bin/env python3
-# 2018 Camry Hybrid (THS eCVT), set-speed step response, v6.
+# 2018 Camry Hybrid (THS eCVT), set-speed step response, v7.
 #
-# V6 = v5 plus the three real grok4 must-fixes (grok4.md). Grok4 item
-# 1 is a misread: the post-slew hard clip already sits AFTER the stock
-# jerk-slew line -- the slew line is unchanged stock text, so it does
-# not appear in the diff hunk -- and is left as is. The pulse law
-# tuned to the owner's measured old-fork taps, the gates and every
-# v4/v5 safety fix are unchanged:
+# V7 = v6 (the grok4-signed-off shaper) rebased onto the upstream that
+# gave get_cruise_accel the a_target_prev keyword and changed the
+# cruise slew lower bound to
+#   decel_start = a_cruise_prev if a_target_prev is None
+#                 else min(a_cruise_prev, a_target_prev).
+# camry_smooth_onset and camry_small_step are retired (smooth_onset's
+# marker is off; small_step is superseded by this shaper), so v7
+# applies to the UNPATCHED upstream longitudinal_planner.py -- no
+# other ops patch runs before it. Rebase deltas, none of which touch
+# the shaper's pulse law, gates, clamps or constants:
+#
+#   * the small_step parameter, the small_step= call argument and the
+#     "small_step cleared while a pulse owns the candidate" line are
+#     gone -- the cap patch no longer exists to interact with;
+#   * the arm-time jerk cap reads the single upstream J_CRUISE_VALS
+#     table; the retired smooth_onset split kept its down table at
+#     these same stock values, so the cap is numerically identical;
+#   * the post-slew hard clip still sits AFTER the stock slew line,
+#     and that slew line keeps upstream's decel_start semantics
+#     verbatim -- when output_a_target < a_cruise_prev the cruise
+#     candidate's per-frame decel limit is now min(a_cruise_prev,
+#     a_target_prev) - j*dt (upstream's change; it binds stock and
+#     shaped candidates alike and the shaper neither weakens nor
+#     strengthens it);
+#   * import os is added here (it previously rode in with small_step).
+#
+# Unchanged from v6 -- the pulse law tuned to the owner's measured
+# old-fork taps, the gates and every v4/v5/v6 safety fix:
 #
 #   * MUST-FIX 2 (corr double-count): the settle correction is 0 for
 #     the whole cosine and runs only after it ends (the plan's done
-#     flag now rides in the shaper tuple). In v5 corr was added on
-#     every armed frame, so the loop got the pulse area (0.80 of the
-#     gap) PLUS corr on the full remaining gap at once: a +1 km/h tap
-#     at 100 km/h (A 0.059, T 7.5 s, pulse area 0.22 of the 0.28 m/s
-#     gap) crossed the new set speed near 3.5 s and hit the 0.3 m/s
-#     overshoot trip near 5 s -- the backstop was the NORMAL end of a
-#     one-tick. With corr gated, the pulse alone can never carry ego
-#     through the set speed, the leftover 20% creeps in under CORR
-#     after T (or is handed to stock residue-free by the settle
-#     disarm), and the overshoot trip is a pure backstop again.
+#     flag rides in the shaper tuple). The pulse alone -- 0.80 of the
+#     gap by construction -- can never carry ego through the set
+#     speed; the leftover 20% creeps in under CORR after T (or is
+#     handed to stock residue-free by the settle disarm), and the
+#     0.3 m/s overshoot trip is a pure backstop.
 #   * MUST-FIX 3 (clamp blocks closing): the monotone tap-frame clamp
 #     is checked EVERY frame, not just at the tap: the plan is dropped
 #     the same frame an up-tap floor at/above 0 sees ego past the set
 #     speed (gap < 0), or a down-tap ceiling at/below 0 sees ego short
-#     of it (gap > 0) -- v5 could floor a positive command through the
-#     set speed and run away until the brake pedal (up-tap while
-#     already above the new set with a_cruise > 0, and the mirror).
-#     And once the cosine has ended, a crossing beyond the arm
-#     threshold (0.2 m/s) in EITHER direction hands back to stock,
-#     closing the 0.2..0.3 m/s band the v5 settle/overshoot pair left
-#     armed with the clamp blocking the correction. The 0.3 m/s trip
-#     stays as the mid-pulse backstop.
+#     of it (gap > 0). And once the cosine has ended, a crossing
+#     beyond the arm threshold (0.2 m/s) in EITHER direction hands
+#     back to stock. The 0.3 m/s trip stays as the mid-pulse backstop.
 #   * MUST-FIX 4 (jerk after duration clamp): after dur = min(8 s, ..)
-#     the amplitude is re-capped so pi*A/dur <= J_CRUISE_DOWN(v) --
-#     v5's sqrt limit used the UNCLAMPED T, so a 1-tick far from the
-#     set speed shortened T to 8 s and steepened the same A. The area
-#     the re-cap removes goes to the settle phase, never to a stock
-#     step.
+#     the amplitude is re-capped so pi*A/dur <= J_CRUISE_VALS(v). The
+#     area the re-cap removes goes to the settle phase, never to a
+#     stock step.
 #
 # Retained from v5/v4, untouched by these fixes (grok3 must-fixes):
 #
 #   * Every button step of 0.2..2.5 m/s, either direction, re-plans a
 #     fresh pulse from the CURRENT v_ego and a_cruise, zero slope at
-#     both ends, peak jerk clamped to J_CRUISE_DOWN(v).
+#     both ends, peak jerk clamped to the cruise jerk table at v.
 #   * The tap-frame command a_cruise is stored RAW (never max/min with
 #     0) as a monotone clamp for the life of the plan: an up-tap floors
 #     the command there, a down-tap ceilings it there. Enforced pre-
@@ -63,8 +73,8 @@
 #     stack (speed table, selected/profile caps, turn limit
 #     a_x_allowed, throttle-gate coast limit; e2e excluded by the
 #     gate).
-#   * Hard same-frame clip AFTER the shared J_CRUISE slew, every
-#     cycle, stock and shaped alike: bounds are cruise_min/max_accel
+#   * Hard same-frame clip AFTER the shared stock slew, every cycle,
+#     stock and shaped alike: bounds are cruise_min/max_accel
 #     (max_accel already folds ACCEL_MAX, the turn limit, the coast
 #     limit and every profile/selected cap for THIS cycle), and while
 #     a plan owns the candidate the clip also carries the shaper peak
@@ -72,15 +82,16 @@
 #     monotone tap-frame clamps. Plan clamps yield to the safety caps
 #     on conflict.
 #
-# Arms only for button steps of 0.2..2.5 m/s. Same exclusions as v5:
-# any cruise/curve/nav ceiling, force-stop plan, coast plan,
-# forceDecel, standstill, driver pedal, experimental mode or reset
-# disarms instantly. It shapes ONLY the cruise candidate: MPC/lead/e2e
+# Arms only for button steps of 0.2..2.5 m/s. Exclusions: any
+# cruise/curve/nav ceiling, force-stop plan, coast plan, forceDecel,
+# standstill, driver pedal, experimental mode or reset disarms
+# instantly. It shapes ONLY the cruise candidate: MPC/lead/e2e
 # candidates, shouldStop, allowThrottle and all ceiling logic are
 # untouched; min() candidate arbitration can never be weakened by a
 # stronger cruise request; the shaped target still passes through the
-# common stock slew (same dt, same a_cruise_prev) AND the post-slew
-# clip, with no early return in any branch.
+# common stock slew (same dt; upstream's decel_start lower bound
+# unchanged) AND the post-slew clip, with no early return in any
+# branch.
 #
 # Optional marker contents: "gain_pct[,cap_cm[,decel_cm[,corr_centi]]]"
 # (gain 40..200 = G0 in percent, default 40; cap 25..100 in cm/s^2,
@@ -91,9 +102,9 @@
 # with a warning logged. The resolved config is logged once at import.
 # Empty file = defaults; absent marker = None = stock exactly.
 #
-# Supersedes camry_small_step (its cap never binds while a pulse is
-# active; delete that marker) and REPLACES v5: if v5 was applied,
-# revert longitudinal_planner.py to the unshaped file first -- the
+# Supersedes camry_small_step (retired; delete that marker) and
+# REPLACES v5/v6: if either was applied, revert
+# longitudinal_planner.py to the unshaped upstream file first -- the
 # anchors below match the unshaped text only and the patcher aborts
 # safely on shaper text. The marker is import-time state: it takes
 # effect when manager next starts the controls stack (each boot). No
@@ -106,11 +117,15 @@ PLANNER_DIR = "/data/openpilot/openpilot/selfdrive/controls/lib"
 
 EDITS = {
   "longitudinal_planner.py": [
-    ("""SMALL_STEP_CAP = _read_small_step_cap()
-
+    ("""import math
+import time""",
+     """import math
+import os
+import time"""),
+    ("""_TAKEOFF_TOTAL_MAX = [3.5, 3.5, 1.7, 1.7, 3.2]
 
 def get_max_accel(v_ego):""",
-     """SMALL_STEP_CAP = _read_small_step_cap()
+     """_TAKEOFF_TOTAL_MAX = [3.5, 3.5, 1.7, 1.7, 3.2]
 
 # /data/ops_patches/camry_cruise_shaper (read once at import): on a
 # driver set-speed step, closes the gap the way the owner's old
@@ -135,7 +150,7 @@ def get_max_accel(v_ego):""",
 # at/below 0 while ego is short of it); once the cosine has ended, a
 # crossing beyond the arm threshold hands back to stock in either
 # direction. After the 8 s duration clamp the amplitude is re-capped
-# so pi*A/dur <= J_CRUISE_DOWN(v). Every in-range button step re-plans
+# so pi*A/dur <= J_CRUISE_VALS(v). Every in-range button step re-plans
 # a fresh pulse from the current v_ego and a_cruise, and the tap-frame
 # command becomes a monotone clamp for the life of the plan: an up-tap
 # floors the command there (it can only hold or rise), a down-tap
@@ -240,11 +255,11 @@ class _ShaperPlan:
 
 def get_max_accel(v_ego):"""),
     ("""                     base_brake_floor: float = A_CRUISE_MIN, selected_acceleration_max: float | None = None, faster_takeoffs: bool = False,
-                     small_step: bool = False):""",
+                     *, a_target_prev: float | None = None):""",
      """                     base_brake_floor: float = A_CRUISE_MIN, selected_acceleration_max: float | None = None, faster_takeoffs: bool = False,
-                     small_step: bool = False, shaper: tuple[float, float, float, bool] | None = None):"""),
+                     *, a_target_prev: float | None = None, shaper: tuple[float, float, float, bool] | None = None):"""),
     ("""  target_accel = np.clip(v_cruise - v_ego, cruise_min, max_accel)
-  j_cruise_up = np.interp(v_ego, A_CRUISE_MAX_BP, J_CRUISE_UP_VALS)""",
+  j_cruise = np.interp(v_ego, A_CRUISE_MAX_BP, J_CRUISE_VALS)""",
      """  if shaper is not None and CRUISE_SHAPER is not None and not e2e:
     # Raised-cosine pulse following, not a P gain: plan feedforward, with
     # the settle correction added ONLY after the cosine has ended
@@ -263,8 +278,8 @@ def get_max_accel(v_ego):"""),
     # shaper[1]/shaper[2] are the monotone tap-frame clamps (up-tap
     # floor / down-tap ceiling) and bind the correction term too; they
     # yield to the safety caps on conflict. NO early return: the common
-    # stock slew below (same dt, same a_cruise_prev) and the post-slew
-    # clip still run every cycle.
+    # stock slew below (same dt; upstream's decel_start lower bound is
+    # unchanged) and the post-slew clip still run every cycle.
     cap_hi = min(max_accel, float(np.interp(v_ego, _SHAPER_CAP_BP, CRUISE_SHAPER[1])))
     cap_lo = max(cruise_min, -CRUISE_SHAPER[2])
     plan_lo = max(cap_lo, shaper[1])
@@ -277,25 +292,25 @@ def get_max_accel(v_ego):"""),
     target_accel = float(np.clip(shaper[0] + corr, cap_lo, cap_hi))
   else:
     target_accel = np.clip(v_cruise - v_ego, cruise_min, max_accel)
-  j_cruise_up = np.interp(v_ego, A_CRUISE_MAX_BP, J_CRUISE_UP_VALS)"""),
-    ("""  target_accel = float(np.clip(target_accel, a_cruise_prev - j_cruise_down * dt, a_cruise_prev + j_cruise_up * dt))
+  j_cruise = np.interp(v_ego, A_CRUISE_MAX_BP, J_CRUISE_VALS)"""),
+    ("""  target_accel = float(np.clip(target_accel, decel_start - j_cruise * dt, a_cruise_prev + j_cruise * dt))
 
   return target_accel""",
-     """  target_accel = float(np.clip(target_accel, a_cruise_prev - j_cruise_down * dt, a_cruise_prev + j_cruise_up * dt))
+     """  target_accel = float(np.clip(target_accel, decel_start - j_cruise * dt, a_cruise_prev + j_cruise * dt))
   # Same-frame hard bounds AFTER the slew (grok3 must-fixes 1 and 2),
   # every cycle, stock and shaped alike: max_accel has already folded in
   # ACCEL_MAX, the turn limit a_x_allowed, the throttle-gate coast limit
   # and every profile/selected cap for THIS cycle, and cruise_min holds
   # the brake floors (ACCEL_MIN, the global/coast floors, the profile
-  # brake magnitude, the small_step caps). Without this clip a cap that
-  # drops under a live pull is walked off at J_CRUISE for up to ~1 s.
-  # While a shaped plan owns the candidate the clip also carries the
-  # shaper peak table, the decel floor max(cruise_min, -decel_cap) and
-  # the monotone tap-frame clamps -- so a down-tap ceiling / up-tap floor
-  # binds after the slew too, on every frame the plan lives, including
-  # the frame the cosine ends. a_x_allowed and ACCEL_MAX are not named
-  # here: a_x_allowed is only bound in the non-e2e branch above, and both
-  # are already inside max_accel. Plan clamps yield to the safety caps on
+  # brake magnitude). Without this clip a cap that drops under a live
+  # pull is walked off at the slew rate for up to ~1 s. While a shaped
+  # plan owns the candidate the clip also carries the shaper peak table,
+  # the decel floor max(cruise_min, -decel_cap) and the monotone
+  # tap-frame clamps -- so a down-tap ceiling / up-tap floor binds after
+  # the slew too, on every frame the plan lives, including the frame the
+  # cosine ends. a_x_allowed and ACCEL_MAX are not named here:
+  # a_x_allowed is only bound in the non-e2e branch above, and both are
+  # already inside max_accel. Plan clamps yield to the safety caps on
   # conflict. The clip is a no-op whenever the previous command was
   # already inside the current caps.
   post_lo, post_hi = cruise_min, max_accel
@@ -320,23 +335,20 @@ def get_max_accel(v_ego):"""),
       self.output_a_target = np.clip(sm['carState'].aEgo, ACCEL_MIN, ACCEL_MAX)
       self.a_cruise = self.output_a_target
       self.cruise_shaper_plan = None  # grok3 must-fix 3: the plan dies with the state reset, not one gate check later"""),
-    ("""    # Marker-gated gentle cap for the driver's own small set-speed gaps only;
-    # any ceiling, stop, force-decel, coast plan or pedal keeps stock cruise.
-    small_step = (SMALL_STEP_CAP is not None and ceiling.effective_mps is None and curve.effective_mps is None and
-                  navigation_target is None and coast_plan is None and self.force_stop_plan.speed_ceiling_mps is None and
-                  not self.force_stop_plan.forcing and not sm['controlsState'].forceDecel and
-                  not sm['carState'].standstill and not sm['carState'].brakePressed and not sm['carState'].gasPressed)""",
-     """    # Marker-gated gentle cap for the driver's own small set-speed gaps only;
-    # any ceiling, stop, force-decel, coast plan or pedal keeps stock cruise.
-    small_step = (SMALL_STEP_CAP is not None and ceiling.effective_mps is None and curve.effective_mps is None and
-                  navigation_target is None and coast_plan is None and self.force_stop_plan.speed_ceiling_mps is None and
-                  not self.force_stop_plan.forcing and not sm['controlsState'].forceDecel and
-                  not sm['carState'].standstill and not sm['carState'].brakePressed and not sm['carState'].gasPressed)
-    # Marker-gated shaped set-speed response, v6: the gap is closed the
+    ("""    if coast_plan is not None and coast_plan.brake_floor is not None:
+      global_floor = coast_plan.brake_floor
+      cruise_profile = None
+      slc_floor = None
+    self.a_cruise = get_cruise_accel(sm['selfdriveState'].experimentalMode, v_cruise, v_ego,""",
+     """    if coast_plan is not None and coast_plan.brake_floor is not None:
+      global_floor = coast_plan.brake_floor
+      cruise_profile = None
+      slc_floor = None
+    # Marker-gated shaped set-speed response: the gap is closed the
     # way the owner's old fork measurably did (old-fork-excerpt.md) --
     # a raised-cosine pulse peaking at ~PULSE_FRAC/G(v) (~3.8 s at
-    # 100 km/h, measured 2.5-4 s), area = PULSE_FRAC of the gap, then a
-    # slow no-overshoot creep on the remainder. v6 (grok4):
+    # 100 km/h, measured 2.5-4 s), area = PULSE_FRAC of the gap, then
+    # a slow no-overshoot creep on the remainder. (grok4 must-fixes:)
     #   * the settle correction is 0 while the cosine runs, so the
     #     pulse alone -- 80% of the gap by construction -- can never
     #     carry ego through the new set speed; corr creeps only the
@@ -348,25 +360,28 @@ def get_max_accel(v_ego):"""),
     #     (gap > 0), would block the closing command, so the plan is
     #     dropped that same frame; and once the cosine has ended, a
     #     crossing beyond the arm threshold (0.2 m/s) in either
-    #     direction hands back to stock -- the 0.2..0.3 m/s band the v5
-    #     settle/overshoot pair left armed is covered both ways.
+    #     direction hands back to stock -- the 0.2..0.3 m/s band the
+    #     v5 settle/overshoot pair left armed is covered both ways.
     #   * after the 8 s duration clamp the amplitude is re-capped so
-    #     peak cosine jerk pi*A/dur stays at/under J_CRUISE_DOWN(v).
+    #     peak cosine jerk pi*A/dur stays at/under the cruise jerk
+    #     table at this speed.
     # EVERY in-range button step, either direction, re-plans a fresh
-    # pulse from the current v_ego and a_cruise (grok3 must-fix 2): the
-    # tap-frame command is stored RAW as a monotone clamp -- up-tap:
-    # floor (the command can only hold or rise); down-tap: ceiling (it
-    # can only hold or fall) -- enforced pre- and post-slew for the
-    # whole life of the plan, including the settle phase after the
-    # cosine ends, so a down-tap can never raise the command and an
-    # up-tap can never deepen braking, and there is no frame where the
-    # clamp dies early. A step larger than 2.5 m/s clears the plan the
-    # same frame (resumes stay stock). Same exclusions as small_step,
-    # plus experimental mode and reset; supersedes small_step. Disarms
-    # only when the gap is inside 0.2 m/s AND a_cruise is already near
-    # 0 (residue-free stock handoff), or instantly on a clamp that
-    # blocks closing, a post-cosine crossing past 0.2 m/s, a >0.3 m/s
-    # overshoot of set speed, or any gate.
+    # pulse from the current v_ego and a_cruise (grok3 must-fix 2):
+    # the tap-frame command is stored RAW as a monotone clamp --
+    # up-tap: floor (the command can only hold or rise); down-tap:
+    # ceiling (it can only hold or fall) -- enforced pre- and
+    # post-slew for the whole life of the plan, including the settle
+    # phase after the cosine ends, so a down-tap can never raise the
+    # command and an up-tap can never deepen braking, and there is no
+    # frame where the clamp dies early. A step larger than 2.5 m/s
+    # clears the plan the same frame (resumes stay stock). Exclusions:
+    # any cruise/curve/nav ceiling, force-stop plan, coast plan,
+    # forceDecel, standstill, driver pedal, experimental mode or
+    # reset disarms instantly. Disarms only when the gap is inside
+    # 0.2 m/s AND a_cruise is already near 0 (residue-free stock
+    # handoff), or instantly on a clamp that blocks closing, a
+    # post-cosine crossing past 0.2 m/s, a >0.3 m/s overshoot of set
+    # speed, or any gate.
     shaper_gate = (CRUISE_SHAPER is not None and not reset_state and
                    not sm['selfdriveState'].experimentalMode and
                    ceiling.effective_mps is None and curve.effective_mps is None and
@@ -426,21 +441,23 @@ def get_max_accel(v_ego):"""),
             # tap-frame floor.
             amp = min(amp, max(-self.a_cruise, 0.0))
         # Peak cosine jerk is pi*A/T = pi*A^2/(2*PULSE_FRAC*|gap|); keep
-        # it at or under J_CRUISE_DOWN at this speed (grok3 must-fix 4).
+        # it at or under the cruise jerk table at this speed (grok3
+        # must-fix 4). The retired smooth_onset down table held these
+        # same stock values, so the cap is numerically unchanged.
         # Shaped peak jerk is ~0.05 m/s^3 (+2 km/h at 100 km/h) to
         # ~0.20 (+8) -- the measured old-fork rise slope was ~0.2.
-        j_down = float(np.interp(v_ego, A_CRUISE_MAX_BP, J_CRUISE_DOWN_VALS))
+        j_down = float(np.interp(v_ego, A_CRUISE_MAX_BP, J_CRUISE_VALS))
         amp = max(0.0, min(amp, math.sqrt(2.0 * _SHAPER_PULSE_FRAC * abs(gap) * j_down / math.pi)))
         dur = min(_SHAPER_MAX_DUR, 2.0 * _SHAPER_PULSE_FRAC * abs(gap) / max(amp, 0.05))
         # grok4 must-fix 4: the duration clamp shortens T without
         # changing A, which would steepen peak jerk past the arm-time
         # limit -- re-cap A against the CLAMPED duration so
-        # pi*A/dur <= J_CRUISE_DOWN(v) still holds. Never re-raise A:
+        # pi*A/dur <= J_CRUISE_VALS(v) still holds. Never re-raise A:
         # lifting the peak past the tap-frame command is the surge the
         # clamp exists to prevent. The pulse closes PULSE_FRAC of the
         # gap by design; the tail (plus any MAX_DUR shortfall and this
-        # re-cap's area loss) is closed by the settle phase at CORR gain
-        # under the same clamps, never by a stock step.
+        # re-cap's area loss) is closed by the settle phase at CORR
+        # gain under the same clamps, never by a stock step.
         amp = min(amp, j_down * dur / math.pi)
         self.cruise_shaper_plan = _ShaperPlan(sample_now_ns, self.a_cruise, amp, dur,
                                               1.0 if gap >= 0.0 else -1.0, plan_lo, plan_hi)
@@ -465,19 +482,19 @@ def get_max_accel(v_ego):"""),
         settled = done and abs(gap) <= _SHAPER_MIN_STEP and abs(self.a_cruise) <= _SHAPER_SETTLE_A
         # grok4 must-fix 3: once the cosine has ended, a crossing beyond
         # the arm threshold hands back to stock in BOTH directions --
-        # covers the 0.2..0.3 m/s band the v5 settle/overshoot pair left
-        # armed with the clamp blocking the correction. The 0.3 trip
-        # above stays the mid-pulse backstop.
+        # covers the 0.2..0.3 m/s band the v5 settle/overshoot pair
+        # left armed with the clamp blocking the correction. The 0.3
+        # trip above stays the mid-pulse backstop.
         crossed = done and gap * plan.s < -_SHAPER_MIN_STEP
         if clamp_blocks_closing or overshot or settled or crossed:
           self.cruise_shaper_plan = None
         else:
           shaper_cmd = (a_ff, plan.a_lo, plan.a_hi, done)
-    small_step = small_step and shaper_cmd is None"""),
+    self.a_cruise = get_cruise_accel(sm['selfdriveState'].experimentalMode, v_cruise, v_ego,"""),
     ("""                                     base_brake_floor=global_floor, selected_acceleration_max=selected_acceleration, faster_takeoffs=faster_takeoffs,
-                                     small_step=small_step)""",
+                                     a_target_prev=self.output_a_target)""",
      """                                     base_brake_floor=global_floor, selected_acceleration_max=selected_acceleration, faster_takeoffs=faster_takeoffs,
-                                     small_step=small_step, shaper=shaper_cmd)"""),
+                                     a_target_prev=self.output_a_target, shaper=shaper_cmd)"""),
   ],
 }
 
@@ -504,7 +521,7 @@ def main():
         print(f"ERROR: anchor found {content.count(old)}x (expected 1) in {name}; patch not applied")
         print(f"  anchor: {old.splitlines()[0]!r}")
         if "_ShaperPlan" in content or "CRUISE_SHAPER" in content:
-          print("  hint: shaper text detected; revert longitudinal_planner.py to the unshaped file before applying v6")
+          print("  hint: shaper text detected; revert longitudinal_planner.py to the unshaped file before applying v7")
         return 1
       todo.append((old, new))
     pending[name] = todo
