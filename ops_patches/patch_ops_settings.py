@@ -12,7 +12,7 @@
 #  - Params: enforced to the exact desired value every boot; drift is
 #    corrected and logged.
 #  - Markers: created ONLY if missing, never overwritten (the owner hand-
-#    tunes values like camry_small_step); markers not in the list mean
+#    tunes values like camry_cruise_shaper); markers not in the list mean
 #    "off" and are left absent.
 #  - Driving model: the small-profile selection in /data/models/<gen>/
 #    preferences.json is enforced through the model manager's own "active"
@@ -82,22 +82,28 @@ DESIRED_PARAMS = {
 }
 
 # Marker name -> contents. Created ONLY if the marker is absent and never
-# overwritten afterwards: the owner hand-tunes values like camry_small_step
+# overwritten afterwards: the owner hand-tunes values like camry_cruise_shaper
 # and those must survive enforcement. Markers not listed here mean "off"
 # and are left absent (never created, never deleted).
 DESIRED_MARKERS = {
   "camry_cem": "",
   "camry_cluster_speed": "1.04",
   "camry_coast": "",
+  "camry_cruise_shaper": "",
   "camry_hybrid_ff": "",
   "camry_ki": "",
   "camry_signflip": "",
-  "camry_small_step": "16",
   "camry_sng": "",
   "camry_stop_ramp": "",
   "camry_unwind": "",
   "fan_floor": "50",
 }
+
+# Markers that must stay ABSENT: the loop above only creates, never
+# deletes, so a retired marker goes here and is removed if present (logged
+# like any other drift). camry_small_step is superseded by
+# camry_cruise_shaper.
+DESIRED_ABSENT_MARKERS = ("camry_small_step",)
 
 # Non-param settings, enforced through their owner modules' own APIs:
 # DESIRED_MODEL is a small-profile model id from the starpilot model
@@ -186,6 +192,16 @@ def enforce_ops_settings(params):
       drift.append(f"marker {name}: absent -> {contents!r}")
     except Exception:
       cloudlog.exception("Ops settings: failed to create marker %s", name)
+
+  for name in DESIRED_ABSENT_MARKERS:
+    try:
+      path = os.path.join(MARKER_DIR, name)
+      if not os.path.lexists(path):
+        continue
+      os.remove(path)
+      drift.append(f"marker {name}: present -> absent")
+    except Exception:
+      cloudlog.exception("Ops settings: failed to remove marker %s", name)
 
   try:
     _enforce_model(drift)
