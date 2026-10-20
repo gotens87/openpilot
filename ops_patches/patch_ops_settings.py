@@ -14,6 +14,15 @@
 #  - Markers: created ONLY if missing, never overwritten (the owner hand-
 #    tunes values like camry_small_step); markers not in the list mean
 #    "off" and are left absent.
+#  - Driving model: the small-profile selection in /data/models/<gen>/
+#    preferences.json is enforced through the model manager's own "active"
+#    action (its locking + artifact verification), never by raw-writing
+#    JSON. If the desired artifact is not on disk, enforcement logs and
+#    leaves the selection alone -- never switches to a missing model.
+#  - Cloud provider: enforced through connect_provider.select_provider
+#    (its own lock + revision check). A change only records `selected`;
+#    activate_at_boot (already in manager_init, runs earlier) applies it
+#    on the NEXT boot. No reboot is forced and enforcement cannot loop.
 #  - Every correction goes to cloudlog and is appended, timestamped, to
 #    /data/ops_patches/settings_drift.log. No drift = nothing logged.
 #  - The manager.py call is wrapped in try/except: enforcement can never
@@ -21,8 +30,8 @@
 #
 # The list lives inside the build, not in /data/ops_patches, because
 # /data/ops_patches itself can get wiped. Adding a setting later is a
-# one-line edit to DESIRED_PARAMS / DESIRED_MARKERS in the module below
-# (edit it here, so CI rebuilds keep it).
+# one-line edit to DESIRED_PARAMS / DESIRED_MARKERS / DESIRED_MODEL /
+# DESIRED_PROVIDER in the module below (edit it here, so CI rebuilds keep it).
 import os
 import sys
 
@@ -34,13 +43,18 @@ STARPILOT_DIR = "/data/openpilot/openpilot/starpilot"
 OPS_SETTINGS_PY = r'''"""Ops desired-settings list, enforced once per boot from manager_init.
 
 Single source of truth for operator settings that must survive updates and
-reinstalls: a fixed set of user params plus the /data/ops_patches feature
-markers. manager_init calls enforce_ops_settings() after its default-params
-loop (so this list wins) and before any managed process starts (markers are
-read at import by controls processes, so they apply the same boot). The call
-site wraps enforcement in try/except, so nothing here can block boot.
+reinstalls: a fixed set of user params, the /data/ops_patches feature
+markers, the small-profile driving model, and the cloud provider.
+manager_init calls enforce_ops_settings() after its default-params loop
+(so this list wins) and before any managed process starts: markers and the
+model selection are read at process start, so they apply the same boot; a
+cloud provider change is only recorded here and applied by
+activate_at_boot on the following boot, by design of the provider module.
+The call site wraps enforcement in try/except, so nothing here can block
+boot.
 
-Adding a setting later = one line in DESIRED_PARAMS or DESIRED_MARKERS.
+Adding a setting later = one line in DESIRED_PARAMS, DESIRED_MARKERS,
+DESIRED_MODEL, or DESIRED_PROVIDER.
 """
 import os
 import time
@@ -85,6 +99,18 @@ DESIRED_MARKERS = {
   "fan_floor": "50",
 }
 
+# Non-param settings, enforced through their owner modules' own APIs:
+# DESIRED_MODEL is a small-profile model id from the starpilot model
+# catalog. Its artifact must already be downloaded; enforcement never
+# downloads and never switches to a model whose artifact is missing (the
+# car would have no model) -- it logs and leaves the selection alone.
+# DESIRED_PROVIDER is a provider id from connect_provider.PROVIDERS. A
+# change is recorded via select_provider and applied by activate_at_boot
+# on the NEXT boot; no reboot is forced and enforcement converges instead
+# of looping.
+DESIRED_MODEL = "rdf63"
+DESIRED_PROVIDER = "konik"
+
 
 def _log_drift(lines):
   for line in lines:
@@ -95,6 +121,46 @@ def _log_drift(lines):
         f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {line}\n")
   except OSError:
     cloudlog.exception("Ops settings: could not append to drift log")
+
+
+def _enforce_model(drift):
+  from openpilot.starpilot.models.manager import ModelManager, ModelError, artifact_path, preferences
+
+  have = preferences().get("small")
+  if have == DESIRED_MODEL:
+    return
+  try:
+    path = artifact_path(DESIRED_MODEL)
+  except ModelError:
+    path = None
+  if path is None or path.is_symlink() or not path.is_file():
+    cloudlog.warning("Ops settings: desired model %s artifact not on disk; leaving small=%r", DESIRED_MODEL, have)
+    return
+  # parked/gpu callables: at manager_init no managed process is running yet,
+  # so the selection cannot disturb a live drive (modeld reads it at process
+  # start, later this boot); gpu presence is irrelevant for the small profile
+  # and the lambda avoids importing modeld helpers at boot.
+  mgr = ModelManager(parked=lambda: True, gpu_present=lambda: False)
+  try:
+    mgr.action("active", {"profile": "small", "model": DESIRED_MODEL})
+  finally:
+    mgr.close()
+  drift.append(f"model small: {have!r} -> {DESIRED_MODEL!r}")
+
+
+def _enforce_provider(drift):
+  from openpilot.starpilot.connect.provider import select_provider, status
+
+  st = status()
+  active, selected = st["active"], st["selected"]
+  if selected == DESIRED_PROVIDER:
+    # No actionable drift: either active already matches, or a switch to the
+    # desired provider is already pending and activate_at_boot applies it
+    # next boot. Nothing to write; this can never loop.
+    return
+  select_provider(DESIRED_PROVIDER, st["revision"], lambda: True)
+  note = "active already matches" if active == DESIRED_PROVIDER else "applies next boot"
+  drift.append(f"cloud provider: selected {selected!r} -> {DESIRED_PROVIDER!r} (active {active!r}; {note})")
 
 
 def enforce_ops_settings(params):
@@ -120,6 +186,15 @@ def enforce_ops_settings(params):
       drift.append(f"marker {name}: absent -> {contents!r}")
     except Exception:
       cloudlog.exception("Ops settings: failed to create marker %s", name)
+
+  try:
+    _enforce_model(drift)
+  except Exception:
+    cloudlog.exception("Ops settings: failed to enforce driving model")
+  try:
+    _enforce_provider(drift)
+  except Exception:
+    cloudlog.exception("Ops settings: failed to enforce cloud provider")
 
   # no drift -> nothing is logged, anywhere
   if drift:
