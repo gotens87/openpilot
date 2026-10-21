@@ -3,9 +3,11 @@
 #
 # V10 = v9 (jerk-limited trapezoid) with STEP-SCALED jerk: j_up/j_dn
 # scale linearly with the arm-time gap, full marker limits at +4 km/h
-# and up; below that every step is a triangle with a constant ~2.3 s
-# arrival and a peak proportional to the step (+1: 0.24 m/s^2). +4
-# and up keep the v9 1.0/0.7 limits and arrivals. The law: RISE at
+# and up; +1 stays a ~2.3 s triangle (peak 0.24 m/s^2), while +2/+3
+# are held to a 0.35 small-step ceiling (grok must-fix: the 2*dv/T
+# triangle crests ARE the tach bounce) as short trapezoids, ~2.4/~3.0
+# s, blending back to the speed table by +5; +5 and up keep the v9
+# 1.0/0.7 limits and arrivals. The law: RISE at
 # j_up from the tap-frame command, HOLD at the ceiling A, RELEASE at
 # -j_dn off the LIVE gap every frame (release when remaining <=
 # a^2/(2*j_dn): the command reaches 0 exactly as ego reaches the set
@@ -63,8 +65,9 @@ def get_max_accel(v_ego):""",
 # HOLD at ceiling A, RELEASE at -j_dn off the LIVE gap (release when
 # remaining <= a^2/(2*j_dn): command reaches 0 exactly as ego reaches
 # set speed). Jerk scales with the arm-time gap: full j_up/j_dn at
-# +4 km/h and up, linear below, so +1..+3 km/h are ~2.3 s triangles
-# with low peaks (+1: 0.24) while +5/+9 keep the full-jerk arrivals.
+# +4 km/h and up, linear below; +1 stays a ~2.3 s triangle (peak
+# 0.24), +2/+3 hold the 0.35 small-step ceiling (grok must-fix) and
+# the ceiling blends to the table by +5, so +5/+9 keep the arrivals.
 # Integrates the live a_cruise -> continuous by construction; no gain
 # table, no pulse budget, no corr tail, no fixed duration to re-cap.
 # Strict parse: any failure = None = stock.
@@ -72,6 +75,8 @@ CRUISE_SHAPER_MARKER = "/data/ops_patches/camry_cruise_shaper"
 _SHAPER_J_UP = 1.0      # full-step rise jerk, m/s^3
 _SHAPER_J_DN = 0.7      # full-step release jerk, m/s^3
 _SHAPER_J_STEP = 1.11   # gap (m/s) for full jerk = +4 km/h; smaller steps scale j linearly
+_SHAPER_SMALL_CAP = 0.35  # small-step accel ceiling, m/s^2: triangle crests 0.48/0.72 push rpm past the 1500-1600 band
+_SHAPER_SMALL_BP = [3. / 3.6, 5. / 3.6]  # gap (m/s): flat 0.35 through +3 km/h, linear blend to the cap table by +5
 _SHAPER_CAP_BP = [0., 10., 25., 40.]
 _SHAPER_CAP_V = [1.00, 0.90, 0.65, 0.60]  # ceiling m/s^2; 0.65 @ 90 km/h ~ 2000-2200 rpm steady
 _SHAPER_DECEL = 0.5     # decel ceiling == stock A_CRUISE_MIN: never stronger than stock
@@ -277,9 +282,10 @@ def get_max_accel(v_ego):"""),
         else:
           plan_lo, plan_hi = -math.inf, self.a_cruise
         # Jerk scales with the gap: full j_up/j_dn at +4 km/h and up,
-        # linear below, so +1..+3 km/h become ~2.3 s soft triangles
-        # (peak = 2*gap/T). Capped to the cruise jerk table so the
-        # stock slew is a no-op on the shaped candidate.
+        # linear below; +1 stays a ~2.3 s soft triangle (peak 0.24)
+        # and +2/+3 are held to the small-step ceiling below. Capped
+        # to the cruise jerk table so the stock slew is a no-op on
+        # the shaped candidate.
         j_tbl = float(np.interp(v_ego, A_CRUISE_MAX_BP, J_CRUISE_VALS))
         j_scale = min(1.0, abs(gap) / _SHAPER_J_STEP)
         j_up = max(0.05, min(CRUISE_SHAPER[0] * j_scale, j_tbl))
@@ -302,7 +308,14 @@ def get_max_accel(v_ego):"""),
           if not self.allow_throttle:
             arm_max = min(arm_max, float(np.interp(v_ego, [MIN_ALLOW_THROTTLE_SPEED, MIN_ALLOW_THROTTLE_SPEED * 2],
                                                    [arm_max, max(accel_coast, ACCEL_MIN)])))
-          cap_a = min(float(np.interp(v_cruise, _SHAPER_CAP_BP, CRUISE_SHAPER[2])), arm_max)
+          cap_tbl = float(np.interp(v_cruise, _SHAPER_CAP_BP, CRUISE_SHAPER[2]))
+          # Small-step ceiling (grok must-fix): flat 0.35 through +3
+          # km/h, linear blend to the speed table by +5 (interp clamps
+          # both ends, so +5 and up are a no-op and a flat marker cap
+          # below 0.35 still wins). Continuous in gap -> continuous
+          # peak and arrival across step sizes.
+          cap_a = min(cap_tbl, arm_max,
+                      float(np.interp(gap, _SHAPER_SMALL_BP, [_SHAPER_SMALL_CAP, cap_tbl])))
           if step < 0.0:
             # Disagreeing down-tap while still below set: sized to the
             # ceiling it lives under.
