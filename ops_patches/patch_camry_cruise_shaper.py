@@ -66,8 +66,10 @@ def get_max_accel(v_ego):""",
 # remaining <= a^2/(2*j_dn): command reaches 0 exactly as ego reaches
 # set speed). Jerk scales with the arm-time gap: full j_up/j_dn at
 # +4 km/h and up, linear below; +1 stays a ~2.3 s triangle (peak
-# 0.24), +2/+3 hold the 0.35 small-step ceiling (grok must-fix) and
-# the ceiling blends to the table by +5, so +5/+9 keep the arrivals.
+# 0.24), +2/+3 hold the 0.35 small-step ceiling (grok must-fix) up
+# to 90 km/h; past 100.8 km/h the small ceiling rises with the step
+# (0.18 @ +2 -> 0.43 @ +4) so +2..+5 arrivals stay monotone; both
+# laws blend to the table by +5, so +5/+9 keep the arrivals.
 # Integrates the live a_cruise -> continuous by construction; no gain
 # table, no pulse budget, no corr tail, no fixed duration to re-cap.
 # Strict parse: any failure = None = stock.
@@ -76,9 +78,10 @@ _SHAPER_J_UP = 1.0      # full-step rise jerk, m/s^3
 _SHAPER_J_DN = 0.7      # full-step release jerk, m/s^3
 _SHAPER_J_STEP = 1.11   # gap (m/s) for full jerk = +4 km/h; smaller steps scale j linearly
 _SHAPER_SMALL_CAP = 0.35  # small-step accel ceiling, m/s^2 (low speed): triangle crests 0.48/0.72 push rpm past the 1500-1600 band
-_SHAPER_SMALL_V_BP = [25., 30.]  # v_ego m/s (90 -> 108 km/h): highway taper of the small-step ceiling
-_SHAPER_SMALL_V = [0.35, 0.18]   # 0.18 @ 108+: +2 ~3.5 s profile (~4 s with lag); <=90 km/h unchanged
-_SHAPER_SMALL_BP = [3. / 3.6, 5. / 3.6]  # gap (m/s): flat small ceiling through +3 km/h, linear blend to the cap table by +5
+_SHAPER_SMALL_V_BP = [25., 28.]  # v_ego m/s (90 -> 100.8 km/h): crossfade low-speed -> highway small-step law
+_SHAPER_SMALL_HI_BP = [2. / 3.6, 4. / 3.6, 5. / 3.6]  # gap (m/s): highway ceiling rises +2 -> +4, blends to the cap table by +5
+_SHAPER_SMALL_HI_V = [0.18, 0.43]  # highway ceiling @ +2 / +4 km/h: +2 ~3.5 s profile (~4 s with lag); arrivals monotone +2..+5
+_SHAPER_SMALL_BP = [3. / 3.6, 5. / 3.6]  # gap (m/s): flat small ceiling through +3 km/h, linear blend to the cap table by +5 (low-speed law, unchanged)
 _SHAPER_CAP_BP = [0., 10., 25., 40.]
 _SHAPER_CAP_V = [1.00, 0.90, 0.65, 0.60]  # ceiling m/s^2; 0.65 @ 90 km/h ~ 2000-2200 rpm steady
 _SHAPER_DECEL = 0.5     # decel ceiling == stock A_CRUISE_MIN: never stronger than stock
@@ -311,15 +314,20 @@ def get_max_accel(v_ego):"""),
             arm_max = min(arm_max, float(np.interp(v_ego, [MIN_ALLOW_THROTTLE_SPEED, MIN_ALLOW_THROTTLE_SPEED * 2],
                                                    [arm_max, max(accel_coast, ACCEL_MIN)])))
           cap_tbl = float(np.interp(v_cruise, _SHAPER_CAP_BP, CRUISE_SHAPER[2]))
-          # Small-step ceiling (grok must-fix): flat small_cap through
-          # +3 km/h, linear blend to the speed table by +5 (interp
-          # clamps both ends: +5 and up no-op, a flat marker cap below
-          # small_cap still wins). small_cap tapers with v_ego (0.35
-          # -> 0.18, 90 -> 108 km/h): gentler highway taps, low speed
-          # untouched. Continuous in gap and speed.
-          small_cap = float(np.interp(v_ego, _SHAPER_SMALL_V_BP, _SHAPER_SMALL_V))
-          cap_a = min(cap_tbl, arm_max,
-                      float(np.interp(gap, _SHAPER_SMALL_BP, [small_cap, cap_tbl])))
+          # Small-step ceiling (grok must-fix), two laws crossfaded
+          # 90 -> 100.8 km/h. Low speed (unchanged): flat 0.35 through
+          # +3 km/h, blend to the cap table by +5. Highway: the
+          # ceiling RISES with the step (0.18 @ +2 -> 0.43 @ +4, blend
+          # to the table by +5) -- a flat ceiling cannot stretch +2 to
+          # ~4 s and keep +3 under ~4 s (grok v11 NO: flat 0.18 made
+          # +3 4.9 s, slower than +4). Both laws end at the cap table
+          # by +5 (+5 and up unchanged); a flat marker cap below the
+          # ceiling still wins. Continuous in gap and speed.
+          small_lo = float(np.interp(gap, _SHAPER_SMALL_BP, [_SHAPER_SMALL_CAP, cap_tbl]))
+          small_hi = float(np.interp(gap, _SHAPER_SMALL_HI_BP,
+                                     [_SHAPER_SMALL_HI_V[0], _SHAPER_SMALL_HI_V[1], cap_tbl]))
+          small_cap = float(np.interp(v_ego, _SHAPER_SMALL_V_BP, [small_lo, small_hi]))
+          cap_a = min(cap_tbl, arm_max, small_cap)
           if step < 0.0:
             # Disagreeing down-tap while still below set: sized to the
             # ceiling it lives under.
