@@ -223,16 +223,8 @@ def get_max_accel(v_ego):"""),
       self.output_a_target = np.clip(sm['carState'].aEgo, ACCEL_MIN, ACCEL_MAX)
       self.a_cruise = self.output_a_target
       self.cruise_shaper_plan = None  # grok3 must-fix 3: the plan dies with the state reset, not one gate check later"""),
-    ("""    if coast_plan is not None and coast_plan.brake_floor is not None:
-      global_floor = coast_plan.brake_floor
-      cruise_profile = None
-      slc_floor = None
-    self.a_cruise = get_cruise_accel(sm['selfdriveState'].experimentalMode, v_cruise, v_ego,""",
-     """    if coast_plan is not None and coast_plan.brake_floor is not None:
-      global_floor = coast_plan.brake_floor
-      cruise_profile = None
-      slc_floor = None
-    # Marker-gated shaped set-speed response: jerk-limited trapezoid
+    ("""    self.a_cruise = get_cruise_accel(sm['selfdriveState'].experimentalMode, v_cruise, v_ego,""",
+     """    # Marker-gated shaped set-speed response: jerk-limited trapezoid
     # (S-curve in speed), jerk scaled with the arm-time gap (full
     # j_up/j_dn at +4 km/h and up): rise from the live command, hold
     # at the ceiling, release at -j_dn off the LIVE gap (remaining <=
