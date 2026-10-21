@@ -165,11 +165,11 @@ jobs:
           # -k skips test_tx_hook_on_wrong_safety_mode: it imports the full openpilot
           # dependency tree (setproctitle et al.) but covers none of the safety C the
           # patchers touch, so it's deselected rather than chasing its deps.
-          # --ignore skips test_prius_inactive.py for the same reason: it imports
+          # --ignore skips test_prius_inactive.py and test_rav4h_filter.py for the same reason: they import
           # openpilot.common.params at module scope, so it fails at collection (which
           # -k can't filter) and its Prius smart-DSU coverage touches nothing our
           # Camry patchers modify.
-          python -m pytest -q opendbc/car/toyota/tests opendbc/safety/tests/test_toyota.py -k "not test_tx_hook_on_wrong_safety_mode" --ignore=opendbc/car/toyota/tests/test_prius_inactive.py
+          python -m pytest -q opendbc/car/toyota/tests opendbc/safety/tests/test_toyota.py -k "not test_tx_hook_on_wrong_safety_mode" --ignore=opendbc/car/toyota/tests/test_prius_inactive.py --ignore=opendbc/car/toyota/tests/test_rav4h_filter.py
           python -m pytest -q opendbc/car/tests/test_car_interfaces.py -k "TOYOTA or LEXUS"
 
       - name: Push if changed
