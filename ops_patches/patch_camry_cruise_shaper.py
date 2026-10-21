@@ -75,8 +75,10 @@ CRUISE_SHAPER_MARKER = "/data/ops_patches/camry_cruise_shaper"
 _SHAPER_J_UP = 1.0      # full-step rise jerk, m/s^3
 _SHAPER_J_DN = 0.7      # full-step release jerk, m/s^3
 _SHAPER_J_STEP = 1.11   # gap (m/s) for full jerk = +4 km/h; smaller steps scale j linearly
-_SHAPER_SMALL_CAP = 0.35  # small-step accel ceiling, m/s^2: triangle crests 0.48/0.72 push rpm past the 1500-1600 band
-_SHAPER_SMALL_BP = [3. / 3.6, 5. / 3.6]  # gap (m/s): flat 0.35 through +3 km/h, linear blend to the cap table by +5
+_SHAPER_SMALL_CAP = 0.35  # small-step accel ceiling, m/s^2 (low speed): triangle crests 0.48/0.72 push rpm past the 1500-1600 band
+_SHAPER_SMALL_V_BP = [25., 30.]  # v_ego m/s (90 -> 108 km/h): highway taper of the small-step ceiling
+_SHAPER_SMALL_V = [0.35, 0.18]   # 0.18 @ 108+: +2 ~3.5 s profile (~4 s with lag); <=90 km/h unchanged
+_SHAPER_SMALL_BP = [3. / 3.6, 5. / 3.6]  # gap (m/s): flat small ceiling through +3 km/h, linear blend to the cap table by +5
 _SHAPER_CAP_BP = [0., 10., 25., 40.]
 _SHAPER_CAP_V = [1.00, 0.90, 0.65, 0.60]  # ceiling m/s^2; 0.65 @ 90 km/h ~ 2000-2200 rpm steady
 _SHAPER_DECEL = 0.5     # decel ceiling == stock A_CRUISE_MIN: never stronger than stock
@@ -309,13 +311,15 @@ def get_max_accel(v_ego):"""),
             arm_max = min(arm_max, float(np.interp(v_ego, [MIN_ALLOW_THROTTLE_SPEED, MIN_ALLOW_THROTTLE_SPEED * 2],
                                                    [arm_max, max(accel_coast, ACCEL_MIN)])))
           cap_tbl = float(np.interp(v_cruise, _SHAPER_CAP_BP, CRUISE_SHAPER[2]))
-          # Small-step ceiling (grok must-fix): flat 0.35 through +3
-          # km/h, linear blend to the speed table by +5 (interp clamps
-          # both ends, so +5 and up are a no-op and a flat marker cap
-          # below 0.35 still wins). Continuous in gap -> continuous
-          # peak and arrival across step sizes.
+          # Small-step ceiling (grok must-fix): flat small_cap through
+          # +3 km/h, linear blend to the speed table by +5 (interp
+          # clamps both ends: +5 and up no-op, a flat marker cap below
+          # small_cap still wins). small_cap tapers with v_ego (0.35
+          # -> 0.18, 90 -> 108 km/h): gentler highway taps, low speed
+          # untouched. Continuous in gap and speed.
+          small_cap = float(np.interp(v_ego, _SHAPER_SMALL_V_BP, _SHAPER_SMALL_V))
           cap_a = min(cap_tbl, arm_max,
-                      float(np.interp(gap, _SHAPER_SMALL_BP, [_SHAPER_SMALL_CAP, cap_tbl])))
+                      float(np.interp(gap, _SHAPER_SMALL_BP, [small_cap, cap_tbl])))
           if step < 0.0:
             # Disagreeing down-tap while still below set: sized to the
             # ceiling it lives under.
