@@ -83,9 +83,12 @@
 #     on conflict.
 #
 # Arms only for button steps of 0.2..2.5 m/s. Exclusions: any
-# cruise/curve/nav ceiling, force-stop plan, coast plan, forceDecel,
-# standstill, driver pedal, experimental mode or reset disarms
-# instantly. It shapes ONLY the cruise candidate: MPC/lead/e2e
+# cruise/curve/nav ceiling, force-stop plan, an ACTING coast plan
+# (force coast, pulse-glide coasting, brake floor, speed ceiling or
+# force_decel -- the idle CoastPlan object always exists, so the
+# object itself can never be the gate), forceDecel, standstill,
+# driver pedal, experimental mode or reset disarms instantly.
+# It shapes ONLY the cruise candidate: MPC/lead/e2e
 # candidates, shouldStop, allowThrottle and all ceiling logic are
 # untouched; min() candidate arbitration can never be weakened by a
 # stronger cruise request; the shaped target still passes through the
@@ -375,17 +378,30 @@ def get_max_accel(v_ego):"""),
     # command and an up-tap can never deepen braking, and there is no
     # frame where the clamp dies early. A step larger than 2.5 m/s
     # clears the plan the same frame (resumes stay stock). Exclusions:
-    # any cruise/curve/nav ceiling, force-stop plan, coast plan,
-    # forceDecel, standstill, driver pedal, experimental mode or
-    # reset disarms instantly. Disarms only when the gap is inside
+    # any cruise/curve/nav ceiling, force-stop plan, an ACTING coast
+    # plan (force coast, pulse-glide coasting, brake floor, speed
+    # ceiling or force_decel), forceDecel, standstill, driver pedal,
+    # experimental mode or reset disarms instantly. Disarms only when
+    # the gap is inside
     # 0.2 m/s AND a_cruise is already near 0 (residue-free stock
     # handoff), or instantly on a clamp that blocks closing, a
     # post-cosine crossing past 0.2 m/s, a >0.3 m/s overshoot of set
     # speed, or any gate.
+    # CoastOwner.sample ALWAYS returns a CoastPlan instance (idle:
+    # force_decel=False, brake_floor=None, speed_ceiling_mps=None,
+    # pulse_coasting=False) and plannerd always passes a CoastRuntime,
+    # so "coast_plan is None" was never true and the shaper could
+    # never arm. Gate on coast ACTING: force coast (force_decel and
+    # its -0.6 floor), pulse-glide coasting (pulse_coasting, -0.03
+    # floor, speed ceiling), or any brake floor / speed ceiling.
+    coast_acting = (coast_plan is not None and
+                    (coast_plan.force_decel or coast_plan.pulse_coasting or
+                     coast_plan.brake_floor is not None or coast_plan.speed_ceiling_mps is not None))
     shaper_gate = (CRUISE_SHAPER is not None and not reset_state and
                    not sm['selfdriveState'].experimentalMode and
                    ceiling.effective_mps is None and curve.effective_mps is None and
-                   navigation_target is None and coast_plan is None and self.force_stop_plan.speed_ceiling_mps is None and
+                   navigation_target is None and not coast_acting and
+                   self.force_stop_plan.speed_ceiling_mps is None and
                    not self.force_stop_plan.forcing and not sm['controlsState'].forceDecel and
                    not sm['carState'].standstill and not sm['carState'].brakePressed and not sm['carState'].gasPressed)
     shaper_cmd = None
