@@ -60,7 +60,15 @@
 #     slew AND post-slew, every frame the plan lives, including the
 #     settle phase after the cosine ends. After T the candidate is
 #     feedforward 0 plus the CORR term on the LIVE gap (clamped like
-#     everything else), never the raw stock gap clip.
+#     everything else), never the raw stock gap clip. v8 (trace2
+#     comfort fix): a POSITIVE up-tap floor -- a tap that landed on
+#     the previous step's residue -- is enforced only capped at half
+#     the pulse peak while the cosine runs and is released when it
+#     ends, so it can hold a re-arm spin-up but never flatten the
+#     pulse into a constant shove or pin the settle tail above the
+#     corr term; negative floors (never deepen braking) and down-tap
+#     ceilings (never raise the command) stay verbatim, and the raw
+#     clamps still drive every disarm check.
 #   * The clamp is released only when the gap is inside 0.2 m/s AND
 #     |a_cruise| <= 0.15 (residue-free stock handoff), on a post-cosine
 #     crossing past 0.2 m/s in either direction, on a >0.3 m/s
@@ -221,7 +229,12 @@ class _ShaperPlan:
   not frame dt, so a dropped frame cannot distort the profile.
   a_lo/a_hi are the monotone tap-frame clamps: an up-tap stores
   a_lo = a_cruise (the command can only hold or rise), a down-tap
-  stores a_hi = a_cruise (it can only hold or fall). get_cruise_accel
+  stores a_hi = a_cruise (it can only hold or fall). They are stored
+  RAW for the life of the plan and drive every disarm check; v8
+  relaxes only the ENFORCED positive up-tap floor (capped at half the
+  pulse peak while the cosine runs, released when it ends) so a tap
+  onto the previous step's residue cannot flatten the pulse into a
+  constant push or pin the settle tail above CORR. get_cruise_accel
   enforces them pre- and post-slew for the whole life of the plan --
   including the settle phase after T, where the feedforward is 0 and
   the candidate is the clamped CORR term on the live gap (CORR is 0
@@ -279,8 +292,10 @@ def get_max_accel(v_ego):"""),
     # profile/selected cap; the cap table bounds the pulse peak; the
     # decel cap keeps shaped braking at or below the stock cruise floor;
     # shaper[1]/shaper[2] are the monotone tap-frame clamps (up-tap
-    # floor / down-tap ceiling) and bind the correction term too; they
-    # yield to the safety caps on conflict. NO early return: the common
+    # floor / down-tap ceiling; a positive floor is capped at half the
+    # pulse peak while the cosine runs and released after it ends --
+    # v8) and bind the correction term too; they yield to the safety
+    # caps on conflict. NO early return: the common
     # stock slew below (same dt; upstream's decel_start lower bound is
     # unchanged) and the post-slew clip still run every cycle.
     cap_hi = min(max_accel, float(np.interp(v_ego, _SHAPER_CAP_BP, CRUISE_SHAPER[1])))
@@ -311,9 +326,11 @@ def get_max_accel(v_ego):"""),
   # the decel floor max(cruise_min, -decel_cap) and the monotone
   # tap-frame clamps -- so a down-tap ceiling / up-tap floor binds after
   # the slew too, on every frame the plan lives, including the frame the
-  # cosine ends. a_x_allowed and ACCEL_MAX are not named here:
-  # a_x_allowed is only bound in the non-e2e branch above, and both are
-  # already inside max_accel. Plan clamps yield to the safety caps on
+  # cosine ends (a positive up-tap floor is capped at half the pulse
+  # peak and released once the cosine ends -- v8; the raw clamps still
+  # drive the disarm checks). a_x_allowed and ACCEL_MAX are not named
+  # here: a_x_allowed is only bound in the non-e2e branch above, and
+  # both are already inside max_accel. Plan clamps yield to the safety caps on
   # conflict. The clip is a no-op whenever the previous command was
   # already inside the current caps.
   post_lo, post_hi = cruise_min, max_accel
@@ -376,7 +393,13 @@ def get_max_accel(v_ego):"""),
     # post-slew for the whole life of the plan, including the settle
     # phase after the cosine ends, so a down-tap can never raise the
     # command and an up-tap can never deepen braking, and there is no
-    # frame where the clamp dies early. A step larger than 2.5 m/s
+    # frame where the clamp dies early. (v8 comfort fix, trace2: the
+    # ENFORCED positive up-tap floor is capped at half the pulse peak
+    # while the cosine runs and released when it ends -- the raw clamp
+    # stays on the plan and drives every disarm check -- so a small
+    # tap onto the previous step's residue swells gently instead of
+    # holding the residue level for seconds and cutting at the
+    # crossing.) A step larger than 2.5 m/s
     # clears the plan the same frame (resumes stay stock). Exclusions:
     # any cruise/curve/nav ceiling, force-stop plan, an ACTING coast
     # plan (force coast, pulse-glide coasting, brake floor, speed
@@ -505,7 +528,29 @@ def get_max_accel(v_ego):"""),
         if clamp_blocks_closing or overshot or settled or crossed:
           self.cruise_shaper_plan = None
         else:
-          shaper_cmd = (a_ff, plan.a_lo, plan.a_hi, done)
+          # v8 comfort fix (trace2 hold/cut): the plan keeps the RAW
+          # tap-frame clamps and every disarm check above still uses
+          # them; only the ENFORCED up-tap floor is relaxed, and only
+          # when it is positive (a tap that landed on the previous
+          # step's residue). While the cosine runs it is capped at
+          # half the pulse peak: enough to hold a re-arm spin-up (no
+          # dip), never enough to flatten the whole pulse into a
+          # constant shove. Once the cosine ends it is released, so
+          # the settle phase creeps at the corr term instead of
+          # pinning at the residue (in v7 a +1 km/h tap onto a 0.13
+          # residue held a flat 0.13 for ~4 s then cut to ~0 at the
+          # crossing, and the +8 settle tail pinned at 0.13 above the
+          # 0.10 corr clamp). The command may relax below the
+          # tap-frame value only within positive accel -- never below
+          # half the freshly requested pulse, never into braking:
+          # negative floors stay verbatim (an up-tap can never deepen
+          # braking) and down-tap ceilings are untouched (a down-tap
+          # can never raise the command).
+          if plan.a_lo >= 0.0:
+            eff_lo = -math.inf if done else min(plan.a_lo, 0.5 * plan.A)
+          else:
+            eff_lo = plan.a_lo
+          shaper_cmd = (a_ff, eff_lo, plan.a_hi, done)
     self.a_cruise = get_cruise_accel(sm['selfdriveState'].experimentalMode, v_cruise, v_ego,"""),
     ("""                                     base_brake_floor=global_floor, selected_acceleration_max=selected_acceleration, faster_takeoffs=faster_takeoffs,
                                      a_target_prev=self.output_a_target)""",
