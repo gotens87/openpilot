@@ -66,7 +66,7 @@ case "$PATCHER_SET" in
       "Toyota: conditional experimental mode (marker camry_cem)"
       "comma 3: raise ignition-on fan floor for degraded fan (marker fan_floor)"
       "comma 3: reboot to retry a dead fan after ignition-on"
-      "Fix unnatural throttle control (marker camry_cruise_shaper)"
+      "Feather extra speed in"
       "Ops settings: enforce desired params and feature markers once per boot"
       "comma 3: hold reboot while engaged, fire on disengage"
       "Slipstream the highway lead"
