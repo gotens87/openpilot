@@ -79,6 +79,9 @@ DESIRED_PARAMS = {
   "FasterLeadTakeoff": True,
   "LongitudinalPersonality": 0,
   "CameraView": 0,
+  "CustomPersonalities": True,
+  "AggressiveFollow": 1.25,
+  "AggressiveFollowHigh": 0.5,
 }
 
 # Marker name -> contents. Created ONLY if the marker is absent and never
