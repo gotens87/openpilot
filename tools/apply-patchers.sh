@@ -61,7 +61,7 @@ case "$PATCHER_SET" in
       "Let it work the pedals"
       "Keep the lead in sight"
       "Glide through stop and go"
-      "Toyota TSS-P Camry: sDSU port regression tests"
+      "Don't leave the garage broken"
       "Park when you do"
       "Save caution for the light"
       "comma 3: raise ignition-on fan floor for degraded fan (marker fan_floor)"
