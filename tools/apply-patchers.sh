@@ -69,7 +69,7 @@ case "$PATCHER_SET" in
       "Toyota Camry Hybrid: fix unnatural throttle control (marker camry_cruise_shaper)"
       "Ops settings: enforce desired params and feature markers once per boot"
       "comma 3: hold reboot while engaged, fire on disengage"
-      "Toyota Camry Hybrid: small highway following-gap trim (marker highway_draft_gap)"
+      "Toyota Camry Hybrid: slipstream the highway lead (marker highway_draft_gap)"
     )
     ;;
   *)
