@@ -63,7 +63,7 @@ case "$PATCHER_SET" in
       "Toyota Camry Hybrid: opt-in longitudinal tune"
       "Toyota TSS-P Camry: sDSU port regression tests"
       "Offroad Without OBD Power: auto-offroad on park entry + exit"
-      "Toyota: conditional experimental mode (marker camry_cem)"
+      "Save caution for the light"
       "comma 3: raise ignition-on fan floor for degraded fan (marker fan_floor)"
       "comma 3: reboot to retry a dead fan after ignition-on"
       "Feather extra speed in"
