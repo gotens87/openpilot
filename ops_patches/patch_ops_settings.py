@@ -100,6 +100,7 @@ DESIRED_MARKERS = {
   "camry_stop_ramp": "",
   "camry_unwind": "",
   "fan_floor": "50",
+  "highway_draft_gap": "",
 }
 
 # Markers that must stay ABSENT: the loop above only creates, never
