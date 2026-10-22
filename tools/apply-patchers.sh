@@ -54,6 +54,7 @@ case "$PATCHER_SET" in
       patch_fan_reboot_retry.py
       patch_camry_cruise_shaper.py
       patch_ops_settings.py
+      patch_reboot_on_disengage.py
     )
     SUBJECTS=(
       "Toyota TSS-P Camry: openpilot longitudinal via sDSU"
@@ -66,6 +67,7 @@ case "$PATCHER_SET" in
       "comma 3: reboot to retry a dead fan after ignition-on"
       "Toyota Camry Hybrid: fix unnatural throttle control (marker camry_cruise_shaper)"
       "Ops settings: enforce desired params and feature markers once per boot"
+      "comma 3: hold reboot while engaged, fire on disengage"
     )
     ;;
   *)
