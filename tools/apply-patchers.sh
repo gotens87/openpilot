@@ -58,17 +58,17 @@ case "$PATCHER_SET" in
       patch_highway_draft_gap.py
     )
     SUBJECTS=(
-      "Toyota TSS-P Camry: openpilot longitudinal via sDSU"
-      "Toyota TSS-P Camry: Continental radar parser"
-      "Toyota Camry Hybrid: opt-in longitudinal tune"
+      "Let it work the pedals"
+      "Keep the lead in sight"
+      "Glide through stop and go"
       "Toyota TSS-P Camry: sDSU port regression tests"
-      "Offroad Without OBD Power: auto-offroad on park entry + exit"
+      "Park when you do"
       "Save caution for the light"
       "comma 3: raise ignition-on fan floor for degraded fan (marker fan_floor)"
-      "comma 3: reboot to retry a dead fan after ignition-on"
+      "Give the fan another chance"
       "Feather extra speed in"
-      "Ops settings: enforce desired params and feature markers once per boot"
-      "comma 3: hold reboot while engaged, fire on disengage"
+      "Have it your way"
+      "Wait until I let go"
       "Slipstream the highway lead"
     )
     ;;
