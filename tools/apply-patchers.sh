@@ -56,6 +56,7 @@ case "$PATCHER_SET" in
       patch_ops_settings.py
       patch_reboot_on_disengage.py
       patch_highway_draft_gap.py
+      patch_camry_stop_line.py
     )
     SUBJECTS=(
       "Let it work the pedals"
@@ -70,6 +71,7 @@ case "$PATCHER_SET" in
       "Have it your way"
       "Wait until I let go"
       "Slipstream the highway lead"
+      "Stop short of the paint"
     )
     ;;
   *)
