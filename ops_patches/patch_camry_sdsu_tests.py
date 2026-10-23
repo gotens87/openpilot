@@ -14,7 +14,7 @@ TEST_PATH = os.path.join(TOYOTA, "tests", "test_camry_sdsu.py")
 
 DEPENDENCIES = [
   ("interface.py", "camry_sdsu = candidate == CAR.TOYOTA_CAMRY"),
-  ("radar_interface.py", "def _update_tssp(self, updated_messages):"),
+  ("cluster_radar.py", "point.yRel = float(cluster['LAT_DIST'])"),
   ("values.py", "def camry_part(CP, part) -> bool:"),
 ]
 
@@ -153,12 +153,15 @@ class TestCamryTsspRadar(unittest.TestCase):
     self.assertEqual(DBC[CAR.TOYOTA_CAMRY][Bus.radar], "toyota_radar_dsu_tssp")
 
   def test_stock_camry_has_no_radar_parser(self):
-    self.assertIsNone(RadarInterface(get_camry(EMPTY_FINGERPRINT)).rcp)
+    ri = RadarInterface(get_camry(EMPTY_FINGERPRINT))
+    self.assertIsNone(ri.cluster)
+    self.assertIsNone(ri.rcp)
 
   def test_tssp_points_keep_raw_lat_sign(self):
     cp = get_camry(SDSU_FINGERPRINT)
     ri = RadarInterface(cp)
-    self.assertIsNotNone(ri.rcp)
+    self.assertIsNotNone(ri.cluster)
+    self.assertIsNotNone(ri.cluster.rcp)
 
     pt_packer = CANPacker(DBC[CAR.TOYOTA_CAMRY][Bus.pt])
     radar_packer = CANPacker(DBC[CAR.TOYOTA_CAMRY][Bus.radar])
@@ -176,8 +179,8 @@ class TestCamryTsspRadar(unittest.TestCase):
     self.assertEqual(len(rr.points), 1)
 
     point = rr.points[0]
-    lat_dist = ri.rcp.vl[0x681]["LAT_DIST"]
-    long_dist = ri.rcp.vl[0x681]["LONG_DIST"]
+    lat_dist = ri.cluster.rcp.vl[0x681]["LAT_DIST"]
+    long_dist = ri.cluster.rcp.vl[0x681]["LONG_DIST"]
     self.assertLess(lat_dist, 0.)
     # RadarPoint fields are Float32, so the float64 parser values are rounded
     # on assignment (~1e-7 relative, ~7.6e-6 at 80 m); compare against the

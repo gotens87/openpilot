@@ -42,10 +42,10 @@ EDITS = {
 
     stop_and_go = bool(ret.flags & ToyotaFlags.TSS2)"""),
     ("""    ret.openpilotLongitudinalControl = ((bool(ret.flags & ToyotaFlags.TSS2) and not (ret.flags & ToyotaFlags.RADAR_ACC)) or
-                                        bool(ret.flags & ToyotaFlags.DISABLE_RADAR.value))""",
+                                        bool(ret.flags & ToyotaFlags.DISABLE_RADAR.value) or (radar_filter and alpha_long))""",
      """    ret.openpilotLongitudinalControl = (camry_sdsu or
                                         (bool(ret.flags & ToyotaFlags.TSS2) and not (ret.flags & ToyotaFlags.RADAR_ACC)) or
-                                        bool(ret.flags & ToyotaFlags.DISABLE_RADAR.value))"""),
+                                        bool(ret.flags & ToyotaFlags.DISABLE_RADAR.value) or (radar_filter and alpha_long))"""),
   ],
   "carcontroller.py": [
     ("""import math
@@ -107,11 +107,14 @@ CAMRY_CLUSTER_RATIO = _camry_cluster_ratio()"""),
      """    # on the sDSU long path, the marker-controlled ratio matches the UI speed to the Camry dash
     cluster_ratio = CAMRY_CLUSTER_RATIO if (self.CP.flags & ToyotaFlags.LONG_FILTER and CAMRY_CLUSTER_RATIO is not None) else 1.015
     ret.vEgoCluster = ret.vEgo * cluster_ratio  # minimum of all the cars"""),
-    ("""    if self.CP.flags & (ToyotaFlags.TSS2 | ToyotaFlags.LONG_FILTER) or self.CP.carFingerprint == CAR.TOYOTA_PRIUS_RETROFIT:
+    ("""    if (self.CP.flags & (ToyotaFlags.TSS2 | ToyotaFlags.LONG_FILTER) or self.CP.carFingerprint == CAR.TOYOTA_PRIUS_RETROFIT or
+        self.CP.flags & ToyotaFlags.RADAR_CAN_FILTER and legacy_advert_filter.configured(self.CP)):
       # lkas button is wired to the camera""",
      """    # on TSS-P, LDA_ON_MESSAGE pulses with the stock LDA toggle, so only treat it as a button on the Prius
     if (self.CP.flags & ToyotaFlags.TSS2 or self.CP.carFingerprint == CAR.TOYOTA_PRIUS_RETROFIT or
-        (self.CP.flags & ToyotaFlags.LONG_FILTER and self.CP.carFingerprint == CAR.TOYOTA_PRIUS)):"""),
+        (self.CP.flags & ToyotaFlags.LONG_FILTER and self.CP.carFingerprint == CAR.TOYOTA_PRIUS) or
+        self.CP.flags & ToyotaFlags.RADAR_CAN_FILTER and legacy_advert_filter.configured(self.CP)):
+      # lkas button is wired to the camera"""),
   ],
 }
 
