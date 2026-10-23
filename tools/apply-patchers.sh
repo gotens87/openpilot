@@ -71,7 +71,7 @@ case "$PATCHER_SET" in
       "Have it your way"
       "Wait until I let go"
       "Slipstream the highway lead"
-      "Stop short of the paint"
+      "Don't arrive hot"
     )
     ;;
   *)
