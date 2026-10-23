@@ -1,30 +1,9 @@
 #!/usr/bin/env python3
 # Steady stop-line braking at red lights. Once Conditional Experimental Mode
-# has committed to a stop (StopLightDetector.committed, experimentalMode true)
-# with no lead, the planner's only brake is the model's raw
-# desiredAcceleration: soft for the first ~60 m, hard in the last 20, aimed at
-# the far side of the crosswalk. With /data/ops_patches/camry_stop_line present
-# (read once at import) the planner adds one more min() candidate
-# (openpilot/starpilot/longitudinal/stop_line.py): target = model stop horizon
-# (modelV2.position.x endpoint) - offset, dead-reckoned every frame and only
-# ever re-anchored shorter; a constant decel that reaches 2.5 m/s 6.9 m before
-# the target, then a ~0.45 m/s^2 finish; slew-limited off the previous
-# selected output; both laws closed loop on live speed and distance. Every
-# stock candidate, e2e included, stays in the min(), so the output is
-# min(stock, candidate): never softer than stock. Arms once per CEM stop
-# commitment (plannerd's wheel_coast.conditional_stop edge) when:
-# experimentalMode, long control on, v < 20 m/s, horizon finite and < 150 m,
-# no braking-relevant lead and leadOne not inside target + 10 m, no ForceStops
-# obstacle, no pedal, not standstill. Drops on green (horizon beyond target +
-# 30 m with model shouldStop false for 0.5 s), experimentalMode off 0.5 s or
-# standstill, and then waits for the next commitment; drops on pedal,
-# ForceStops, disengage or v > 22 m/s without forgetting the current commitment. A lead
-# mid-approach hands the frame back to stock while the commit dead-reckons.
-# Marker contents: empty = 6.0 m; else integer cm 0..1200 (bad value or
-# unreadable file = stock with a log line). Absent marker = stock planner
-# behaviour exactly. Lead stops, long_mpc.py, longcontrol.py and acados are
-# untouched. Also writes the pure module and its pytest file; neither needs
-# acados, cereal or Params.
+# has committed to a stop with no lead, the planner adds one min() candidate
+# (openpilot/starpilot/longitudinal/stop_line.py) aimed 6 m short of the model
+# horizon: firm early, soft finish. On in the build; no marker. Lead stops
+# stay stock. Also writes the module and its pytest file.
 import os
 import sys
 
@@ -667,39 +646,14 @@ def test_offset_moves_the_stop():
 OLD_IMPORT = "from openpilot.starpilot.longitudinal.force_stop import StopPlan\n"
 NEW_IMPORT = (
     "from openpilot.starpilot.longitudinal.force_stop import StopPlan\n"
-    "from openpilot.starpilot.longitudinal.stop_line import StopLine, horizon_from_path, parse_marker_bytes as parse_stop_line_marker_bytes\n"
+    "from openpilot.starpilot.longitudinal.stop_line import StopLine, horizon_from_path\n"
 )
 
 OLD_MARKER = "CRUISE_SHAPER = _read_cruise_shaper()\n"
 NEW_MARKER = """CRUISE_SHAPER = _read_cruise_shaper()
 
-# /data/ops_patches/camry_stop_line (read once at import): once Conditional
-# Experimental Mode has committed to a red light with no lead, a geometric
-# stop-line candidate (StopLine) joins the min() and brakes steadily toward
-# the model stop horizon minus this offset; every stock candidate stays in.
-# Absent = stock; empty = 6.0 m; integer cm 0..1200; unreadable or bad
-# parse = stock with a log line.
-STOP_LINE_MARKER = "/data/ops_patches/camry_stop_line"
-
-
-def _read_stop_line():
-  if not os.path.isfile(STOP_LINE_MARKER):
-    return None
-  try:
-    with open(STOP_LINE_MARKER, "rb") as f:
-      raw_b = f.read(65)
-    offset = parse_stop_line_marker_bytes(raw_b)
-  except (OSError, ValueError, UnicodeError) as e:
-    cloudlog.warning("camry_stop_line: marker read failed (%s); stock", e)
-    return None
-  if offset is None:
-    cloudlog.warning("camry_stop_line: marker parse failed (%r); stock", raw_b)
-  else:
-    cloudlog.info("camry_stop_line: offset %.2f m", offset)
-  return offset
-
-
-STOP_LINE_OFFSET_M = _read_stop_line()
+# Always on: geometric stop-line candidate for a committed empty red.
+STOP_LINE_OFFSET_M = 6.0
 """
 
 OLD_INIT = (
@@ -708,7 +662,7 @@ OLD_INIT = (
 )
 NEW_INIT = (
     "    self.force_stop_plan = StopPlan()\n"
-    "    self.stop_line = StopLine(STOP_LINE_OFFSET_M) if STOP_LINE_OFFSET_M is not None else None\n"
+    "    self.stop_line = StopLine(STOP_LINE_OFFSET_M)\n"
     "    self.follow_jerk = FollowJerk(CP)\n"
 )
 
@@ -721,22 +675,18 @@ OLD_CANDIDATES = (
 NEW_CANDIDATES = (
     "    candidates = [(output_a_target_mpc, self.mpc.source, output_should_stop_mpc),\n"
     "                  (self.a_cruise, LongitudinalPlanSource.cruise, cruise_should_stop)]\n"
-    "    if self.stop_line is not None:\n"
-    "      lead_one = sm['radarState'].leadOne\n"
-    "      stop_line_accel = self.stop_line.step(\n"
-    "        self.dt, v_ego, horizon_from_path(sm['modelV2'].position.x),\n"
-    "        stop_committed=(None if wheel_coast is None else bool(getattr(wheel_coast[0], 'conditional_stop', False) is True)),\n"
-    "        experimental=bool(sm['selfdriveState'].experimentalMode), enabled=not reset_state,\n"
-    "        lead_relevant=bool(relevant_lead), lead_drel=float(lead_one.dRel) if lead_one.present else None,\n"
-    "        force_stop=bool(self.force_stop_plan.forcing or self.force_stop_plan.obstacle_m is not None),\n"
-    "        pedal=bool(sm['carState'].gasPressed or sm['carState'].brakePressed),\n"
-    "        standstill=bool(sm['carState'].standstill), model_should_stop=bool(output_should_stop_e2e),\n"
-    "        a_prev=float(a_prev))\n"
-    "      if stop_line_accel is not None:\n"
-    "        # One more candidate for the min(): a steady geometric brake toward the\n"
-    "        # model stop horizon minus the marker offset. Every stock candidate stays\n"
-    "        # in, so the output is never softer than stock.\n"
-    "        candidates.append((stop_line_accel, LongitudinalPlanSource.cruise, False))\n"
+    "    lead_one = sm['radarState'].leadOne\n"
+    "    stop_line_accel = self.stop_line.step(\n"
+    "      self.dt, v_ego, horizon_from_path(sm['modelV2'].position.x),\n"
+    "      stop_committed=(None if wheel_coast is None else bool(getattr(wheel_coast[0], 'conditional_stop', False) is True)),\n"
+    "      experimental=bool(sm['selfdriveState'].experimentalMode), enabled=not reset_state,\n"
+    "      lead_relevant=bool(relevant_lead), lead_drel=float(lead_one.dRel) if lead_one.present else None,\n"
+    "      force_stop=bool(self.force_stop_plan.forcing or self.force_stop_plan.obstacle_m is not None),\n"
+    "      pedal=bool(sm['carState'].gasPressed or sm['carState'].brakePressed),\n"
+    "      standstill=bool(sm['carState'].standstill), model_should_stop=bool(output_should_stop_e2e),\n"
+    "      a_prev=float(a_prev))\n"
+    "    if stop_line_accel is not None:\n"
+    "      candidates.append((stop_line_accel, LongitudinalPlanSource.cruise, False))\n"
     "    if sm['selfdriveState'].experimentalMode:\n"
     "      candidates.append((output_a_target_e2e, LongitudinalPlanSource.e2e, output_should_stop_e2e))\n"
 )
