@@ -1,3 +1,4 @@
+import os
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -36,7 +37,7 @@ class CarControllerParams:
   MAX_LTA_DRIVER_TORQUE_ALLOWANCE = 150  # slightly above steering pressed allows some resistance when changing lanes
 
   def __init__(self, CP):
-    if CP.flags & ToyotaFlags.RAISED_ACCEL_LIMIT:
+    if CP.flags & ToyotaFlags.RAISED_ACCEL_LIMIT and not camry_part(CP, "camry_accel_cap"):
       self.ACCEL_MAX = 2.0
     else:
       self.ACCEL_MAX = 1.5  # m/s2, lower than allowed 2.0 m/s^2 for tuning reasons
@@ -630,7 +631,21 @@ def uses_toyota_auto_hold_aeb(CP) -> bool:
           (CP.carFingerprint == CAR.TOYOTA_RAV4_TSS2 and bool(CP.flags & ToyotaFlags.HYBRID)))
 
 
+# camry hybrid tune parts: each part is on iff /data/ops_patches/<part>
+# exists, checked once at import (touch the file and reboot to flip a part)
+CAMRY_MARKERS = {part: os.path.isfile(f"/data/ops_patches/{part}") for part in
+                 ("camry_ki", "camry_unwind", "camry_coast", "camry_signflip",
+                  "camry_stop_ramp", "camry_hybrid_ff", "camry_accel_cap")}
+
+
+def camry_part(CP, part) -> bool:
+  return bool(CAMRY_MARKERS[part] and CP.carFingerprint == CAR.TOYOTA_CAMRY and
+              CP.flags & ToyotaFlags.HYBRID and CP.flags & ToyotaFlags.LONG_FILTER)
+
+
 def stopping_decel_rate(CP):
+  if camry_part(CP, "camry_stop_ramp") and CP.openpilotLongitudinalControl:
+    return 0.3
   if (CP.brand == "toyota" and CP.carFingerprint in CAR and
       CAR[CP.carFingerprint].config.flags & ToyotaFlags.TSS2 and CP.flags & ToyotaFlags.TSS2 and
       len(CP.safetyConfigs) == 1 and CP.safetyConfigs[0].safetyModel == CarParams.SafetyModel.toyota and

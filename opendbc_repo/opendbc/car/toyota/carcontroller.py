@@ -12,7 +12,7 @@ from opendbc.car.toyota import toyotacan
 from opendbc.car.toyota import prius_longitudinal, rav4h_filter, pedal, eps8_sdsu, legacy_sdsu, advert_filter, legacy_stop_timer, legacy_advert_filter
 from opendbc.car.toyota import camera_2aa_filter, prius_sdsu, prius_advert_filter
 from opendbc.car.toyota.door_locks import DoorLocks
-from opendbc.car.toyota.values import CAR, CarControllerParams, ToyotaFlags, TOYOTA_AUTO_HOLD_CARS, uses_toyota_auto_hold_aeb
+from opendbc.car.toyota.values import CAR, CarControllerParams, ToyotaFlags, TOYOTA_AUTO_HOLD_CARS, camry_part, uses_toyota_auto_hold_aeb
 from opendbc.can import CANPacker
 from opendbc.safety import ALTERNATIVE_EXPERIENCE
 
@@ -62,7 +62,7 @@ def supports_toyota_auto_hold(CP):
 
 def get_long_tune(CP, params):
   prius = prius_longitudinal.enabled(CP)
-  if prius or CP.flags & ToyotaFlags.TSS2:
+  if prius or camry_part(CP, "camry_ki") or CP.flags & ToyotaFlags.TSS2:
     kiBP = [2., 5.]
     kiV = [0.5, 0.25]
   else:
@@ -72,6 +72,13 @@ def get_long_tune(CP, params):
   return PIDController(0.0, (kiBP, kiV), k_f=.8 if prius else 1.0,
                        pos_limit=params.ACCEL_MAX, neg_limit=params.ACCEL_MIN,
                        rate=1 / (DT_CTRL * 3))
+
+
+CAMRY_HYBRID_POSITIVE_FEEDFORWARD_SCALE = 0.8
+
+
+def get_camry_hybrid_feedforward(accel):
+  return accel * CAMRY_HYBRID_POSITIVE_FEEDFORWARD_SCALE if accel > 0.0 else accel
 
 
 class CarController(CarControllerBase):
@@ -92,6 +99,10 @@ class CarController(CarControllerBase):
     self.standstill_req = False
     self.last_standstill = False
     self.prius_longitudinal = prius_longitudinal.enabled(CP)
+    self.camry_unwind = camry_part(CP, "camry_unwind")
+    self.camry_coast = camry_part(CP, "camry_coast")
+    self.camry_signflip = camry_part(CP, "camry_signflip")
+    self.camry_hybrid_ff = camry_part(CP, "camry_hybrid_ff")
     self.sdsu_hybrid = (eps8_sdsu.configured(CP) or legacy_sdsu.configured(CP)) and bool(CP.flags & ToyotaFlags.HYBRID)
     self.legacy_stop_timer = legacy_stop_timer.enabled(CP)
     self.legacy_advert_filter = legacy_advert_filter.configured(CP)
@@ -379,7 +390,7 @@ class CarController(CarControllerBase):
 
         if long_active:
           # constantly slowly unwind integral to recover from large temporary errors
-          unwind = ACCEL_PID_UNWIND * (8. if self.prius_longitudinal and pcm_accel_cmd * self.long_pid.i < 0. else 1.)
+          unwind = ACCEL_PID_UNWIND * (8. if (self.prius_longitudinal or self.camry_unwind) and pcm_accel_cmd * self.long_pid.i < 0. else 1.)
           self.long_pid.i -= unwind * float(np.sign(self.long_pid.i))
 
           error_future = pcm_accel_cmd - a_ego_future
@@ -391,10 +402,16 @@ class CarController(CarControllerBase):
                                                -MAX_PITCH_COMPENSATION, MAX_PITCH_COMPENSATION))
             pcm_accel_cmd += pitch_compensation
 
+          feedforward = pcm_accel_cmd
+          if self.prius_longitudinal:
+            feedforward = prius_longitudinal.get_prius_feedforward(feedforward, CS.out.vEgo)
+          elif self.camry_hybrid_ff:
+            # the THS eCVT over-responds to positive requests, scale them down
+            feedforward = get_camry_hybrid_feedforward(feedforward)
+
           pcm_accel_cmd = self.long_pid.update(error_future,
                                                speed=CS.out.vEgo,
-                                               feedforward=(prius_longitudinal.get_prius_feedforward(pcm_accel_cmd, CS.out.vEgo)
-                                                            if self.prius_longitudinal else pcm_accel_cmd),
+                                               feedforward=feedforward,
                                                freeze_integrator=actuators.longControlState != LongCtrlState.pid)
         else:
           self.long_pid.reset()
@@ -402,7 +419,7 @@ class CarController(CarControllerBase):
         # Along with rate limiting positive jerk above, this greatly improves gas response time
         # Consider the net acceleration request that the PCM should be applying (pitch included)
         net_acceleration_request_min = min(actuators.accel + accel_due_to_pitch, net_acceleration_request)
-        if self.prius_longitudinal:
+        if self.prius_longitudinal or self.camry_coast:
           self.permit_braking = prius_longitudinal.update_permit_braking(
             self.permit_braking, net_acceleration_request_min, stopping, long_active, CS.out.vEgo, lead)
         elif net_acceleration_request_min < 0.2 or stopping or not long_active:
@@ -410,9 +427,10 @@ class CarController(CarControllerBase):
         elif net_acceleration_request_min > 0.3:
           self.permit_braking = False
 
-        if self.prius_longitudinal:
+        if self.prius_longitudinal or self.camry_signflip:
           pcm_accel_cmd = prius_longitudinal.limit_no_lead_cruise_sign_flip(
             pcm_accel_cmd, actuators.accel, stopping, CS.out.vEgo, CS.out.cruiseState.speed, lead)
+        if self.prius_longitudinal:
           pcm_accel_cmd = prius_longitudinal.limit_prius_stopping_accel(
             pcm_accel_cmd, actuators.accel, stopping, CS.out.vEgo, lead)
         pcm_accel_cmd = float(np.clip(pcm_accel_cmd, self.params.ACCEL_MIN, self.params.ACCEL_MAX))
