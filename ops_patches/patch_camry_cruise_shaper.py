@@ -18,9 +18,10 @@
 # pulse budget, no corr tail; duration is only a watchdog (1.6x
 # estimate + 2 s). Re-taps re-plan from current v_ego/a_cruise.
 #
-# Kept verbatim from v7-v9: arms only on button steps 0.2..2.5 m/s (a
-# larger step clears the plan the SAME frame; resumes/long-presses
-# stock); raw monotone tap-frame clamps drive every disarm check,
+# Kept verbatim from v7-v9 except the arm window: remaining |set-ego|
+# within 8 km/h gets the pinned subtle law; outside that, stock
+# (a 63->117 catch-up included). Button steps >=0.2 m/s re-plan;
+# raw monotone tap-frame clamps drive every disarm check,
 # checked EVERY frame (a clamp that blocks a closing command drops
 # the plan same-frame; a crossing past 0.2 m/s in either direction at
 # ANY phase hands to stock; residue-free settle handoff: gap <= 0.2
@@ -86,7 +87,7 @@ _SHAPER_CAP_BP = [0., 10., 25., 40.]
 _SHAPER_CAP_V = [1.00, 0.90, 0.65, 0.60]  # ceiling m/s^2; 0.65 @ 90 km/h ~ 2000-2200 rpm steady
 _SHAPER_DECEL = 0.5     # decel ceiling == stock A_CRUISE_MIN: never stronger than stock
 _SHAPER_MIN_STEP = 0.2  # arm threshold, m/s; also the any-phase crossing/disarm band
-_SHAPER_MAX_STEP = 2.5  # a bigger step clears the plan the same frame (resumes stay stock)
+_SHAPER_MAX_GAP = 8 / 3.6  # remaining |v_cruise-v_ego|; outside this, stock
 _SHAPER_SETTLE_A = 0.15 # disarm needs |a_cruise| at/below this with the gap closed, m/s^2
 _SHAPER_WD_MUL = 1.6    # watchdog: mul * trapezoid estimate + pad
 _SHAPER_WD_PAD = 2.0
@@ -238,8 +239,8 @@ def get_max_accel(v_ego):"""),
     # crossing past 0.2 m/s in either direction at ANY phase hands
     # back to stock; a watchdog (1.6x estimate + 2 s) drops a
     # cap-starved plan; the settle handoff is residue-free (gap <=
-    # 0.2 AND |a_cruise| <= 0.15). A step > 2.5 m/s clears the plan
-    # the same frame (resumes stay stock). Exclusions: any
+    # 0.2 AND |a_cruise| <= 0.15). Remaining |set-ego| > 8 km/h
+    # clears the plan the same frame (stock). Exclusions: any
     # cruise/curve/nav ceiling, force-stop plan, an ACTING coast plan,
     # forceDecel, standstill, driver pedal, experimental mode or
     # reset disarms instantly.
@@ -268,12 +269,11 @@ def get_max_accel(v_ego):"""),
       prev_set = self.cruise_shaper_v_cruise
       self.cruise_shaper_v_cruise = v_cruise
       step = (v_cruise - prev_set) if prev_set is not None else 0.0
-      if abs(step) > _SHAPER_MAX_STEP:
-        # Resume / long-press: stock, and any live plan dies this same
-        # frame.
+      gap = v_cruise - v_ego
+      if abs(gap) > _SHAPER_MAX_GAP:
+        # More than 8 km/h off set: stock, and any live plan dies.
         self.cruise_shaper_plan = None
       elif abs(step) >= _SHAPER_MIN_STEP:
-        gap = v_cruise - v_ego
         if step > 0.0:
           plan_lo, plan_hi = self.a_cruise, math.inf
         else:
