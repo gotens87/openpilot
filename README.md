@@ -1,6 +1,6 @@
 # StarPilot
 
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/StarPilotHQ/StarPilot)
+[![Ask DeepWiki](https://img.shields.io/badge/Ask-DeepWiki-blue?logo=readthedocs&logoColor=white)](https://deepwiki.com/StarPilotHQ/StarPilot)
 [![Discord](https://img.shields.io/discord/1387432184121393333?label=Discord)](https://firestar.link/discord)
 [![Last Updated](https://img.shields.io/github/last-commit/StarPilotHQ/StarPilot/StarPilot)](https://github.com/StarPilotHQ/StarPilot)
 [![Wiki](https://img.shields.io/badge/Wiki-StarPilot-blue?logo=wiki)](https://wiki.firestar.link)
