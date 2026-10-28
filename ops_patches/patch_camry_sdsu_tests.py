@@ -2,6 +2,8 @@
 # /data/ops_patches/patch_camry_sdsu_tests.py
 # Regression tests for the TSS-P Camry sDSU port. Installs a new test file;
 # fails if the port patchers haven't run, so tests can't land without the code.
+# Installed tests also lock the five upstream hybrid-tune behaviours and the
+# marker-on stop ramp, so a later upstream drop or re-gate fails CI.
 import os
 import sys
 
@@ -22,10 +24,12 @@ from opendbc.can import CANParser, CANPacker
 from opendbc.car import Bus, structs
 from opendbc.car.structs import CarParams
 from opendbc.car.toyota import carcontroller
+from opendbc.car.toyota import prius_longitudinal
 from opendbc.car.toyota.carcontroller import CarController
 from opendbc.car.toyota.interface import CarInterface
 from opendbc.car.toyota.radar_interface import RadarInterface
 from opendbc.car.toyota.values import CAR, DBC, ToyotaFlags, stopping_decel_rate
+import opendbc.car.toyota.values as toyota_values
 
 Ecu = CarParams.Ecu
 
@@ -85,6 +89,19 @@ class TestCamrySdsuParams(unittest.TestCase):
     self.assertTrue(cp.openpilotLongitudinalControl)
     self.assertIsNone(stopping_decel_rate(cp))
 
+  def test_stop_ramp_on_with_marker(self):
+    # _CAMRY_STOP_RAMP is the values.py module flag (file checked once at import)
+    cp = get_camry(SDSU_FINGERPRINT)
+    self.assertTrue(cp.openpilotLongitudinalControl)
+    self.assertTrue(cp.flags & ToyotaFlags.HYBRID)
+    self.assertTrue(cp.flags & ToyotaFlags.LONG_FILTER)
+    saved = toyota_values._CAMRY_STOP_RAMP
+    toyota_values._CAMRY_STOP_RAMP = True
+    try:
+      self.assertAlmostEqual(stopping_decel_rate(cp), 0.3)
+    finally:
+      toyota_values._CAMRY_STOP_RAMP = saved
+
 
 class TestCamryStandstillLatch(unittest.TestCase):
   def setUp(self):
@@ -139,6 +156,85 @@ class TestCamryStandstillLatch(unittest.TestCase):
       self.assertEqual(self.step(True, 8), 1)  # engaged stop edge: still no latch
     finally:
       carcontroller.CAMRY_SNG_HACK = False
+
+
+# Five behaviours previously applied by patch_camry_hybrid_tune, now hardcoded
+# upstream. Observables, not source anchors: a drop or re-gate fails CI.
+class TestCamryHybridUpstreamTune(unittest.TestCase):
+  def setUp(self):
+    self.cp = get_camry(SDSU_FINGERPRINT)
+    self.assertTrue(self.cp.openpilotLongitudinalControl)
+    self.assertTrue(self.cp.flags & ToyotaFlags.HYBRID)
+    self.controller = CarController({Bus.pt: DBC[self.cp.carFingerprint][Bus.pt]}, self.cp)
+    self.state = FakeCarState()
+    self.now = 1_000_000_000
+
+  def step(self, accel, v_ego, lead=False, set_speed=0.0, freeze=True):
+    self.state.out.vEgo = v_ego
+    self.state.out.vEgoRaw = v_ego
+    self.state.out.aEgo = 0.0
+    self.state.gvc = 0.0
+    self.state.out.standstill = False
+    self.state.out.cruiseState.speed = set_speed
+    command = structs.CarControl()
+    command.longActive = True
+    command.actuators.accel = accel
+    # off freezes the integrator so unwind / feedforward are readable directly
+    command.actuators.longControlState = carcontroller.LongCtrlState.off if freeze else carcontroller.LongCtrlState.pid
+    command.hudControl.leadVisible = lead
+    command = command.as_reader()
+    for _ in range(3):
+      ran = self.controller.frame % 3 == 0
+      self.controller.update(command, self.state, self.now)
+      self.now += 10_000_000
+      if ran:
+        return
+    self.fail("longitudinal frame did not run")
+
+  def test_hybrid_ki_schedule(self):
+    # generic LONG_FILTER ki is [0, 5, 35] / [3.6, 2.4, 1.5]; this car must keep the hybrid schedule
+    ki = self.controller.long_pid._k_i
+    self.assertEqual([float(v) for v in ki[0]], [2.0, 5.0])
+    self.assertEqual([float(v) for v in ki[1]], [0.5, 0.25])
+
+  def test_integral_unwind_8x(self):
+    # opposing signs, integrator frozen: the only change is the 8x unwind (generic path is 1x)
+    self.controller.long_pid.i = 1.0
+    self.step(accel=-1.0, v_ego=10.0)
+    self.assertAlmostEqual(self.controller.long_pid.i, 1.0 - 8.0 * carcontroller.ACCEL_PID_UNWIND)
+
+  def test_positive_feedforward_0_8(self):
+    # k_p is 0 and the integrator is frozen, so the command is the feedforward
+    self.controller.long_pid.i = 0.0
+    self.step(accel=1.0, v_ego=10.0)
+    self.assertAlmostEqual(self.controller.accel, 0.8 * carcontroller.ACCEL_WINDUP_LIMIT, places=5)
+
+  def test_permit_braking_coast(self):
+    # cruise with a lead and a non-braking request must drop permit_braking
+    v_ego = prius_longitudinal.TOYOTA_COAST_BRAKE_MIN_SPEED + 1.0
+    self.step(accel=0.0, v_ego=v_ego, lead=True)
+    self.assertFalse(self.controller.permit_braking)
+
+  def test_permit_braking_allows_real_brake(self):
+    v_ego = prius_longitudinal.TOYOTA_COAST_BRAKE_MIN_SPEED + 1.0
+    self.step(accel=prius_longitudinal.TOYOTA_COAST_BRAKE_ENABLE_ACCEL - 1.0, v_ego=v_ego, lead=True)
+    self.assertTrue(self.controller.permit_braking)
+
+  def test_no_lead_sign_flip_limiter(self):
+    v_ego = prius_longitudinal.TOYOTA_COAST_BRAKE_MIN_SPEED + 1.0
+    set_speed = v_ego + prius_longitudinal.TOYOTA_NO_LEAD_CRUISE_SIGN_FLIP_MIN_SET_SPEED_ERROR + 1.0
+    self.controller.long_pid.i = -2.0
+    self.step(accel=0.0, v_ego=v_ego, lead=False, set_speed=set_speed)
+    # raw command is the negative integral; the limiter must floor it at 0
+    self.assertLess(self.controller.long_pid.i, -1.0)
+    self.assertAlmostEqual(self.controller.accel, 0.0, places=3)
+
+  def test_sign_flip_inactive_with_lead(self):
+    v_ego = prius_longitudinal.TOYOTA_COAST_BRAKE_MIN_SPEED + 1.0
+    set_speed = v_ego + prius_longitudinal.TOYOTA_NO_LEAD_CRUISE_SIGN_FLIP_MIN_SET_SPEED_ERROR + 1.0
+    self.controller.long_pid.i = -2.0
+    self.step(accel=0.0, v_ego=v_ego, lead=True, set_speed=set_speed)
+    self.assertAlmostEqual(self.controller.accel, self.controller.long_pid.i, places=3)
 
 
 class TestCamryTsspRadar(unittest.TestCase):
