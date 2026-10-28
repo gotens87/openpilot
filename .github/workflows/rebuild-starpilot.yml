@@ -1,6 +1,6 @@
 name: Rebuild StarPilot
 
-# Rebuilds branch StarPilot as: upstream Dom tip + the patch series in patches/.
+# Rebuilds branch StarPilot as: upstream StarPilot (6.x stable) tip + the patch series in patches/.
 # Lives on the default branch (ops) because schedule: only fires from the default
 # branch, and StarPilot itself is force-reset to upstream content on every run.
 
@@ -23,7 +23,7 @@ concurrency:
 
 env:
   UPSTREAM_REPO: https://github.com/firestar5683/StarPilot.git
-  UPSTREAM_BRANCH: Dom
+  UPSTREAM_BRANCH: StarPilot
   TARGET_BRANCH: StarPilot
 
 jobs:

@@ -1,12 +1,12 @@
 name: Pin Domathon
 
-# Builds branch Domathon as: a pinned commit from upstream SecretGoodStarPilot,
+# Builds branch Domathon as: a pinned commit from upstream Dom (7.0 testing),
 # PLUS the "domathon" patcher set from ops_patches/, verified by the opendbc
 # Toyota tests before anything is pushed. Committer date is pinned to the picked
 # commit's, so the result is a deterministic function of the picked sha and a
 # rollback is just a re-run with an older sha.
 #
-# Scheduled runs (blank sha) follow the SecretGoodStarPilot tip, skipping the
+# Scheduled runs (blank sha) follow the Dom tip, skipping the
 # build when Domathon is already built on it. A manual dispatch with an explicit
 # sha pins or rolls back; to keep a rollback from being undone 10 minutes later,
 # set repo variable DOMATHON_HOLD (any non-empty value parks the schedule),
@@ -18,7 +18,7 @@ on:
   workflow_dispatch:
     inputs:
       sha:
-        description: 'Full 40-hex commit on upstream SecretGoodStarPilot to pin Domathon to; blank = current SecretGoodStarPilot tip'
+        description: 'Full 40-hex commit on upstream Dom to pin Domathon to; blank = current Dom tip'
         required: false
         type: string
 
@@ -31,7 +31,7 @@ concurrency:
 
 env:
   UPSTREAM_REPO: https://github.com/firestar5683/StarPilot.git
-  UPSTREAM_BRANCH: SecretGoodStarPilot
+  UPSTREAM_BRANCH: Dom
   TARGET_BRANCH: Domathon
 
 jobs:
@@ -67,13 +67,13 @@ jobs:
           echo "PIN_SHA=$pin" >> "$GITHUB_ENV"
           echo "pinning $TARGET_BRANCH to $pin ($GITHUB_EVENT_NAME)"
 
-      - name: Check sha is on SecretGoodStarPilot
+      - name: Check sha is on upstream branch
         env:
           GH_TOKEN: ${{ secrets.PATCHQUEUE_TOKEN }}
         run: |
           # The compare API answers the ancestry question without cloning a ~6k-file
           # repo: base=branch, head=sha, so behind/identical means the sha is an
-          # ancestor-or-equal of the SecretGoodStarPilot tip. ahead/diverged means it
+          # ancestor-or-equal of the upstream tip. ahead/diverged means it
           # belongs to some other branch; an unknown sha 404s and fails the step.
           upstream=${UPSTREAM_REPO#https://github.com/}
           status=$(gh api "repos/${upstream%.git}/compare/${UPSTREAM_BRANCH}...${PIN_SHA}" --jq .status)
