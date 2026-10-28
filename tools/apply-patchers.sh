@@ -46,7 +46,7 @@ case "$PATCHER_SET" in
     PATCHERS=(
       patch_sdsu_long.py
       patch_tssp_radar.py
-      patch_camry_hybrid_tune.py
+      patch_camry_stop_ramp.py
       patch_camry_sdsu_tests.py
       patch_park_offroad.py
       patch_camry_cem.py
@@ -94,6 +94,9 @@ esac
 # Retired, not shelved -- dropped from the active set when upstream reworked
 # get_cruise_accel (a_target_prev / decel_start slew); files kept in
 # ops_patches/ for history only:
+#  - patch_camry_hybrid_tune.py -- upstream Dom now hardcodes ki, 8x unwind, 0.8 ff,
+#    coast and sign-flip for the Camry hybrid; only the stop ramp is still ours
+#    (patch_camry_stop_ramp.py). Accel cap dropped (marker was off).
 #  - patch_camry_smooth_onset.py -- marker was already off; no longer applies.
 #  - patch_camry_small_step.py -- superseded by patch_camry_cruise_shaper.py
 #    (the shaper never needed its cap: a pulse owns the candidate while active).

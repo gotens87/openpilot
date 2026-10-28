@@ -166,10 +166,10 @@ jobs:
           # (setproctitle, starpilot.car.toyota.tests, etc.) but cover none of
           # the safety C / Camry patchers, so they're deselected rather than
           # chasing deps: test_tx_hook_on_wrong_safety_mode,
-          # test_lta_and_lka_must_both_be_healthy.
+          # test_lta_and_lka_must_both_be_healthy, test_matrix_stock_aol_admission.
           # --ignore skips tests that import the full openpilot tree at module
           # scope (collection fails; -k can't filter). They don't cover our Camry patchers.
-          python -m pytest -q opendbc/car/toyota/tests opendbc/safety/tests/test_toyota.py -k "not test_tx_hook_on_wrong_safety_mode and not test_lta_and_lka_must_both_be_healthy" --ignore=opendbc/car/toyota/tests/test_prius_inactive.py --ignore=opendbc/car/toyota/tests/test_rav4h_filter.py --ignore=opendbc/car/toyota/tests/test_lexus_is.py
+          python -m pytest -q opendbc/car/toyota/tests opendbc/safety/tests/test_toyota.py -k "not test_tx_hook_on_wrong_safety_mode and not test_lta_and_lka_must_both_be_healthy and not test_matrix_stock_aol_admission" --ignore=opendbc/car/toyota/tests/test_prius_inactive.py --ignore=opendbc/car/toyota/tests/test_rav4h_filter.py --ignore=opendbc/car/toyota/tests/test_lexus_is.py
           python -m pytest -q opendbc/car/tests/test_car_interfaces.py -k "TOYOTA or LEXUS"
 
       - name: Push if changed

@@ -2,10 +2,6 @@
 # /data/ops_patches/patch_camry_sdsu_tests.py
 # Regression tests for the TSS-P Camry sDSU port. Installs a new test file;
 # fails if the port patchers haven't run, so tests can't land without the code.
-# The tune tests assert every camry hybrid tune part defaults off; each part
-# is gated on its own /data/ops_patches/ marker: camry_ki, camry_unwind,
-# camry_coast, camry_signflip, camry_stop_ramp, camry_hybrid_ff,
-# camry_accel_cap.
 import os
 import sys
 
@@ -15,7 +11,7 @@ TEST_PATH = os.path.join(TOYOTA, "tests", "test_camry_sdsu.py")
 DEPENDENCIES = [
   ("interface.py", "camry_sdsu = candidate == CAR.TOYOTA_CAMRY"),
   ("cluster_radar.py", "point.yRel = float(cluster['LAT_DIST'])"),
-  ("values.py", "def camry_part(CP, part) -> bool:"),
+  ("values.py", "os.path.isfile(\"/data/ops_patches/camry_stop_ramp\")"),
 ]
 
 TEST_FILE = r'''import unittest
@@ -29,16 +25,15 @@ from opendbc.car.toyota import carcontroller
 from opendbc.car.toyota.carcontroller import CarController
 from opendbc.car.toyota.interface import CarInterface
 from opendbc.car.toyota.radar_interface import RadarInterface
-from opendbc.car.toyota.values import CAR, DBC, ToyotaFlags, CarControllerParams, camry_part, stopping_decel_rate
+from opendbc.car.toyota.values import CAR, DBC, ToyotaFlags, stopping_decel_rate
 
 Ecu = CarParams.Ecu
 
-SDSU_FINGERPRINT = {0: {0x2FF: 4}, 1: {}, 2: {}}
+# bus 1's 8-byte 0x2FF keeps radar_filter.hardware_supported false
+SDSU_FINGERPRINT = {0: {0x2FF: 4}, 1: {0x2FF: 8}, 2: {0x2FF: 4}}
 RADAR_FILTER_FINGERPRINT = {0: {0x2AA: 8}, 1: {}, 2: {}}
 EMPTY_FINGERPRINT = {0: {}, 1: {}, 2: {}}
 HYBRID_FW = [CarParams.CarFw.new_message(ecu=Ecu.hybrid, fwVersion=b"\x0281E00600\x00\x00\x00\x00\x00\x00\x00")]
-CAMRY_TUNE_PARTS = ("camry_ki", "camry_unwind", "camry_coast", "camry_signflip",
-                    "camry_stop_ramp", "camry_hybrid_ff", "camry_accel_cap")
 
 
 def get_camry(fp):
@@ -71,26 +66,24 @@ class TestCamrySdsuParams(unittest.TestCase):
         self.assertAlmostEqual(cp.minEnableSpeed, -1.0)
         self.assertAlmostEqual(cp.longitudinalActuatorDelay, 0.05)
 
+  def test_real_fingerprint_skips_radar_can_filter(self):
+    cp = get_camry(SDSU_FINGERPRINT)
+    self.assertEqual(cp.flags, 9233)
+    self.assertFalse(cp.flags & ToyotaFlags.RADAR_CAN_FILTER)
+
   def test_stock_camry_unchanged(self):
     cp = get_camry(EMPTY_FINGERPRINT)
     self.assertFalse(cp.openpilotLongitudinalControl)
-    self.assertEqual(cp.safetyConfigs[0].safetyParam, 73 | (2 << 8))
+    # 73 | (2 << 8) == 585 is stale; unpatched upstream stock word is 0x6249
+    self.assertEqual(cp.safetyConfigs[0].safetyParam, 0x6249)
     self.assertFalse(cp.flags & ToyotaFlags.LONG_FILTER)
     # radar traffic is only expected with the filter hardware present
     self.assertTrue(cp.radarUnavailable)
 
-  def test_tune_flags_default_off(self):
+  def test_stop_ramp_off_without_marker(self):
     cp = get_camry(SDSU_FINGERPRINT)
-    for part in CAMRY_TUNE_PARTS:
-      with self.subTest(part=part):
-        self.assertFalse(camry_part(cp, part))
-    self.assertEqual(CarControllerParams(cp).ACCEL_MAX, 2.0)
+    self.assertTrue(cp.openpilotLongitudinalControl)
     self.assertIsNone(stopping_decel_rate(cp))
-    controller = CarController({Bus.pt: DBC[cp.carFingerprint][Bus.pt]}, cp)
-    self.assertFalse(controller.camry_unwind)
-    self.assertFalse(controller.camry_coast)
-    self.assertFalse(controller.camry_signflip)
-    self.assertFalse(controller.camry_hybrid_ff)
 
 
 class TestCamryStandstillLatch(unittest.TestCase):
