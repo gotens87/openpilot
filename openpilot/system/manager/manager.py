@@ -79,6 +79,15 @@ def manager_init() -> None:
     if default_value is not None and not os.path.lexists(params.get_param_path(k)):
       params.put(k, default_value, block=True)
 
+  # Ops desired-settings enforcement: once per boot, after the default loop
+  # above so the list wins, before any managed process starts (markers are
+  # read at import by controls processes). Wrapped so it can never block boot.
+  try:
+    from openpilot.starpilot.ops_settings import enforce_ops_settings
+    enforce_ops_settings(params)
+  except Exception:
+    cloudlog.exception("Ops settings enforcement failed; continuing boot")
+
   # Create folders needed for msgq
   try:
     os.mkdir(Paths.shm_path())
