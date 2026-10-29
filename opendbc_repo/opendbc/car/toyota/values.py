@@ -1,3 +1,4 @@
+import os
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -632,7 +633,14 @@ def uses_toyota_auto_hold_aeb(CP) -> bool:
           (CP.carFingerprint == CAR.TOYOTA_RAV4_TSS2 and bool(CP.flags & ToyotaFlags.HYBRID)))
 
 
+_CAMRY_STOP_RAMP = os.path.isfile("/data/ops_patches/camry_stop_ramp")
+
+
 def stopping_decel_rate(CP):
+  if (_CAMRY_STOP_RAMP and CP.carFingerprint == CAR.TOYOTA_CAMRY and
+      CP.flags & ToyotaFlags.HYBRID and CP.flags & ToyotaFlags.LONG_FILTER and
+      CP.openpilotLongitudinalControl):
+    return 0.3
   if (CP.brand == "toyota" and CP.carFingerprint in CAR and
       CAR[CP.carFingerprint].config.flags & ToyotaFlags.TSS2 and CP.flags & ToyotaFlags.TSS2 and
       len(CP.safetyConfigs) == 1 and CP.safetyConfigs[0].safetyModel == CarParams.SafetyModel.toyota and
