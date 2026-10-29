@@ -271,6 +271,13 @@ def hardware_thread(end_event, hw_queue) -> None:
   requested_onroad_prev = None
   power_monitor = PowerMonitoring()
 
+  # Park auto-offroad release state (CAN parser is lazy-built on first need).
+  park_offroad_marker = "/data/ops_patches/.park_offroad_forced"
+  park_cp = None
+  park_gear_msg = None
+  park_gear_val = None
+  park_can_sock = None
+
   uptime_offroad: float = params.get("UptimeOffroad", return_default=True)
   uptime_onroad: float = params.get("UptimeOnroad", return_default=True)
   last_uptime_ts: float = time.monotonic()
@@ -285,6 +292,59 @@ def hardware_thread(end_event, hw_queue) -> None:
 
   while not end_event.is_set():
     sm.update(PANDA_STATES_TIMEOUT)
+
+    # Release park auto-offroad the moment the gear leaves P (runs while offroad).
+    if os.path.isfile(park_offroad_marker):
+      try:
+        with open(park_offroad_marker) as f:
+          park_sid = f.read().strip()
+        session = params.get("DriveStateSession")
+        sid = session.get("id") if isinstance(session, dict) else None
+        if sid is None or park_sid != sid:
+          try:
+            os.remove(park_offroad_marker)  # stale claim from a dead session
+          except OSError:
+            pass
+        else:
+          if park_cp is None:
+            from opendbc.can import CANDefine, CANParser
+            from opendbc.car import Bus
+            from opendbc.car.structs import car as car_log
+            from opendbc.car.toyota.values import CAR, DBC
+            from openpilot.selfdrive.pandad import can_capnp_to_list
+            cp_bytes = params.get("CarParams")
+            if cp_bytes:
+              fp = str(messaging.log_from_bytes(cp_bytes, car_log.CarParams).carFingerprint)
+              dbc_path = DBC[fp][Bus.pt] if fp in DBC else DBC[CAR[fp]][Bus.pt]
+              can_define = CANDefine(dbc_path)
+              for msg in ("GEAR_PACKET_HYBRID", "GEAR_PACKET"):
+                for val, text in (can_define.dv.get(msg, {}).get("GEAR") or {}).items():
+                  if text in ("P", "park"):
+                    park_gear_msg, park_gear_val = msg, int(val)
+                    break
+                if park_gear_msg is not None:
+                  break
+              if park_gear_msg is not None:
+                park_cp = CANParser(dbc_path, [(park_gear_msg, float("nan"))], 0)
+                park_can_sock = messaging.sub_sock("can", conflate=True)
+          if park_cp is not None:
+            can_strs = messaging.drain_sock_raw(park_can_sock, wait_for_one=False)
+            if can_strs:
+              park_cp.update(can_capnp_to_list(can_strs))
+            gear_ts_ns = park_cp.ts_nanos[park_gear_msg]["GEAR"]
+            if (gear_ts_ns > 0 and time.monotonic_ns() - gear_ts_ns < 1_000_000_000 and
+                park_cp.vl[park_gear_msg]["GEAR"] != park_gear_val):
+              snap = drive_state.snapshot()
+              if snap.available:
+                if snap.mode == "offroad":
+                  drive_state.request("auto", expected_revision=snap.revision,
+                                      authorized=lambda: True, override_allowed=lambda: False)
+                try:
+                  os.remove(park_offroad_marker)
+                except OSError:
+                  pass
+      except Exception:
+        cloudlog.exception("park auto-offroad release failed")
 
     pandaStates = sm['pandaStates']
     peripheralState = sm['peripheralState']
