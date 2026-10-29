@@ -116,6 +116,36 @@ else:
 # Override to highest thermal band when offroad and above this temp
 OFFROAD_DANGER_TEMP = 85 if HARDWARE.get_device_type() == "mici" else 75
 
+
+# --- ops_patches: dead-fan reboot retry (see ops_patches/patch_fan_reboot_retry.py) ---
+FAN_REBOOT_MIN_CMD = 50    # arm only when commanded duty >= this (%); offroad cap is 30, so never arms offroad-cool
+FAN_REBOOT_RPM = 500       # below this rpm the fan counts as not spinning (matches fanMalfunction threshold)
+FAN_DEAD_GRACE_S = 15.     # sustained dead time before rebooting; healthy fan passes 500 rpm by 2 s from a stop at 50%
+FAN_REBOOT_MAX = 2         # max consecutive reboot retries per dead episode
+FAN_REBOOT_COUNTER = "/data/ops_patches/fan_reboot_count"
+
+
+def _read_fan_reboot_count() -> int:
+  try:
+    with open(FAN_REBOOT_COUNTER) as f:
+      return max(0, int(f.read().strip()))
+  except (OSError, ValueError):
+    return 0
+
+
+def _write_fan_reboot_count(n: int) -> None:
+  try:
+    if n <= 0:
+      os.remove(FAN_REBOOT_COUNTER)
+      return
+    with open(FAN_REBOOT_COUNTER, "w") as f:
+      f.write(str(n))
+      f.flush()
+      os.fsync(f.fileno())
+  except OSError:
+    pass
+
+
 prev_offroad_states: dict[str, tuple[bool, str | None]] = {}
 
 
@@ -263,6 +293,12 @@ def hardware_thread(end_event, hw_queue) -> None:
   engaged_prev = False
   pwrsave = False
   offroad_cycle_count = 0
+
+  # ops_patches: dead-fan reboot retry state
+  fan_bad_since: float | None = None
+  fan_reboot_requested = False
+  fan_gave_up = False
+  fan_dead_reboots = _read_fan_reboot_count()
 
   params = Params()
   drive_state = DriveStateOwner(params, starpilot_storage_root() / "drive-state")
@@ -479,6 +515,38 @@ def hardware_thread(end_event, hw_queue) -> None:
 
     if show_alert:
       msg.deviceState.fanSpeedPercentDesired = 100
+
+    # *** ops_patches: dead-fan reboot retry ***
+    fan_rpm = peripheralState.fanSpeedRpm if (sm.alive["peripheralState"] and sm.valid["peripheralState"]) else None
+    fan_cmd = msg.deviceState.fanSpeedPercentDesired
+    if fan_rpm is None or fan_cmd < FAN_REBOOT_MIN_CMD:
+      fan_bad_since = None  # disarmed: panda not reporting, or duty below the 50% arm threshold
+    elif fan_rpm >= FAN_REBOOT_RPM:
+      fan_bad_since = None
+      fan_gave_up = False
+      if fan_dead_reboots > 0:
+        fan_dead_reboots = 0
+        _write_fan_reboot_count(0)
+        cloudlog.event("fan spinning, dead-fan reboot counter reset", rpm=fan_rpm, cmd=fan_cmd)
+    else:
+      if fan_bad_since is None:
+        fan_bad_since = time.monotonic()
+      elif not fan_reboot_requested and (time.monotonic() - fan_bad_since) > FAN_DEAD_GRACE_S:
+        if fan_dead_reboots < FAN_REBOOT_MAX:
+          fan_dead_reboots += 1
+          fan_reboot_requested = True
+          _write_fan_reboot_count(fan_dead_reboots)
+          cloudlog.event("fan dead, rebooting to retry", rpm=fan_rpm, cmd=fan_cmd,
+                         attempt=fan_dead_reboots, max_attempts=FAN_REBOOT_MAX, error=True)
+          os.sync()
+          try:
+            HARDWARE.reboot("fan_dead")
+          except Exception:
+            cloudlog.exception("fan-dead reboot failed")
+        elif not fan_gave_up:
+          fan_gave_up = True
+          cloudlog.event("fan dead, reboot retries exhausted, staying up", rpm=fan_rpm, cmd=fan_cmd,
+                         attempts=fan_dead_reboots, error=True)
 
     # *** registration check ***
     if not PC:
