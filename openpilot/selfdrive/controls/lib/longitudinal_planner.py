@@ -33,6 +33,7 @@ from openpilot.starpilot.longitudinal.ioniq6_start import eligible as ioniq6_lon
 from openpilot.starpilot.longitudinal.lane_change_gap import LaneChangeGap, project as project_lane_gap
 from openpilot.starpilot.longitudinal.experimental_release import ConditionalHandoff, ExperimentalRelease, project as project_release
 from openpilot.starpilot.longitudinal.force_stop import StopPlan
+from openpilot.starpilot.longitudinal.stop_line import StopLine, horizon_from_path
 from openpilot.starpilot.longitudinal.follow_jerk import FollowJerk
 from openpilot.starpilot.longitudinal.lead_takeoff import LeadTakeoff, project as project_takeoff
 from openpilot.starpilot.longitudinal.lead_behavior import adjust as adjust_lead_behavior
@@ -117,6 +118,9 @@ def _read_cruise_shaper():
 
 
 CRUISE_SHAPER = _read_cruise_shaper()
+
+# Always on: geometric stop-line candidate for a committed empty red.
+STOP_LINE_OFFSET_M = 6.0
 
 
 class _ShaperPlan:
@@ -265,6 +269,7 @@ class LongitudinalPlanner:
     self.profile_smoother = ProfileSmoother()
     self.last_profile: AppliedProfile | None = None
     self.force_stop_plan = StopPlan()
+    self.stop_line = StopLine(STOP_LINE_OFFSET_M)
     self.follow_jerk = FollowJerk(CP)
     self.vehicle_cost_owner = planner_cost_owner(CP)
     self.lead_takeoff = LeadTakeoff()
@@ -687,6 +692,18 @@ class LongitudinalPlanner:
 
     candidates = [(output_a_target_mpc, self.mpc.source, output_should_stop_mpc),
                   (self.a_cruise, LongitudinalPlanSource.cruise, cruise_should_stop)]
+    lead_one = sm['radarState'].leadOne
+    stop_line_accel = self.stop_line.step(
+      self.dt, v_ego, horizon_from_path(sm['modelV2'].position.x),
+      stop_committed=(None if wheel_coast is None else bool(getattr(wheel_coast[0], 'conditional_stop', False) is True)),
+      experimental=bool(sm['selfdriveState'].experimentalMode), enabled=not reset_state,
+      lead_relevant=bool(relevant_lead), lead_drel=float(lead_one.dRel) if lead_one.present else None,
+      force_stop=bool(self.force_stop_plan.forcing or self.force_stop_plan.obstacle_m is not None),
+      pedal=bool(sm['carState'].gasPressed or sm['carState'].brakePressed),
+      standstill=bool(sm['carState'].standstill), model_should_stop=bool(output_should_stop_e2e),
+      a_prev=float(a_prev))
+    if stop_line_accel is not None:
+      candidates.append((stop_line_accel, LongitudinalPlanSource.cruise, False))
     if sm['selfdriveState'].experimentalMode:
       candidates.append((output_a_target_e2e, LongitudinalPlanSource.e2e, output_should_stop_e2e))
 
