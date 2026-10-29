@@ -92,6 +92,13 @@ class CarInterface(CarInterfaceBase):
                      for fw in car_fw))
     if candidate in (CAR.TOYOTA_PRIUS, CAR.TOYOTA_PRIUS_RETROFIT) and fingerprint.get(0, {}).get(0x23) == 8:
       ret.flags |= int(ToyotaFlags.ZSS)
+    # sDSU / radar filter hardware on the TSS-P Camry announces itself on bus 0
+    camry_sdsu = candidate == CAR.TOYOTA_CAMRY and (0x2FF in fingerprint[0] or 0x2AA in fingerprint[0])
+    if camry_sdsu:
+      # sDSU / radar filter hardware needs the Toyota safety long-filter TX set
+      ret.flags |= ToyotaFlags.LONG_FILTER.value
+      ret.safetyConfigs[0].safetyParam |= ToyotaSafetyFlags.LONG_FILTER.value
+
     stop_and_go = bool(ret.flags & ToyotaFlags.TSS2)
 
     # In TSS2 cars, the camera does long control
@@ -156,7 +163,8 @@ class CarInterface(CarInterfaceBase):
     # openpilot longitudinal behind alpha long toggle:
     #  - TSS2 radar ACC cars (disables radar)
 
-    ret.openpilotLongitudinalControl = ((bool(ret.flags & ToyotaFlags.TSS2) and not (ret.flags & ToyotaFlags.RADAR_ACC)) or
+    ret.openpilotLongitudinalControl = (camry_sdsu or
+                                        (bool(ret.flags & ToyotaFlags.TSS2) and not (ret.flags & ToyotaFlags.RADAR_ACC)) or
                                         bool(ret.flags & ToyotaFlags.DISABLE_RADAR.value) or (radar_filter and alpha_long))
 
     if candidate == CAR.TOYOTA_YARIS and ret.flags & ToyotaFlags.DISABLE_RADAR:

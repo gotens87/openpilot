@@ -1,4 +1,5 @@
 import math
+import os
 import numpy as np
 from opendbc.car import Bus, make_tester_present_msg, rate_limit, structs, ACCELERATION_DUE_TO_GRAVITY, DT_CTRL
 from opendbc.car.lateral import apply_meas_steer_torque_limits, apply_std_steer_angle_limits, common_fault_avoidance
@@ -20,6 +21,11 @@ Ecu = structs.CarParams.Ecu
 LongCtrlState = structs.CarControl.Actuators.LongControlState
 SteerControlType = structs.CarParams.SteerControlType
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
+
+# /data/ops_patches/camry_sng (read once at import) restores the old SNG-hack
+# behaviour on the TSS-P long path: never latch standstill, always clear it,
+# so the car auto-resumes from standstill behind a lead
+CAMRY_SNG_HACK = os.path.isfile("/data/ops_patches/camry_sng")
 
 # The up limit allows the brakes/gas to unwind quickly leaving a stop,
 # the down limit roughly matches the rate of ACCEL_NET, reducing PCM compensation windup
@@ -331,13 +337,15 @@ class CarController(CarControllerBase):
       # brakes can take a while to ramp up causing a lurch forward. prevent resume press until planner wants to move.
       # don't use CC.cruiseControl.resume since it is gated on CS.cruiseState.standstill which goes false for 3s after resume press
       # whitelist hybrids as they do not have this issue and can stay stopped after resume press
-      if self.prius_longitudinal:
-        if CS.out.standstill and not self.last_standstill:
+      # TSS-P PCMs latch a standstill request that must be explicitly released to move again
+      if self.CP.flags & ToyotaFlags.LONG_FILTER:
+        if CS.out.standstill and not self.last_standstill and not CAMRY_SNG_HACK:
           self.standstill_req = True
-        if CS.pcm_acc_status != 8 or CC.cruiseControl.resume:
+        if CS.pcm_acc_status != 8 or CC.cruiseControl.resume or CAMRY_SNG_HACK:
           self.standstill_req = False
         self.last_standstill = CS.out.standstill
-        if not long_active and CS.out.standstill:
+        # camry_sng never latches standstill, so the inactive-at-stop re-latch must not either
+        if not long_active and CS.out.standstill and not CAMRY_SNG_HACK:
           self.standstill_req = True
       elif self.legacy_stop_timer:
         self.standstill_req = legacy_stop_timer.request(
