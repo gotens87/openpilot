@@ -210,10 +210,13 @@ def manager_thread() -> None:
     except Exception:
       pass
 
-    # Exit main loop when uninstall/shutdown/reboot is needed
+    # Exit main loop when uninstall/shutdown/reboot is needed.
+    # DoReboot while IsEngaged waits for disengage; the key is cleared on manager start, so it cannot loop.
     shutdown = False
     for param in ("DoUninstall", "DoShutdown", "DoReboot"):
       if params.get_bool(param):
+        if param == "DoReboot" and params.get_bool("IsEngaged"):
+          continue
         shutdown = True
         params.put("LastManagerExitReason", f"{param} {datetime.datetime.now()}", block=True)
         cloudlog.warning(f"Shutting down manager - {param} set")
