@@ -118,7 +118,7 @@ DESIRED_ABSENT_MARKERS = ("camry_small_step",)
 # change is recorded via select_provider and applied by activate_at_boot
 # on the NEXT boot; no reboot is forced and enforcement converges instead
 # of looping.
-DESIRED_MODEL = "rdf63"
+DESIRED_MODEL = "spz_polaris_r4a"
 DESIRED_PROVIDER = "konik"
 
 
