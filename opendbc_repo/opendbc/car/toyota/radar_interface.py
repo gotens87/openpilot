@@ -121,7 +121,7 @@ class RadarInterface(RadarInterfaceBase):
         self.track_id += 1
 
       self.pts[track_id].dRel = float(cpt["LONG_DIST"])
-      self.pts[track_id].yRel = -float(cpt["LAT_DIST"])
+      self.pts[track_id].yRel = float(cpt["LAT_DIST"])
       self.pts[track_id].vRel = float(cpt["SPEED"]) - v_ego * TSSP_RADAR_EGO_SPEED_SCALE
       self.pts[track_id].aRel = float("nan")
       self.pts[track_id].yvRel = float(cpt["LAT_SPEED"])
