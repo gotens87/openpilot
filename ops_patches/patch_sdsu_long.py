@@ -8,6 +8,9 @@
 #   panda matches to select the filter TX set, and enables openpilot
 #   longitudinal. RAISED_ACCEL_LIMIT, the hybrid actuator delay, the SDSU
 #   parser entry and the SDSU distance button all follow from LONG_FILTER.
+#   Cluster-radar 0x680-0x685 in the boot fingerprint would otherwise make
+#   radar_filter.hardware_supported true and set FILTER_BUTTONS; the advert
+#   parser then drops 0x2FF so SDSU never updates. Force radar_filter off.
 # carcontroller.py: run the TSS-P standstill latch for every LONG_FILTER car,
 #   not just the Prius. Without it RELEASE_STANDSTILL stays 1 on this hybrid
 #   and the PCM never latches standstill-hold. The marker file
@@ -46,6 +49,11 @@ EDITS = {
      """    ret.openpilotLongitudinalControl = (camry_sdsu or
                                         (bool(ret.flags & ToyotaFlags.TSS2) and not (ret.flags & ToyotaFlags.RADAR_ACC)) or
                                         bool(ret.flags & ToyotaFlags.DISABLE_RADAR.value) or (radar_filter and alpha_long))"""),
+    ("""    from opendbc.car.toyota.radar_filter import hardware_supported as radar_filter_supported
+    radar_filter = radar_filter_supported(candidate, fingerprint)""",
+     """    from opendbc.car.toyota.radar_filter import hardware_supported as radar_filter_supported
+    # cluster-radar 0x680-0x685 in the fingerprint must not select the advert parser
+    radar_filter = radar_filter_supported(candidate, fingerprint) and not camry_sdsu"""),
   ],
   "carcontroller.py": [
     ("""import math
@@ -107,12 +115,12 @@ CAMRY_CLUSTER_RATIO = _camry_cluster_ratio()"""),
      """    # on the sDSU long path, the marker-controlled ratio matches the UI speed to the Camry dash
     cluster_ratio = CAMRY_CLUSTER_RATIO if (self.CP.flags & ToyotaFlags.LONG_FILTER and CAMRY_CLUSTER_RATIO is not None) else 1.015
     ret.vEgoCluster = ret.vEgo * cluster_ratio  # minimum of all the cars"""),
-    ("""    if (self.CP.flags & (ToyotaFlags.TSS2 | ToyotaFlags.LONG_FILTER) or self.CP.carFingerprint == CAR.TOYOTA_PRIUS_RETROFIT or
+    ("""    if (self.CP.flags & (ToyotaFlags.TSS2 | ToyotaFlags.LONG_FILTER | ToyotaFlags.FILTER_BUTTONS) or self.CP.carFingerprint == CAR.TOYOTA_PRIUS_RETROFIT or
         self.CP.flags & ToyotaFlags.RADAR_CAN_FILTER and legacy_advert_filter.configured(self.CP)):
       # lkas button is wired to the camera""",
      """    # on TSS-P, LDA_ON_MESSAGE pulses with the stock LDA toggle, so only treat it as a button on the Prius
     if (self.CP.flags & ToyotaFlags.TSS2 or self.CP.carFingerprint == CAR.TOYOTA_PRIUS_RETROFIT or
-        (self.CP.flags & ToyotaFlags.LONG_FILTER and self.CP.carFingerprint == CAR.TOYOTA_PRIUS) or
+        (self.CP.flags & (ToyotaFlags.LONG_FILTER | ToyotaFlags.FILTER_BUTTONS) and self.CP.carFingerprint == CAR.TOYOTA_PRIUS) or
         self.CP.flags & ToyotaFlags.RADAR_CAN_FILTER and legacy_advert_filter.configured(self.CP)):
       # lkas button is wired to the camera"""),
   ],

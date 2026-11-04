@@ -223,14 +223,10 @@ def enforce_ops_settings(params):
 
 EDITS = {
   "manager.py": [
-    ("""    default_value = params.get_default_value(k)
-    if default_value is not None and not os.path.lexists(params.get_param_path(k)):
-      params.put(k, default_value, block=True)
+    ("""      params.put(k, default_value, block=True)
 
   # Create folders needed for msgq""",
-     """    default_value = params.get_default_value(k)
-    if default_value is not None and not os.path.lexists(params.get_param_path(k)):
-      params.put(k, default_value, block=True)
+     """      params.put(k, default_value, block=True)
 
   # Ops desired-settings enforcement: once per boot, after the default loop
   # above so the list wins, before any managed process starts (markers are

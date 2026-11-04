@@ -4,6 +4,8 @@
 # fails if the port patchers haven't run, so tests can't land without the code.
 # Installed tests also lock the five upstream hybrid-tune behaviours and the
 # marker-on stop ramp, so a later upstream drop or re-gate fails CI.
+# Cluster-radar 0x680-0x685 in the fingerprint must stay on the SDSU path
+# (LONG_FILTER, safetyParam 4169, plain CANParser) so the car can engage.
 import os
 import sys
 
@@ -26,6 +28,7 @@ from opendbc.car.structs import CarParams
 from opendbc.car.toyota import carcontroller
 from opendbc.car.toyota import prius_longitudinal
 from opendbc.car.toyota.carcontroller import CarController
+from opendbc.car.toyota.carstate import CarState
 from opendbc.car.toyota.interface import CarInterface
 from opendbc.car.toyota.radar_interface import RadarInterface
 from opendbc.car.toyota.values import CAR, DBC, ToyotaFlags, stopping_decel_rate
@@ -35,6 +38,9 @@ Ecu = CarParams.Ecu
 
 # bus 1's 8-byte 0x2FF keeps radar_filter.hardware_supported false
 SDSU_FINGERPRINT = {0: {0x2FF: 4}, 1: {0x2FF: 8}, 2: {0x2FF: 4}}
+# 0x680-0x685 on bus 1 can appear in the boot fingerprint; that used to admit
+# radar_filter / FILTER_BUTTONS and the advert parser dropped SDSU
+CLUSTER_SDSU_FINGERPRINT = {0: {0x2FF: 4}, 1: {0x2FF: 8, 0x680: 8, 0x681: 8, 0x682: 8, 0x683: 8, 0x684: 8, 0x685: 8}, 2: {0x2FF: 4}}
 RADAR_FILTER_FINGERPRINT = {0: {0x2AA: 8}, 1: {}, 2: {}}
 EMPTY_FINGERPRINT = {0: {}, 1: {}, 2: {}}
 HYBRID_FW = [CarParams.CarFw.new_message(ecu=Ecu.hybrid, fwVersion=b"\x0281E00600\x00\x00\x00\x00\x00\x00\x00")]
@@ -58,7 +64,7 @@ class FakeCarState:
 
 class TestCamrySdsuParams(unittest.TestCase):
   def test_sdsu_enables_openpilot_longitudinal(self):
-    for fp in (SDSU_FINGERPRINT, RADAR_FILTER_FINGERPRINT):
+    for fp in (SDSU_FINGERPRINT, RADAR_FILTER_FINGERPRINT, CLUSTER_SDSU_FINGERPRINT):
       with self.subTest(fp=fp):
         cp = get_camry(fp)
         self.assertTrue(cp.openpilotLongitudinalControl)
@@ -71,9 +77,14 @@ class TestCamrySdsuParams(unittest.TestCase):
         self.assertAlmostEqual(cp.longitudinalActuatorDelay, 0.05)
 
   def test_real_fingerprint_skips_radar_can_filter(self):
-    cp = get_camry(SDSU_FINGERPRINT)
-    self.assertEqual(cp.flags, 9233)
-    self.assertFalse(cp.flags & ToyotaFlags.RADAR_CAN_FILTER)
+    for fp in (SDSU_FINGERPRINT, CLUSTER_SDSU_FINGERPRINT):
+      with self.subTest(fp=fp):
+        cp = get_camry(fp)
+        self.assertEqual(cp.flags, 9233)
+        self.assertFalse(cp.flags & ToyotaFlags.RADAR_CAN_FILTER)
+        self.assertFalse(cp.flags & ToyotaFlags.FILTER_BUTTONS)
+        # FILTER_BUTTONS would select AdvertFilterCANParser, which drops 0x2FF
+        self.assertEqual(type(CarState.get_can_parsers(cp)[Bus.pt]), CANParser)
 
   def test_stock_camry_unchanged(self):
     cp = get_camry(EMPTY_FINGERPRINT)
