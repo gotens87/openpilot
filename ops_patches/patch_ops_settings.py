@@ -75,7 +75,7 @@ DESIRED_PARAMS = {
   "IsMetric": True,
   "ExperimentalMode": False,
   "EngageVolume": 0,
-  "ForceStops": False,
+  "ForceStops": True,
   "FasterLeadTakeoff": True,
   "LongitudinalPersonality": 0,
   "CameraView": 0,
