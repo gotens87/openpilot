@@ -4,6 +4,7 @@ import { requestJson } from "./startup.js"
 import { ANDROID_BETA_URL, InstallApp, isIosDevice } from "./install-app.js"
 import { GalaxyCompanion, newerCompanionVersion } from "./companion.js"
 import { GalaxyHotspot } from "./hotspot.js"
+import { GalaxyTailscale } from "./tailscale.js"
 import { LocalAccess } from "./local-access.js"
 import { BluetoothNotice, bluetoothConnection } from "./bluetooth-notice.js"
 
@@ -12,7 +13,7 @@ const dismissedUpdate = () => { try { return localStorage.getItem(DISMISSED_UPDA
 
 export const GalaxyPage = {
   name: "GalaxyPage",
-  components: { GxState, GxNotice, BluetoothNotice, InstallApp, GalaxyHotspot, GalaxyCompanion, LocalAccess },
+  components: { GxState, GxNotice, BluetoothNotice, InstallApp, GalaxyHotspot, GalaxyTailscale, GalaxyCompanion, LocalAccess },
   props: { mode: { type: String, required: true }, unauthorized: { type: Function, required: true } },
   data: () => ({ loading: true, paired: false, url: "", tunnelClientAvailable: false, legacyPassword: false,
     appKey: '', keyVisible: false, betaUrl: ANDROID_BETA_URL, legacyPairingAvailable: false, password: "", busy: false, error: "", companionStatus: null,
@@ -149,6 +150,7 @@ export const GalaxyPage = {
         </li>
       </ol>
       <GalaxyHotspot :mode="mode" :unauthorized="unauthorized" />
+      <GalaxyTailscale :mode="mode" :unauthorized="unauthorized" />
       <GalaxyCompanion v-if="!ios" :mode="mode" :unauthorized="unauthorized" @status="companionStatus = $event" />
     </div>
   `,
