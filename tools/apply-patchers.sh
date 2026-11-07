@@ -57,6 +57,7 @@ case "$PATCHER_SET" in
       patch_reboot_on_disengage.py
       patch_highway_draft_gap.py
       patch_camry_stop_line.py
+      patch_galaxy_tailscale.py
     )
     SUBJECTS=(
       "Let it work the pedals"
@@ -72,6 +73,7 @@ case "$PATCHER_SET" in
       "Wait until I let go"
       "Slipstream the highway lead"
       "Don't arrive hot"
+      "Allow Tailscale installation"
     )
     ;;
   *)
@@ -127,7 +129,7 @@ cd "$CHECKOUT"
 START=$(git rev-parse HEAD)
 for i in "${!PATCHERS[@]}"; do
   echo "=== ${PATCHERS[$i]} ==="
-  python3 "$STAGE/${PATCHERS[$i]}"
+  OPS_PATCH_DIR="$PATCH_DIR" python3 "$STAGE/${PATCHERS[$i]}"
   git add -A
   # --allow-empty keeps commit count == patcher count, which the Action's
   # cheap "did upstream move" check relies on (it reads tip-minus-N as the last
