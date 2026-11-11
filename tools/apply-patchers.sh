@@ -59,19 +59,19 @@ case "$PATCHER_SET" in
       patch_galaxy_tailscale.py
     )
     SUBJECTS=(
-      "Let it work the pedals"
-      "Keep the lead in sight"
-      "Glide through stop and go"
-      "Don't leave the garage broken"
-      "Park when you do"
-      "Save caution for the light"
-      "comma 3: raise ignition-on fan floor for degraded fan (marker fan_floor)"
-      "Give the fan another chance"
-      "Feather extra speed in"
-      "Have it your way"
-      "Wait until I let go"
-      "Slipstream the highway lead"
-      "Allow Tailscale installation"
+      "sDSU long, SNG resume, dash-matched speed"
+      "Radar lat sign fix (leads were mirrored)"
+      "Softer stop decel (testing)"
+      "Camry sDSU tests"
+      "Park auto-offroad"
+      "CEM on TSS-P"
+      "Fan floor (fan stalls at 30%)"
+      "Fan reboot retry (dead fan)"
+      "Cruise shaper: smooth set-speed taps, no engine surge"
+      "Boot settings enforcement"
+      "Reboot waits for disengage"
+      "Highway draft gap: 2.5 m closer at 90+ km/h, for fuel"
+      "Galaxy Tailscale card"
     )
     ;;
   *)
