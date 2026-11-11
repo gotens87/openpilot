@@ -56,7 +56,6 @@ case "$PATCHER_SET" in
       patch_ops_settings.py
       patch_reboot_on_disengage.py
       patch_highway_draft_gap.py
-      patch_camry_stop_line.py
       patch_galaxy_tailscale.py
     )
     SUBJECTS=(
@@ -72,7 +71,6 @@ case "$PATCHER_SET" in
       "Have it your way"
       "Wait until I let go"
       "Slipstream the highway lead"
-      "Don't arrive hot"
       "Allow Tailscale installation"
     )
     ;;
@@ -92,6 +90,10 @@ esac
 #  - patch_radar_yaw.py -- tunable radar boresight yaw correction (default 0.0 =
 #    stock). Pulled 2026-08-17: one ambiguous on-road test (chevron pulled left at
 #    +0.095deg), never conclusively resolved, needs a real retest.
+#  - patch_camry_stop_line.py -- "Don't arrive hot" stop-line behavior. Pulled
+#    2026-11-11: its longitudinal_planner.py anchor (the `candidates = [(output_a_target_mpc, ...`
+#    line) no longer exists upstream, so Pin Domathon failed from 2026-11-10; operator
+#    chose to park it. Reactivation needs a re-anchor first.
 #
 # Retired, not shelved -- dropped from the active set when upstream reworked
 # get_cruise_accel (a_target_prev / decel_start slew); files kept in
