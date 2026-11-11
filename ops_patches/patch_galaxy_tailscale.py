@@ -71,8 +71,8 @@ EDITS = {
           if self.require_session():
             self.json(200, result)
       elif path in ('/api/galaxy/session', '/api/galaxy/session/qr.svg'):"""),
-    ("""                      '/api/galaxy/pair', '/api/galaxy/unpair', '/api/galaxy/device-name', '/api/galaxy/hotspot', '/api/cameras/snapshot',""",
-     """                      '/api/galaxy/pair', '/api/galaxy/unpair', '/api/galaxy/device-name', '/api/galaxy/hotspot', '/api/galaxy/tailscale', '/api/cameras/snapshot',"""),
+    ("""                      '/api/galaxy/pair', '/api/galaxy/unpair', '/api/galaxy/device-name', '/api/galaxy/hotspot',\n                      '/api/cameras/snapshot',""",
+     """                      '/api/galaxy/pair', '/api/galaxy/unpair', '/api/galaxy/device-name', '/api/galaxy/hotspot', '/api/galaxy/tailscale',\n                      '/api/cameras/snapshot',"""),
     ("""      if path == '/api/recordings/action':""",
      """      if path == '/api/galaxy/tailscale':
         identity = self.settings_session()
