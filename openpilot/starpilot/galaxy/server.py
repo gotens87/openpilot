@@ -99,7 +99,7 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
                 sounds=None, software_operations=None, drive_stats=None, layout_preview_socket=None, controllers_socket=None,
                 remote_pairing=None, parked=None, camera_snapshot=None, clock=time.monotonic, starport_setup=None,
                 starport_client=None, navigation=None, offline_maps=None, drive_state=None, cloud_provider=None, cloud_offroad=None, projection_layout=None,
-                local_access=None, tmux_live=None, starport_logs=None, starport_log_sender=None, hotspot=None, toyota_tools=None,
+                local_access=None, tmux_live=None, starport_logs=None, starport_log_sender=None, hotspot=None, tailscale=None, toyota_tools=None,
                 replay_client=None, replay_root=None,
                 spotify_setup=None, companion=None, phone_location=None, reverse_proxy=None, local_hostnames=None, sound_preview=None):
   from openpilot.starpilot.galaxy.local_hostnames import LocalHostnames
@@ -115,6 +115,8 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
   cloud = cloud_provider
   hotspot_source = hotspot
   hotspot_source_lock = threading.Lock()
+  tailscale_source = tailscale
+  tailscale_source_lock = threading.Lock()
 
   def hotspot_owner():
     nonlocal hotspot_source
@@ -123,6 +125,14 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
         from openpilot.starpilot.galaxy.hotspot import HotspotSettings
         hotspot_source = HotspotSettings()
     return hotspot_source
+
+  def tailscale_owner():
+    nonlocal tailscale_source
+    with tailscale_source_lock:
+      if tailscale_source is None:
+        from openpilot.starpilot.galaxy.tailscale import TailscaleSettings
+        tailscale_source = TailscaleSettings()
+    return tailscale_source
 
   def cloud_status():
     from openpilot.starpilot.connect.provider import status
@@ -846,6 +856,16 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
           result = hotspot_owner().snapshot(parked())
         except (OSError, ValueError):
           self.json(503, {'error': 'Hotspot settings are unavailable.'})
+        else:
+          if self.require_session():
+            self.json(200, result)
+      elif path == '/api/galaxy/tailscale':
+        if not self.require_session():
+          return
+        try:
+          result = tailscale_owner().snapshot(parked())
+        except (OSError, ValueError):
+          self.json(503, {'error': 'Tailscale settings are unavailable.'})
         else:
           if self.require_session():
             self.json(200, result)
@@ -1657,7 +1677,7 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
                       '/api/settings/reset-default', '/api/settings/restore', '/api/recordings/action',
                       '/api/replay/start', '/api/replay/control', '/api/replay/stop',
                       '/api/replay/export-start',
-                      '/api/galaxy/pair', '/api/galaxy/unpair', '/api/galaxy/device-name', '/api/galaxy/hotspot',
+                      '/api/galaxy/pair', '/api/galaxy/unpair', '/api/galaxy/device-name', '/api/galaxy/hotspot', '/api/galaxy/tailscale',
                       '/api/cameras/snapshot', '/api/cameras/white-balance',
                       '/api/starport/layout', '/api/starport/enable', '/api/starport/control', '/api/starport/pairing',
                       '/api/starport/logs/send',
@@ -1756,6 +1776,27 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
         else:
           if self.settings_session() == identity:
             self.json(200, result)
+          else:
+            self.json(401, {'error': 'Sign in to Galaxy'})
+        return
+      if path == '/api/galaxy/tailscale':
+        identity = self.settings_session()
+        if identity is None:
+          self.json(401, {'error': 'Sign in to Galaxy'})
+          return
+        if type(payload) is not dict or payload.get('action') != 'connect':
+          self.json(400, {'error': 'Invalid action'})
+          return
+        try:
+          with effect_lock:
+            result = tailscale_owner().connect(parked)
+        except PermissionError:
+          self.json(409, {'error': 'Park before changing Tailscale.'})
+        except FileExistsError:
+          self.json(409, {'error': 'Tailscale is already working.'})
+        else:
+          if self.settings_session() == identity:
+            self.json(202, result)
           else:
             self.json(401, {'error': 'Sign in to Galaxy'})
         return
