@@ -18,8 +18,6 @@
 #   restores the old SNG hack: the latch is never set and always cleared, so
 #   the car auto-resumes from standstill behind a lead. No marker = stock
 #   latch behaviour. The auto-hold / brake_hold path is untouched.
-# carstate.py: keep LDA_ON_MESSAGE off non-Prius TSS-P cars; there it pulses
-#   with the stock LDA toggle, it is not a button.
 # carstate.py: match the comma UI's displayed speed to the Camry dash, which
 #   over-reads true speed by ~4% (57 vs 59.5 kph set speed) while stock
 #   vEgoCluster only adds 1.5%, leaving the screen ~2.5 km/h low. The marker
@@ -115,14 +113,6 @@ CAMRY_CLUSTER_RATIO = _camry_cluster_ratio()"""),
      """    # on the sDSU long path, the marker-controlled ratio matches the UI speed to the Camry dash
     cluster_ratio = CAMRY_CLUSTER_RATIO if (self.CP.flags & ToyotaFlags.LONG_FILTER and CAMRY_CLUSTER_RATIO is not None) else 1.015
     ret.vEgoCluster = ret.vEgo * cluster_ratio  # minimum of all the cars"""),
-    ("""    if (self.CP.flags & (ToyotaFlags.TSS2 | ToyotaFlags.LONG_FILTER | ToyotaFlags.FILTER_BUTTONS) or self.CP.carFingerprint == CAR.TOYOTA_PRIUS_RETROFIT or
-        self.CP.flags & ToyotaFlags.RADAR_CAN_FILTER and legacy_advert_filter.configured(self.CP)):
-      # lkas button is wired to the camera""",
-     """    # on TSS-P, LDA_ON_MESSAGE pulses with the stock LDA toggle, so only treat it as a button on the Prius
-    if (self.CP.flags & ToyotaFlags.TSS2 or self.CP.carFingerprint == CAR.TOYOTA_PRIUS_RETROFIT or
-        (self.CP.flags & (ToyotaFlags.LONG_FILTER | ToyotaFlags.FILTER_BUTTONS) and self.CP.carFingerprint == CAR.TOYOTA_PRIUS) or
-        self.CP.flags & ToyotaFlags.RADAR_CAN_FILTER and legacy_advert_filter.configured(self.CP)):
-      # lkas button is wired to the camera"""),
   ],
 }
 
