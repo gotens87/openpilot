@@ -71,7 +71,7 @@ DESIRED_PARAMS = {
   "ExperimentalMode": False,
   "EngageVolume": 0,
   # "ForceStops": False,  # owner may want it later
-  "FasterLeadTakeoff": True,
+  "FasterLeadTakeoff": False,
   "LongitudinalPersonality": 0,
   "CameraView": 0,
   "CustomPersonalities": True,
