@@ -53,6 +53,9 @@ case "$PATCHER_SET" in
       patch_reboot_on_disengage.py
       patch_highway_draft_gap.py
       patch_galaxy_tailscale.py
+      patch_takeoff_get_ready.py
+      patch_takeoff_full_push.py
+      patch_takeoff_ignore_comfort_cap.py
     )
     SUBJECTS=(
       "Match Reported Vehicle Speed (Testing)"
@@ -64,6 +67,9 @@ case "$PATCHER_SET" in
       "Delay Reboot Until Disengaged"
       "Highway Draft Gap: Follow Closer at 90+ km/h"
       "Add Tailscale to Galaxy"
+      "Firmer Get-Ready Push Before Lead Moves (Testing)"
+      "Keep Full Launch Push to 29 km/h (Testing)"
+      "Ignore Comfort Cap During Lead Takeoff Only (Testing)"
     )
     ;;
   *)
