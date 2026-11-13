@@ -1,15 +1,15 @@
-name: Pin Domathon
+name: Pin Dom
 
-# Builds branch Domathon as: a pinned commit from upstream Dom (7.0 testing),
-# PLUS the "domathon" patcher set from ops_patches/, verified by the opendbc
+# Builds branch Dom as: a pinned commit from upstream Dom (7.0 testing),
+# PLUS the "dom" patcher set from ops_patches/, verified by the opendbc
 # Toyota tests before anything is pushed. Committer date is pinned to the picked
 # commit's, so the result is a deterministic function of the picked sha and a
 # rollback is just a re-run with an older sha.
 #
 # Scheduled runs (blank sha) follow the Dom tip, skipping the
-# build when Domathon is already built on it. A manual dispatch with an explicit
+# build when Dom is already built on it. A manual dispatch with an explicit
 # sha pins or rolls back; to keep a rollback from being undone 10 minutes later,
-# set repo variable DOMATHON_HOLD (any non-empty value parks the schedule),
+# set repo variable DOM_HOLD (any non-empty value parks the schedule),
 # dispatch the pin, then clear the variable to resume following.
 
 on:
@@ -18,7 +18,7 @@ on:
   workflow_dispatch:
     inputs:
       sha:
-        description: 'Full 40-hex commit on upstream Dom to pin Domathon to; blank = current Dom tip'
+        description: 'Full 40-hex commit on upstream Dom to pin Dom to; blank = current Dom tip'
         required: false
         type: string
 
@@ -26,20 +26,20 @@ permissions:
   contents: write
 
 concurrency:
-  group: pin-domathon
+  group: pin-dom
   cancel-in-progress: false
 
 env:
   UPSTREAM_REPO: https://github.com/firestar5683/StarPilot.git
   UPSTREAM_BRANCH: Dom
-  TARGET_BRANCH: Domathon
+  TARGET_BRANCH: Dom
 
 jobs:
   pin:
     runs-on: ubuntu-latest
-    # Scheduled runs park while repo variable DOMATHON_HOLD is non-empty, so a
+    # Scheduled runs park while repo variable DOM_HOLD is non-empty, so a
     # manual rollback pin is not undone 10 minutes later. Dispatch always runs.
-    if: github.event_name != 'schedule' || vars.DOMATHON_HOLD == ''
+    if: github.event_name != 'schedule' || vars.DOM_HOLD == ''
     steps:
       - name: Check out ops branch for patchers
         uses: actions/checkout@v4
@@ -88,9 +88,9 @@ jobs:
           GH_TOKEN: ${{ secrets.PATCHQUEUE_TOKEN }}
         run: |
           # A patchless force-push would silently ship unpatched code to the car.
-          count=$(PATCHER_SET=domathon ops/tools/apply-patchers.sh --count)
+          count=$(PATCHER_SET=dom ops/tools/apply-patchers.sh --count)
           if [ "${count:-0}" -eq 0 ] || [ ! -d ops/ops_patches ]; then
-            echo "::error::no domathon patchers found in ops/ops_patches/ - refusing to build"
+            echo "::error::no dom patchers found in ops/ops_patches/ - refusing to build"
             exit 1
           fi
           echo "PATCH_COUNT=$count" >> "$GITHUB_ENV"
@@ -125,7 +125,7 @@ jobs:
           # force-push below becomes a no-op.
           echo "PIN_DATE=$(git log -1 --format=%cI FETCH_HEAD)" >> "$GITHUB_ENV"
 
-      - name: Apply domathon patch series
+      - name: Apply Dom patch series
         if: env.UPSTREAM_MOVED == 'yes'
         env:
           GIT_AUTHOR_NAME: gotens87
@@ -141,8 +141,8 @@ jobs:
 
           # Fail-closed, same spirit as rebuild-starpilot.yml: a missing or ambiguous
           # anchor exits non-zero here, the job stops before the tests and the push,
-          # and Domathon stays at last-good. No patch is ever skipped or auto-resolved.
-          if ! PATCHER_SET=domathon ../ops/tools/apply-patchers.sh "$PWD" ../ops/ops_patches; then
+          # and Dom stays at last-good. No patch is ever skipped or auto-resolved.
+          if ! PATCHER_SET=dom ../ops/tools/apply-patchers.sh "$PWD" ../ops/ops_patches; then
             echo "::error::patcher failed - upstream restructured a patched file; anchors need updating in ops_patches/"
             exit 1
           fi

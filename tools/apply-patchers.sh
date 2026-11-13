@@ -7,8 +7,8 @@
 #   apply-patchers.sh <checkout-dir> [patchers-dir]   apply + commit
 #   apply-patchers.sh --count                          print patcher count, exit
 #
-# Patcher-set selection: PATCHER_SET env var = default|domathon. Unset = default
-# (the Dom series below). An env var, not a flag, so rebuild-starpilot.yml's
+# Patcher-set selection: PATCHER_SET env var = default|dom. Unset = default
+# (the rollback set below, not the dom series). An env var, not a flag, so rebuild-starpilot.yml's
 # positional call -- and --count, which runs after selection -- needs no edit.
 #
 # Caller owns git identity and dates (the Action pins GIT_COMMITTER_DATE to Dom's
@@ -42,16 +42,12 @@ case "$PATCHER_SET" in
       "Toyota TSS-P: left is left again"
     )
     ;;
-  domathon)
+  dom)
     PATCHERS=(
       patch_sdsu_long.py
-      patch_tssp_radar.py
-      patch_camry_stop_ramp.py
-      patch_camry_sdsu_tests.py
       patch_park_offroad.py
       patch_camry_cem.py
       patch_fan_floor.py
-      patch_fan_reboot_retry.py
       patch_camry_cruise_shaper.py
       patch_ops_settings.py
       patch_reboot_on_disengage.py
@@ -59,23 +55,19 @@ case "$PATCHER_SET" in
       patch_galaxy_tailscale.py
     )
     SUBJECTS=(
-      "sDSU long, SNG resume, dash-matched speed"
-      "Radar lat sign fix (leads were mirrored)"
-      "Softer stop decel (testing)"
-      "Camry sDSU tests"
+      "Match Reported Vehicle Speed (Testing)"
       "Park auto-offroad"
-      "CEM on TSS-P"
-      "Fan floor (fan stalls at 30%)"
-      "Fan reboot retry (dead fan)"
-      "Cruise shaper: smooth set-speed taps, no engine surge"
+      "Allow Conditional Experimental Mode on TSS-P Camry"
+      "Keep C3 Fan at 50% Minimum"
+      "Smooth Set-Speed Taps on Hybrid Camry"
       "Boot settings enforcement"
-      "Reboot waits for disengage"
-      "Highway draft gap: 2.5 m closer at 90+ km/h, for fuel"
-      "Galaxy Tailscale card"
+      "Delay Reboot Until Disengaged"
+      "Highway Draft Gap: Follow Closer at 90+ km/h"
+      "Add Tailscale to Galaxy"
     )
     ;;
   *)
-    echo "apply-patchers: unknown PATCHER_SET '$PATCHER_SET' (want: default|domathon)" >&2
+    echo "apply-patchers: unknown PATCHER_SET '$PATCHER_SET' (want: default|dom)" >&2
     exit 1
     ;;
 esac
@@ -92,18 +84,26 @@ esac
 #    +0.095deg), never conclusively resolved, needs a real retest.
 #  - patch_camry_stop_line.py -- "Don't arrive hot" stop-line behavior. Pulled
 #    2026-11-11: its longitudinal_planner.py anchor (the `candidates = [(output_a_target_mpc, ...`
-#    line) no longer exists upstream, so Pin Domathon failed from 2026-11-10; operator
+#    line) no longer exists upstream, so Pin Dom failed from 2026-11-10; operator
 #    chose to park it. Reactivation needs a re-anchor first.
 #
 # Retired, not shelved -- dropped from the active set when upstream reworked
 # get_cruise_accel (a_target_prev / decel_start slew); files kept in
 # ops_patches/ for history only:
 #  - patch_camry_hybrid_tune.py -- upstream Dom now hardcodes ki, 8x unwind, 0.8 ff,
-#    coast and sign-flip for the Camry hybrid; only the stop ramp is still ours
-#    (patch_camry_stop_ramp.py). Accel cap dropped (marker was off).
+#    coast and sign-flip for the Camry hybrid; only the stop ramp was still ours
+#    (patch_camry_stop_ramp.py, since removed from the build). Accel cap dropped (marker was off).
 #  - patch_camry_smooth_onset.py -- marker was already off; no longer applies.
 #  - patch_camry_small_step.py -- superseded by patch_camry_cruise_shaper.py
 #    (the shaper never needed its cap: a pulse owns the candidate while active).
+#
+# Removed from the dom set -- not in the build; nothing kept may depend on
+# these or on the names camry_sdsu / CAMRY_SNG_HACK / DEPENDENCIES that
+# point at them. Files kept in ops_patches/ for history only:
+#  - patch_tssp_radar.py -- removed from the build; nothing kept may depend on it.
+#  - patch_camry_stop_ramp.py -- removed from the build; nothing kept may depend on it.
+#  - patch_camry_sdsu_tests.py -- removed from the build; nothing kept may depend on it.
+#  - patch_fan_reboot_retry.py -- removed from the build; nothing kept may depend on it.
 
 if [ "${1:-}" = "--count" ]; then
   echo "${#PATCHERS[@]}"

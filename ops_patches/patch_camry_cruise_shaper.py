@@ -1,49 +1,57 @@
 #!/usr/bin/env python3
-# 2018 Camry Hybrid (THS eCVT), set-speed step response, v10.
+# Smooth Set-Speed Taps on Hybrid Camry
 #
-# V10 = v9 (jerk-limited trapezoid) with STEP-SCALED jerk: j_up/j_dn
-# scale linearly with the arm-time gap, full marker limits at +4 km/h
-# and up; +1 stays a ~2.3 s triangle (peak 0.24 m/s^2), while +2/+3
-# are held to a 0.35 small-step ceiling (grok must-fix: the 2*dv/T
-# triangle crests ARE the tach bounce) as short trapezoids, ~2.4/~3.0
-# s, blending back to the speed table by +5; +5 and up keep the v9
-# 1.0/0.7 limits and arrivals. The law: RISE at
-# j_up from the tap-frame command, HOLD at the ceiling A, RELEASE at
-# -j_dn off the LIVE gap every frame (release when remaining <=
-# a^2/(2*j_dn): the command reaches 0 exactly as ego reaches the set
-# speed -- time-optimal switching). It integrates the live a_cruise:
-# continuous by construction (no blend, no step; tach rises, holds,
-# eases), and a dropped frame, a live cap, the slew or actuator lag
-# only stretch the hold, never corrupt the landing. No gain table, no
-# pulse budget, no corr tail; duration is only a watchdog (1.6x
-# estimate + 2 s). Re-taps re-plan from current v_ego/a_cruise.
+# 2018 Camry Hybrid (THS eCVT). A set-speed button tap is shaped instead
+# of being handed to stock cruise as a step. Always on. The limits are
+# constants in the patched planner.
 #
-# Kept verbatim from v7-v9 except the arm window: remaining |set-ego|
-# within 8 km/h gets the pinned subtle law; outside that, stock
-# (a 63->117 catch-up included). Button steps >=0.2 m/s re-plan;
-# raw monotone tap-frame clamps drive every disarm check,
-# checked EVERY frame (a clamp that blocks a closing command drops
-# the plan same-frame; a crossing past 0.2 m/s in either direction at
-# ANY phase hands to stock; residue-free settle handoff: gap <= 0.2
-# AND |a_cruise| <= 0.15); arm-time ceiling mirrors get_cruise_accel's
-# whole non-e2e max_accel stack; plan jerks capped to J_CRUISE_VALS(v)
-# so the stock slew is a no-op on the plan; hard post-slew clip every
-# cycle, stock and shaped alike (decel_start semantics untouched);
-# shapes ONLY the cruise candidate; no early return anywhere.
-# Exclusions unchanged: any cruise/curve/nav ceiling, force-stop
-# plan, ACTING coast plan, forceDecel, standstill, driver pedal,
-# experimental mode, reset.
+# The shape is a jerk-limited trapezoid in acceleration, an S-curve in
+# speed. Rise jerk and release jerk scale with the gap when the tap is
+# armed: full limits (1.0 and 0.7 m/s^3) at 4 km/h and up, linear below
+# that. A 1 km/h tap stays a short triangle, about 2.3 s, peaking near
+# 0.24 m/s^2. At low speed, taps of 2 and 3 km/h hold a 0.35 m/s^2
+# ceiling (about 2.4 s and 3.0 s). From 90 to 100.8 km/h the small-step
+# law crossfades to a highway ceiling that rises with the tap
+# (0.18 m/s^2 at 2 km/h, 0.43 at 4 km/h). Both laws blend into the
+# speed table by 5 km/h, and taps of 5 km/h and up keep the full jerk
+# limits. The accel ceiling follows the speed table, from 1.0 m/s^2 at
+# a stop down to 0.6 m/s^2 at high speed. Shaped braking is never
+# stronger than stock.
 #
-# Marker: "jup[,jdn[,cap_cm[,decel_cm]]]" -- jup/jdn 30..200 in
-# 0.01 m/s^3, FULL-STEP limits (defaults 100/70 = 1.0/0.7; smaller
-# steps scale down); cap 25..100 cm/s^2 flat, replacing the speed
-# table; decel 30..50 cm/s^2, never stronger than stock. STRICT parse
-# (1..4 ints; float/blank/trailing comma/bad count = None = stock,
-# warning logged). Empty = defaults; absent = stock. REPLACES v5-v9:
-# revert longitudinal_planner.py to the unshaped upstream file first;
-# the patcher aborts safely on shaper text. Import-time marker; no
-# params; delete marker + controls restart to revert; in-car abort is
-# the brake pedal.
+# Each frame the plan rises from the command captured on the tap, holds
+# at the ceiling, then releases off the live gap. Release starts when
+# the remaining gap is at most a squared over twice the release jerk,
+# so the command hits zero as the car reaches the set speed. It
+# integrates the live cruise acceleration, so a dropped frame, a live
+# cap, the slew, or actuator lag only stretches the hold. The landing
+# stays intact. There is no gain table, no pulse budget, and no
+# correction tail. Duration is only a watchdog: 1.6 times the trapezoid
+# estimate, plus 2 s. A new tap re-plans from the current speed and
+# command.
+#
+# Shaping runs only while the car is within 8 km/h of the set speed.
+# Farther out, stock cruise runs. A button step of at least 0.2 m/s
+# re-plans. The raw tap-frame command is checked every frame; if that
+# clamp would block a command that is still closing the gap, the plan
+# drops on that frame. Crossing the set speed by more than 0.2 m/s in
+# either direction, at any phase, hands back to stock. Handoff is clean
+# once the gap is within 0.2 m/s and cruise acceleration is within
+# 0.15 m/s^2. The ceiling at arm time follows the same non-experimental
+# max-accel stack as get_cruise_accel, including the turn limit and the
+# coast limit. Plan jerks are capped to the stock cruise jerk table, so
+# the stock slew does not fight the plan. A hard clip after the slew
+# runs every cycle, stock and shaped alike. Only the cruise candidate
+# is shaped. Nothing returns early, and decel-start handling is
+# unchanged.
+#
+# Shaping stays off for a cruise, curve, or nav ceiling, a force-stop
+# plan, a coast plan that is actually braking or capping speed,
+# force-decel, standstill, the driver brake or throttle, experimental
+# mode, or a state reset.
+#
+# Applying again is a no-op when this text is already present. If older
+# shaper text is in the planner, the patcher aborts; restore
+# longitudinal_planner.py to the unshaped file first.
 import os
 import sys
 
@@ -51,30 +59,23 @@ PLANNER_DIR = "/data/openpilot/openpilot/selfdrive/controls/lib"
 
 EDITS = {
   "longitudinal_planner.py": [
-    ("""import math
-import time""",
-     """import math
-import os
-import time"""),
-    ("""_TAKEOFF_TOTAL_MAX = [3.5, 3.5, 1.7, 1.7, 3.2]
+    ("""_TAKEOFF_TOTAL_MAX = [3.5, 3.5, 3.5, 1.7, 3.2]
 
-def get_max_accel(v_ego):""",
-     """_TAKEOFF_TOTAL_MAX = [3.5, 3.5, 1.7, 1.7, 3.2]
+def get_max_accel(v_ego, faster_takeoffs=False):""",
+     """_TAKEOFF_TOTAL_MAX = [3.5, 3.5, 3.5, 1.7, 3.2]
 
-# /data/ops_patches/camry_cruise_shaper (read once at import):
-# jerk-limited trapezoid in accel (S-curve in speed): RISE at j_up,
-# HOLD at ceiling A, RELEASE at -j_dn off the LIVE gap (release when
-# remaining <= a^2/(2*j_dn): command reaches 0 exactly as ego reaches
-# set speed). Jerk scales with the arm-time gap: full j_up/j_dn at
-# +4 km/h and up, linear below; +1 stays a ~2.3 s triangle (peak
-# 0.24), +2/+3 hold the 0.35 small-step ceiling (grok must-fix) up
-# to 90 km/h; past 100.8 km/h the small ceiling rises with the step
-# (0.18 @ +2 -> 0.43 @ +4) so +2..+5 arrivals stay monotone; both
-# laws blend to the table by +5, so +5/+9 keep the arrivals.
-# Integrates the live a_cruise -> continuous by construction; no gain
-# table, no pulse budget, no corr tail, no fixed duration to re-cap.
-# Strict parse: any failure = None = stock.
-CRUISE_SHAPER_MARKER = "/data/ops_patches/camry_cruise_shaper"
+# Always-on jerk-limited trapezoid in accel (S-curve in speed): RISE at
+# j_up, HOLD at ceiling A, RELEASE at -j_dn off the LIVE gap (release
+# when remaining <= a^2/(2*j_dn): command reaches 0 exactly as ego
+# reaches set speed). Jerk scales with the arm-time gap: full j_up/j_dn
+# at +4 km/h and up, linear below; +1 stays a ~2.3 s triangle (peak
+# 0.24), +2/+3 hold the 0.35 small-step ceiling (grok must-fix) up to
+# 90 km/h; past 100.8 km/h the small ceiling rises with the step
+# (0.18 @ +2 -> 0.43 @ +4) so +2..+5 arrivals stay monotone; both laws
+# blend to the table by +5, so +5/+9 keep the arrivals. Integrates the
+# live a_cruise -> continuous by construction; no gain table, no pulse
+# budget, no corr tail, no fixed duration to re-cap. Limits are fixed
+# constants.
 _SHAPER_J_UP = 1.0      # full-step rise jerk, m/s^3
 _SHAPER_J_DN = 0.7      # full-step release jerk, m/s^3
 _SHAPER_J_STEP = 1.11   # gap (m/s) for full jerk = +4 km/h; smaller steps scale j linearly
@@ -93,33 +94,7 @@ _SHAPER_WD_MUL = 1.6    # watchdog: mul * trapezoid estimate + pad
 _SHAPER_WD_PAD = 2.0
 
 
-def _read_cruise_shaper():
-  if not os.path.isfile(CRUISE_SHAPER_MARKER):
-    return None
-  try:
-    with open(CRUISE_SHAPER_MARKER) as f:
-      raw = f.read().strip()
-    if not raw:
-      cloudlog.info("camry_cruise_shaper: defaults j_up=%.2f j_dn=%.2f cap=%s decel=%.2f",
-                    _SHAPER_J_UP, _SHAPER_J_DN, _SHAPER_CAP_V, _SHAPER_DECEL)
-      return (_SHAPER_J_UP, _SHAPER_J_DN, list(_SHAPER_CAP_V), _SHAPER_DECEL)
-    parts = raw.split(",")
-    if not 1 <= len(parts) <= 4:
-      raise ValueError(f"want 1..4 fields, got {len(parts)}")
-    vals = [int(p) for p in parts]  # strict: floats, blanks, trailing commas all raise
-    j_up = min(200, max(30, vals[0])) / 100.0
-    j_dn = min(200, max(30, vals[1])) / 100.0 if len(vals) > 1 else _SHAPER_J_DN
-    cap = [min(100, max(25, vals[2])) / 100.0] * len(_SHAPER_CAP_BP) if len(vals) > 2 else list(_SHAPER_CAP_V)
-    decel = min(50, max(30, vals[3])) / 100.0 if len(vals) > 3 else _SHAPER_DECEL
-    cloudlog.info("camry_cruise_shaper: marker %r -> j_up=%.2f j_dn=%.2f cap=%s decel=%.2f",
-                  raw, j_up, j_dn, cap, decel)
-    return (j_up, j_dn, cap, decel)
-  except (OSError, ValueError) as e:
-    cloudlog.warning("camry_cruise_shaper: marker parse failed (%s); stock cruise", e)
-    return None
-
-
-CRUISE_SHAPER = _read_cruise_shaper()
+CRUISE_SHAPER = (_SHAPER_J_UP, _SHAPER_J_DN, list(_SHAPER_CAP_V), _SHAPER_DECEL)
 
 
 class _ShaperPlan:
@@ -160,14 +135,20 @@ class _ShaperPlan:
     return self.s * a
 
 
-def get_max_accel(v_ego):"""),
+def get_max_accel(v_ego, faster_takeoffs=False):"""),
     ("""                     base_brake_floor: float = A_CRUISE_MIN, selected_acceleration_max: float | None = None, faster_takeoffs: bool = False,
                      *, a_target_prev: float | None = None):""",
      """                     base_brake_floor: float = A_CRUISE_MIN, selected_acceleration_max: float | None = None, faster_takeoffs: bool = False,
                      *, a_target_prev: float | None = None, shaper: tuple[float, float, float] | None = None):"""),
-    ("""  target_accel = np.clip(v_cruise - v_ego, cruise_min, max_accel)
+    ("""  speed_error = v_cruise - v_ego
+  if not e2e and not faster_takeoffs and v_ego >= MIN_ALLOW_THROTTLE_SPEED and speed_error > 0.:
+    speed_error /= CRUISE_ACCEL_RESPONSE_TIME
+  target_accel = np.clip(speed_error, cruise_min, max_accel)
   j_cruise = np.interp(v_ego, A_CRUISE_MAX_BP, J_CRUISE_VALS)""",
-     """  if shaper is not None and CRUISE_SHAPER is not None and not e2e:
+     """  speed_error = v_cruise - v_ego
+  if not e2e and not faster_takeoffs and v_ego >= MIN_ALLOW_THROTTLE_SPEED and speed_error > 0.:
+    speed_error /= CRUISE_ACCEL_RESPONSE_TIME
+  if shaper is not None and not e2e:
     # The plan's feedforward IS the target (no P gain, no corr, no
     # blend). Hard clamps bind THIS frame, every cycle: max_accel folds
     # ACCEL_MAX, the turn limit, the coast limit and every
@@ -186,7 +167,7 @@ def get_max_accel(v_ego):"""),
       cap_lo, cap_hi = plan_lo, plan_hi
     target_accel = float(np.clip(shaper[0], cap_lo, cap_hi))
   else:
-    target_accel = np.clip(v_cruise - v_ego, cruise_min, max_accel)
+    target_accel = np.clip(speed_error, cruise_min, max_accel)
   j_cruise = np.interp(v_ego, A_CRUISE_MAX_BP, J_CRUISE_VALS)"""),
     ("""  target_accel = float(np.clip(target_accel, decel_start - j_cruise * dt, a_cruise_prev + j_cruise * dt))
 
@@ -203,7 +184,7 @@ def get_max_accel(v_ego):"""),
   # conflict; the clip is a no-op whenever the previous command was
   # already inside the current caps.
   post_lo, post_hi = cruise_min, max_accel
-  if shaper is not None and CRUISE_SHAPER is not None and not e2e:
+  if shaper is not None and not e2e:
     shaper_lo = max(cruise_min, -CRUISE_SHAPER[3], shaper[1])
     shaper_hi = min(max_accel, float(np.interp(v_ego, _SHAPER_CAP_BP, CRUISE_SHAPER[2])), shaper[2])
     if shaper_lo <= shaper_hi:
@@ -225,7 +206,7 @@ def get_max_accel(v_ego):"""),
       self.a_cruise = self.output_a_target
       self.cruise_shaper_plan = None  # grok3 must-fix 3: the plan dies with the state reset, not one gate check later"""),
     ("""    self.a_cruise = get_cruise_accel(sm['selfdriveState'].experimentalMode, v_cruise, v_ego,""",
-     """    # Marker-gated shaped set-speed response: jerk-limited trapezoid
+     """    # Shaped set-speed response, always on: jerk-limited trapezoid
     # (S-curve in speed), jerk scaled with the arm-time gap (full
     # j_up/j_dn at +4 km/h and up): rise from the live command, hold
     # at the ceiling, release at -j_dn off the LIVE gap (remaining <=
@@ -254,7 +235,7 @@ def get_max_accel(v_ego):"""),
     coast_acting = (coast_plan is not None and
                     (coast_plan.force_decel or coast_plan.pulse_coasting or
                      coast_plan.brake_floor is not None or coast_plan.speed_ceiling_mps is not None))
-    shaper_gate = (CRUISE_SHAPER is not None and not reset_state and
+    shaper_gate = (not reset_state and
                    not sm['selfdriveState'].experimentalMode and
                    ceiling.effective_mps is None and curve.effective_mps is None and
                    navigation_target is None and not coast_acting and
@@ -313,8 +294,7 @@ def get_max_accel(v_ego):"""),
           # to the table by +5) -- a flat ceiling cannot stretch +2 to
           # ~4 s and keep +3 under ~4 s (grok v11 NO: flat 0.18 made
           # +3 4.9 s, slower than +4). Both laws end at the cap table
-          # by +5 (+5 and up unchanged); a flat marker cap below the
-          # ceiling still wins. Continuous in gap and speed.
+          # by +5 (+5 and up unchanged). Continuous in gap and speed.
           small_lo = float(np.interp(gap, _SHAPER_SMALL_BP, [_SHAPER_SMALL_CAP, cap_tbl]))
           small_hi = float(np.interp(gap, _SHAPER_SMALL_HI_BP,
                                      [_SHAPER_SMALL_HI_V[0], _SHAPER_SMALL_HI_V[1], cap_tbl]))
@@ -402,7 +382,7 @@ def main():
         print(f"ERROR: anchor found {content.count(old)}x (expected 1) in {name}; patch not applied")
         print(f"  anchor: {old.splitlines()[0]!r}")
         if "_ShaperPlan" in content or "CRUISE_SHAPER" in content:
-          print("  hint: shaper text detected; revert longitudinal_planner.py to the unshaped file before applying v10")
+          print("  hint: shaper text detected; revert longitudinal_planner.py to the unshaped file before applying")
         return 1
       todo.append((old, new))
     pending[name] = todo

@@ -1,23 +1,18 @@
 #!/usr/bin/env python3
-# TSS-P Camry (sDSU LONG_FILTER via patch_sdsu_long.py): admit the car to
-# Conditional Experimental Mode (CEM) startup.
+# Allow Conditional Experimental Mode on TSS-P Camry
 #
 # feature_runtime.py: upstream feature_enabled(params, cp, 'conditional', env)
-#   now routes capability through starpilot/feature_capabilities.py
+#   routes capability through starpilot/feature_capabilities.py
 #   (longitudinal_supported: openpilotLongitudinalControl True, not
 #   passive/dashcamOnly/notCar, GM additionally validated by its native
-#   safety-word configuration). With the marker file
-#   /data/ops_patches/camry_cem present (os.path.isfile, read once at import)
-#   the 'conditional' feature additionally admits a brand == 'toyota' CarParams
-#   passing experimental_available() (openpilotLongitudinalControl True, not
-#   passive/dashcamOnly/notCar; pcmCruise is not consulted there or anywhere
-#   downstream in runtime_settings/policy/host/consumer/plannerd/radard).
-#   Absent marker = upstream admission exactly. curve / slc / profile / aol
-#   admission is unchanged.
-#   The marker is import-time state: it takes effect when the consumers next
-#   start (manager restarts plannerd/selfdrived/radard each drive). No params
-#   are written; CEM still needs its usual runtime authority (ready settings
-#   verdict, SafeMode off, fresh CAN/model, enabled + longActive).
+#   safety-word configuration). The 'conditional' feature also admits a
+#   brand == 'toyota' CarParams passing experimental_available()
+#   (openpilotLongitudinalControl True, not passive/dashcamOnly/notCar;
+#   pcmCruise is not consulted there or anywhere downstream in
+#   runtime_settings/policy/host/consumer/plannerd/radard).
+#   curve / slc / profile / aol admission is unchanged.
+#   No params are written; CEM still needs its usual runtime authority (ready
+#   settings verdict, SafeMode off, fresh CAN/model, enabled + longActive).
 import os
 import sys
 
@@ -25,11 +20,6 @@ STARPILOT = "/data/openpilot/openpilot/starpilot"
 
 EDITS = {
   "feature_runtime.py": [
-    ("""from collections.abc import Mapping
-from dataclasses import replace""",
-     """import os
-from collections.abc import Mapping
-from dataclasses import replace"""),
     ("""from openpilot.starpilot.conditional_mode.preferences import PreferenceError, decode_preferences""",
      """from openpilot.starpilot.conditional_mode.preferences import PreferenceError, decode_preferences
 from openpilot.starpilot.conditional_mode.runtime_settings import experimental_available"""),
@@ -37,17 +27,11 @@ from openpilot.starpilot.conditional_mode.runtime_settings import experimental_a
      """from openpilot.starpilot.speed_limits.selection import Source
 
 
-# /data/ops_patches/camry_cem (read once at import) also admits a TSS-P Toyota
-# with openpilot longitudinal (the sDSU LONG_FILTER Camry from patch_sdsu_long)
-# to the conditional-mode startup gate upstream now routes through
-# feature_capabilities.longitudinal_supported. Absent marker = upstream
-# admission exactly.
-CAMRY_CEM = os.path.isfile("/data/ops_patches/camry_cem")
-
-
+# Admit a Toyota with openpilot longitudinal to the conditional-mode
+# startup gate. feature_capabilities.longitudinal_supported does not.
 def _toyota_cem_capable(cp) -> bool:
   # experimental_available: openpilotLongitudinalControl, not passive/dashcamOnly/notCar
-  return bool(CAMRY_CEM and getattr(cp, 'brand', None) == 'toyota' and experimental_available(cp))"""),
+  return bool(getattr(cp, 'brand', None) == 'toyota' and experimental_available(cp))"""),
     ("""  capable = display_supported(cp) if feature in ('slc', 'vision') else longitudinal_supported(cp)""",
      """  capable = display_supported(cp) if feature in ('slc', 'vision') else longitudinal_supported(cp)
   capable = capable or (feature == 'conditional' and _toyota_cem_capable(cp))"""),

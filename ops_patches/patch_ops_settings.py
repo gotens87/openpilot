@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
-# Settings drift: an update/reinstall can reset user params (/data/params/d)
-# and wipe feature markers (/data/ops_patches), and the car then boots on the
-# wrong tune until someone notices.
+# Settings drift: an update/reinstall can reset user params (/data/params/d),
+# and the car then boots on the wrong tune until someone notices.
 #
 # This patcher installs openpilot/starpilot/ops_settings.py -- ONE desired
 # settings list -- and hooks it into manager.py: manager_init() calls
 # enforce_ops_settings() right after its own default-params loop (so the
-# list wins) and before any managed process starts (markers are read at
-# import by controls processes, so they take effect the same boot).
+# list wins) and before any managed process starts (the model selection is
+# read at process start, so it takes effect the same boot).
 #
 #  - Params: enforced to the exact desired value every boot; drift is
-#    corrected and logged.
-#  - Markers: created ONLY if missing, never overwritten (the owner hand-
-#    tunes values like camry_cruise_shaper); markers not in the list mean
-#    "off" and are left absent.
+#    corrected and logged. AlphaLongitudinalEnabled and SNGHack are forced
+#    on so the kept longitudinal patches stay on.
 #  - Driving model: the small-profile selection in /data/models/<gen>/
 #    preferences.json is enforced through the model manager's own "active"
 #    action (its locking + artifact verification), never by raw-writing
@@ -28,10 +25,9 @@
 #  - The manager.py call is wrapped in try/except: enforcement can never
 #    block boot.
 #
-# The list lives inside the build, not in /data/ops_patches, because
-# /data/ops_patches itself can get wiped. Adding a setting later is a
-# one-line edit to DESIRED_PARAMS / DESIRED_MARKERS / DESIRED_MODEL /
-# DESIRED_PROVIDER in the module below (edit it here, so CI rebuilds keep it).
+# The list lives inside the build. Adding a setting later is a one-line
+# edit to DESIRED_PARAMS / DESIRED_MODEL / DESIRED_PROVIDER in the module
+# below (edit it here, so CI rebuilds keep it).
 import os
 import sys
 
@@ -43,24 +39,23 @@ STARPILOT_DIR = "/data/openpilot/openpilot/starpilot"
 OPS_SETTINGS_PY = r'''"""Ops desired-settings list, enforced once per boot from manager_init.
 
 Single source of truth for operator settings that must survive updates and
-reinstalls: a fixed set of user params, the /data/ops_patches feature
-markers, the small-profile driving model, and the cloud provider.
+reinstalls: a fixed set of user params, the small-profile driving model,
+and the cloud provider.
 manager_init calls enforce_ops_settings() after its default-params loop
-(so this list wins) and before any managed process starts: markers and the
-model selection are read at process start, so they apply the same boot; a
+(so this list wins) and before any managed process starts: the model
+selection is read at process start, so it applies the same boot; a
 cloud provider change is only recorded here and applied by
 activate_at_boot on the following boot, by design of the provider module.
 The call site wraps enforcement in try/except, so nothing here can block
 boot.
 
-Adding a setting later = one line in DESIRED_PARAMS, DESIRED_MARKERS,
-DESIRED_MODEL, or DESIRED_PROVIDER.
+Adding a setting later = one line in DESIRED_PARAMS, DESIRED_MODEL, or
+DESIRED_PROVIDER.
 """
 import os
 import time
 
 from openpilot.common.swaglog import cloudlog
-from openpilot.common.utils import atomic_write
 
 MARKER_DIR = "/data/ops_patches"
 DRIFT_LOG = os.path.join(MARKER_DIR, "settings_drift.log")
@@ -75,39 +70,16 @@ DESIRED_PARAMS = {
   "IsMetric": True,
   "ExperimentalMode": False,
   "EngageVolume": 0,
-  "ForceStops": False,
+  # "ForceStops": False,  # owner may want it later
   "FasterLeadTakeoff": True,
   "LongitudinalPersonality": 0,
   "CameraView": 0,
   "CustomPersonalities": True,
   "AggressiveFollow": 1.25,
   "AggressiveFollowHigh": 0.5,
+  "AlphaLongitudinalEnabled": True,
+  "SNGHack": True,
 }
-
-# Marker name -> contents. Created ONLY if the marker is absent and never
-# overwritten afterwards: the owner hand-tunes values like camry_cruise_shaper
-# and those must survive enforcement. Markers not listed here mean "off"
-# and are left absent (never created, never deleted).
-DESIRED_MARKERS = {
-  "camry_cem": "",
-  "camry_cluster_speed": "1.04",
-  "camry_coast": "",
-  "camry_cruise_shaper": "",
-  "camry_hybrid_ff": "",
-  "camry_ki": "",
-  "camry_signflip": "",
-  "camry_sng": "",
-  "camry_stop_ramp": "",
-  "camry_unwind": "",
-  "fan_floor": "50",
-  "highway_draft_gap": "",
-}
-
-# Markers that must stay ABSENT: the loop above only creates, never
-# deletes, so a retired marker goes here and is removed if present (logged
-# like any other drift). camry_small_step is superseded by
-# camry_cruise_shaper.
-DESIRED_ABSENT_MARKERS = ("camry_small_step",)
 
 # Non-param settings, enforced through their owner modules' own APIs:
 # DESIRED_MODEL is a small-profile model id from the starpilot model
@@ -118,7 +90,7 @@ DESIRED_ABSENT_MARKERS = ("camry_small_step",)
 # change is recorded via select_provider and applied by activate_at_boot
 # on the NEXT boot; no reboot is forced and enforcement converges instead
 # of looping.
-DESIRED_MODEL = "spz_polaris_vega"
+DESIRED_MODEL = "rdf63"
 DESIRED_PROVIDER = "konik"
 
 
@@ -126,6 +98,7 @@ def _log_drift(lines):
   for line in lines:
     cloudlog.warning("Ops settings drift corrected: %s", line)
   try:
+    os.makedirs(MARKER_DIR, exist_ok=True)
     with open(DRIFT_LOG, "a") as f:
       for line in lines:
         f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {line}\n")
@@ -185,28 +158,6 @@ def enforce_ops_settings(params):
     except Exception:
       cloudlog.exception("Ops settings: failed to enforce param %s", key)
 
-  os.makedirs(MARKER_DIR, exist_ok=True)
-  for name, contents in DESIRED_MARKERS.items():
-    try:
-      path = os.path.join(MARKER_DIR, name)
-      if os.path.lexists(path):
-        continue
-      with atomic_write(path, "w", overwrite=True) as f:
-        f.write(contents)
-      drift.append(f"marker {name}: absent -> {contents!r}")
-    except Exception:
-      cloudlog.exception("Ops settings: failed to create marker %s", name)
-
-  for name in DESIRED_ABSENT_MARKERS:
-    try:
-      path = os.path.join(MARKER_DIR, name)
-      if not os.path.lexists(path):
-        continue
-      os.remove(path)
-      drift.append(f"marker {name}: present -> absent")
-    except Exception:
-      cloudlog.exception("Ops settings: failed to remove marker %s", name)
-
   try:
     _enforce_model(drift)
   except Exception:
@@ -229,8 +180,8 @@ EDITS = {
      """      params.put(k, default_value, block=True)
 
   # Ops desired-settings enforcement: once per boot, after the default loop
-  # above so the list wins, before any managed process starts (markers are
-  # read at import by controls processes). Wrapped so it can never block boot.
+  # above so the list wins, before any managed process starts (the model
+  # selection is read at process start). Wrapped so it can never block boot.
   try:
     from openpilot.starpilot.ops_settings import enforce_ops_settings
     enforce_ops_settings(params)
