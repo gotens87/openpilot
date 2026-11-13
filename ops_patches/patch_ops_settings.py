@@ -79,6 +79,15 @@ DESIRED_PARAMS = {
   "AggressiveFollowHigh": 0.5,
   "AlphaLongitudinalEnabled": True,
   "SNGHack": True,
+  "SpeedLimitController": True,
+  "SLCPriority1": "Map Data",
+  "SLCPriority2": "Dashboard",
+  "SLCConfirmation": 0,
+  "SLCOffsetSchedule": {
+    "version": 1,
+    "bounds_mps": [0.0, 8.1, 13.6, 16.4, 21.9, 24.9, 38.9, 44.4],
+    "offsets_mps": [0.0, 0.0, 0.0, 0.0, 0.0, 10 / 3.6, 0.0],
+  },
 }
 
 # Non-param settings, enforced through their owner modules' own APIs:
