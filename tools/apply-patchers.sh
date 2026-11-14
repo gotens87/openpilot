@@ -53,6 +53,7 @@ case "$PATCHER_SET" in
       patch_reboot_on_disengage.py
       patch_highway_draft_gap.py
       patch_galaxy_tailscale.py
+      patch_camry_accel_limit.py
     )
     SUBJECTS=(
       "Match Reported Vehicle Speed (Testing)"
@@ -64,6 +65,7 @@ case "$PATCHER_SET" in
       "Delay Reboot Until Disengaged"
       "Highway Draft Gap: Follow Closer at 90+ km/h"
       "Add Tailscale to Galaxy"
+      "Restore 2.0 Launch Accel on Radar-Filter Camry"
     )
     ;;
   *)
