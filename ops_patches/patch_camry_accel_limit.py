@@ -1,23 +1,17 @@
 #!/usr/bin/env python3
-# /data/ops_patches/patch_camry_accel_limit.py
 # Restore 2.0 Launch Accel on Radar-Filter Camry
 #
-# interface.py: the Camry used to be detected through the long-filter path,
-#   which sets RAISED_ACCEL_LIMIT (ACCEL_MAX 2.0, hybrid actuator delay 0.05).
-#   Newer Dom detects the same car through the radar-filter path, which does
-#   not, so launches are capped at 1.5 m/s^2. Treat a radar-filter Camry like
-#   the long-filter cars again. Every other car is unchanged.
+# Radar-filter Camry skips LONG_FILTER, so RAISED_ACCEL_LIMIT never sets and ACCEL_MAX stays 1.5.
+# Extend that one condition for this car; every other car is unchanged.
 import os
 import sys
 
-TOYOTA = "/data/openpilot/opendbc_repo/opendbc/car/toyota"
+TOYOTA_DIR = "/data/openpilot/opendbc_repo/opendbc/car/toyota"
 
 EDITS = {
   "interface.py": [
     ("""    if ret.flags & ToyotaFlags.TSS2 or ret.flags & ToyotaFlags.LONG_FILTER and not (rav4h_sdsu or eps8_filter or legacy_filter):""",
-     """    # Radar-filter Camry keeps the 2.0 accel limit it had on the long-filter path
-    camry_radar_filter = candidate == CAR.TOYOTA_CAMRY and radar_filter
-    if ret.flags & ToyotaFlags.TSS2 or (ret.flags & ToyotaFlags.LONG_FILTER or camry_radar_filter) and not (rav4h_sdsu or eps8_filter or legacy_filter):"""),
+     """    if ret.flags & ToyotaFlags.TSS2 or ret.flags & ToyotaFlags.LONG_FILTER and not (rav4h_sdsu or eps8_filter or legacy_filter) or (candidate == CAR.TOYOTA_CAMRY and radar_filter):"""),
   ],
 }
 
@@ -25,7 +19,7 @@ EDITS = {
 def main():
   contents = {}
   for name in EDITS:
-    path = os.path.join(TOYOTA, name)
+    path = os.path.join(TOYOTA_DIR, name)
     if not os.path.isfile(path):
       print(f"ERROR: {path} missing")
       return 1
@@ -55,7 +49,7 @@ def main():
     content = contents[name]
     for old, new in todo:
       content = content.replace(old, new, 1)
-    with open(os.path.join(TOYOTA, name), "w") as f:
+    with open(os.path.join(TOYOTA_DIR, name), "w") as f:
       f.write(content)
     print(f"patched {name} ({len(todo)} edits)")
 
