@@ -10,6 +10,7 @@ from dataclasses import replace
 from opendbc.car.gm.feature_capabilities import longitudinal_supported as gm_long_supported
 
 from openpilot.starpilot.conditional_mode.preferences import PreferenceError, decode_preferences
+from openpilot.starpilot.conditional_mode.runtime_settings import experimental_available
 from openpilot.starpilot.aol.intent import independent_axis_requested, read_settings as read_aol_settings
 from openpilot.starpilot.aol.vehicle import policy_for as aol_policy_for
 from openpilot.starpilot.feature_capabilities import display_supported, longitudinal_supported
@@ -19,6 +20,13 @@ from openpilot.starpilot.longitudinal.profile_preferences import read_document_v
 from openpilot.starpilot.saved_source import read_saved
 from openpilot.starpilot.speed_limits.runtime_settings import Settings as SlcSettings, read_params as read_slc_settings
 from openpilot.starpilot.speed_limits.selection import Source
+
+
+# Admit a Toyota with openpilot longitudinal to the conditional-mode
+# startup gate. feature_capabilities.longitudinal_supported does not.
+def _toyota_cem_capable(cp) -> bool:
+  # experimental_available: openpilotLongitudinalControl, not passive/dashcamOnly/notCar
+  return bool(getattr(cp, 'brand', None) == 'toyota' and experimental_available(cp))
 
 
 def _read(params, key: str, limit: int = 4096) -> tuple[bytes | None, bool]:
@@ -86,6 +94,7 @@ def enabled(params, cp, feature: str, environment: Mapping[str, str], *, saved_s
   if feature != 'vision' and environment.get(flags[feature]) == '1':
     return True
   capable = display_supported(cp) if feature in ('slc', 'vision') else longitudinal_supported(cp)
+  capable = capable or (feature == 'conditional' and _toyota_cem_capable(cp))
   powertrain_requested = (feature == 'profile' and cp is not None and gm_long_supported(cp) and
                           read_document_value(params).valid and read_global_powertrain_preset(params, cp) is not None)
   return bool(capable and (requested(params, feature, saved_slc=saved_slc) or powertrain_requested))
