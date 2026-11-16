@@ -99,7 +99,7 @@ DESIRED_PARAMS = {
 # change is recorded via select_provider and applied by activate_at_boot
 # on the NEXT boot; no reboot is forced and enforcement converges instead
 # of looping.
-DESIRED_MODEL = "pop223"
+DESIRED_MODEL = "rdf63"
 DESIRED_PROVIDER = "konik"
 
 
