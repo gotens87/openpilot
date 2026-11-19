@@ -71,8 +71,8 @@ EDITS = {
           if self.require_session():
             self.json(200, result)
       elif path in ('/api/galaxy/session', '/api/galaxy/session/qr.svg'):"""),
-    ("""                      '/api/galaxy/pair', '/api/galaxy/unpair', '/api/galaxy/device-name', '/api/galaxy/hotspot',\n                      '/api/cameras/snapshot',""",
-     """                      '/api/galaxy/pair', '/api/galaxy/unpair', '/api/galaxy/device-name', '/api/galaxy/hotspot', '/api/galaxy/tailscale',\n                      '/api/cameras/snapshot',"""),
+    ("""                      '/api/galaxy/pair', '/api/galaxy/unpair', '/api/galaxy/device-name', '/api/galaxy/hotspot', '/api/galaxy/networks',\n                      '/api/cameras/snapshot',""",
+     """                      '/api/galaxy/pair', '/api/galaxy/unpair', '/api/galaxy/device-name', '/api/galaxy/hotspot', '/api/galaxy/tailscale', '/api/galaxy/networks',\n                      '/api/cameras/snapshot',"""),
     ("""      if path == '/api/recordings/action':""",
      """      if path == '/api/galaxy/tailscale':
         identity = self.settings_session()
@@ -98,22 +98,18 @@ EDITS = {
       if path == '/api/recordings/action':"""),
   ],
   "openpilot/starpilot/galaxy/web/js/galaxy.js": [
-    ("""import { GalaxyCompanion, newerCompanionVersion } from "./companion.js"
-import { GalaxyHotspot } from "./hotspot.js"
-import { LocalAccess } from "./local-access.js""",
-     """import { GalaxyCompanion, newerCompanionVersion } from "./companion.js"
-import { GalaxyHotspot } from "./hotspot.js"
-import { GalaxyTailscale } from "./tailscale.js"
-import { LocalAccess } from "./local-access.js"""),
-    ("""  components: { GxState, GxNotice, BluetoothNotice, InstallApp, GalaxyHotspot, GalaxyCompanion, LocalAccess },""",
-     """  components: { GxState, GxNotice, BluetoothNotice, InstallApp, GalaxyHotspot, GalaxyTailscale, GalaxyCompanion, LocalAccess },"""),
-    ("""      </ol>
-      <GalaxyHotspot :mode="mode" :unauthorized="unauthorized" />
-      <GalaxyCompanion v-if="!ios" :mode="mode" :unauthorized="unauthorized" @status="companionStatus = $event" />""",
-     """      </ol>
-      <GalaxyHotspot :mode="mode" :unauthorized="unauthorized" />
-      <GalaxyTailscale :mode="mode" :unauthorized="unauthorized" />
-      <GalaxyCompanion v-if="!ios" :mode="mode" :unauthorized="unauthorized" @status="companionStatus = $event" />"""),
+    ("""import { RemoteAccess } from './remote-access.js'
+import { CompanionUpdates } from './companion-updates.js'""",
+     """import { RemoteAccess } from './remote-access.js'
+import { GalaxyTailscale } from './tailscale.js'
+import { CompanionUpdates } from './companion-updates.js'"""),
+    ("""  components: { AppStoreLinks, InstallApp, RemoteAccess, CompanionUpdates },""",
+     """  components: { AppStoreLinks, InstallApp, RemoteAccess, GalaxyTailscale, CompanionUpdates },"""),
+    ("""    </ol>
+    <section class="gx-card gx-panel gx-stack"><div class="gx-section__header"><i class="bi bi-wifi" aria-hidden="true"></i><span class="gx-section__title">Galaxy Wi-Fi Hotspot</span></div>""",
+     """    </ol>
+    <GalaxyTailscale :mode="mode" :unauthorized="unauthorized" />
+    <section class="gx-card gx-panel gx-stack"><div class="gx-section__header"><i class="bi bi-wifi" aria-hidden="true"></i><span class="gx-section__title">Galaxy Wi-Fi Hotspot</span></div>"""),
   ],
 }
 
