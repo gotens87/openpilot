@@ -1,6 +1,6 @@
 name: Pin Dom
 
-# Builds branch Dom as: a pinned commit from upstream Dom (7.0 testing),
+# Builds our branch Dom as: a pinned commit from upstream testing (StarPilotHQ/StarPilot; was upstream Dom before 2026-11-18),
 # PLUS the "dom" patcher set from ops_patches/, verified by the opendbc
 # Toyota tests before anything is pushed. Committer date is pinned to the picked
 # commit's, so the result is a deterministic function of the picked sha and a
@@ -30,8 +30,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  UPSTREAM_REPO: https://github.com/firestar5683/StarPilot.git
-  UPSTREAM_BRANCH: Dom
+  UPSTREAM_REPO: https://github.com/StarPilotHQ/StarPilot.git
+  UPSTREAM_BRANCH: testing
   TARGET_BRANCH: Dom
 
 jobs:

@@ -136,19 +136,10 @@ class _ShaperPlan:
 
 
 def get_max_accel(v_ego, faster_takeoffs=False):"""),
-    ("""                     base_brake_floor: float = A_CRUISE_MIN, selected_acceleration_max: float | None = None, faster_takeoffs: bool = False,
-                     *, a_target_prev: float | None = None):""",
-     """                     base_brake_floor: float = A_CRUISE_MIN, selected_acceleration_max: float | None = None, faster_takeoffs: bool = False,
-                     *, a_target_prev: float | None = None, shaper: tuple[float, float, float] | None = None):"""),
-    ("""  speed_error = v_cruise - v_ego
-  if not e2e and not faster_takeoffs and v_ego >= MIN_ALLOW_THROTTLE_SPEED and speed_error > 0.:
-    speed_error /= CRUISE_ACCEL_RESPONSE_TIME
-  target_accel = np.clip(speed_error, cruise_min, max_accel)
-  j_cruise = np.interp(v_ego, A_CRUISE_MAX_BP, J_CRUISE_VALS)""",
-     """  speed_error = v_cruise - v_ego
-  if not e2e and not faster_takeoffs and v_ego >= MIN_ALLOW_THROTTLE_SPEED and speed_error > 0.:
-    speed_error /= CRUISE_ACCEL_RESPONSE_TIME
-  if shaper is not None and not e2e:
+    ("""                     *, a_target_prev: float | None = None, ease_slc_braking: bool = False):""",
+     """                     *, a_target_prev: float | None = None, ease_slc_braking: bool = False, shaper: tuple[float, float, float] | None = None):"""),
+    ("""  target_accel = np.clip(speed_error, cruise_min, max_accel)""",
+     """  if shaper is not None and not e2e:
     # The plan's feedforward IS the target (no P gain, no corr, no
     # blend). Hard clamps bind THIS frame, every cycle: max_accel folds
     # ACCEL_MAX, the turn limit, the coast limit and every
@@ -167,12 +158,9 @@ def get_max_accel(v_ego, faster_takeoffs=False):"""),
       cap_lo, cap_hi = plan_lo, plan_hi
     target_accel = float(np.clip(shaper[0], cap_lo, cap_hi))
   else:
-    target_accel = np.clip(speed_error, cruise_min, max_accel)
-  j_cruise = np.interp(v_ego, A_CRUISE_MAX_BP, J_CRUISE_VALS)"""),
-    ("""  target_accel = float(np.clip(target_accel, decel_start - j_cruise * dt, a_cruise_prev + j_cruise * dt))
-
-  return target_accel""",
-     """  target_accel = float(np.clip(target_accel, decel_start - j_cruise * dt, a_cruise_prev + j_cruise * dt))
+    target_accel = np.clip(speed_error, cruise_min, max_accel)"""),
+    ("""  target_accel = float(np.clip(target_accel, lower, a_cruise_prev + j_cruise * dt))""",
+     """  target_accel = float(np.clip(target_accel, lower, a_cruise_prev + j_cruise * dt))
   # Same-frame hard bounds AFTER the slew, every cycle, stock and
   # shaped alike: max_accel has folded in ACCEL_MAX, the turn limit,
   # the coast limit and every profile/selected cap for THIS cycle, and
@@ -189,9 +177,7 @@ def get_max_accel(v_ego, faster_takeoffs=False):"""),
     shaper_hi = min(max_accel, float(np.interp(v_ego, _SHAPER_CAP_BP, CRUISE_SHAPER[2])), shaper[2])
     if shaper_lo <= shaper_hi:
       post_lo, post_hi = shaper_lo, shaper_hi
-  target_accel = float(np.clip(target_accel, post_lo, post_hi))
-
-  return target_accel"""),
+  target_accel = float(np.clip(target_accel, post_lo, post_hi))"""),
     ("""    self.lead_approach = LeadApproach(dt, CP.longitudinalActuatorDelay)""",
      """    self.lead_approach = LeadApproach(dt, CP.longitudinalActuatorDelay)
     self.cruise_shaper_plan = None
@@ -352,10 +338,8 @@ def get_max_accel(v_ego, faster_takeoffs=False):"""),
           eff_hi = max(plan.a_hi, 0.0)
           shaper_cmd = (a_ff, eff_lo, eff_hi)
     self.a_cruise = get_cruise_accel(sm['selfdriveState'].experimentalMode, v_cruise, v_ego,"""),
-    ("""                                     base_brake_floor=global_floor, selected_acceleration_max=selected_acceleration, faster_takeoffs=faster_takeoffs,
-                                     a_target_prev=self.output_a_target)""",
-     """                                     base_brake_floor=global_floor, selected_acceleration_max=selected_acceleration, faster_takeoffs=faster_takeoffs,
-                                     a_target_prev=self.output_a_target, shaper=shaper_cmd)"""),
+    ("""                                     a_target_prev=self.output_a_target,""",
+     """                                     a_target_prev=self.output_a_target, shaper=shaper_cmd,"""),
   ],
 }
 

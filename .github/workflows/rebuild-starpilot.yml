@@ -22,8 +22,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  UPSTREAM_REPO: https://github.com/firestar5683/StarPilot.git
-  UPSTREAM_BRANCH: StarPilot
+  UPSTREAM_REPO: https://github.com/StarPilotHQ/StarPilot.git
+  UPSTREAM_BRANCH: stable
   TARGET_BRANCH: StarPilot
 
 jobs:

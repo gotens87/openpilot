@@ -46,7 +46,6 @@ case "$PATCHER_SET" in
     PATCHERS=(
       patch_sdsu_long.py
       patch_park_offroad.py
-      patch_camry_cem.py
       patch_fan_floor.py
       patch_camry_cruise_shaper.py
       patch_ops_settings.py
@@ -58,7 +57,6 @@ case "$PATCHER_SET" in
     SUBJECTS=(
       "Match Reported Vehicle Speed (Testing)"
       "Park auto-offroad"
-      "Allow Conditional Experimental Mode on TSS-P Camry"
       "Keep C3 Fan at 50% Minimum"
       "Smooth Set-Speed Taps on Hybrid Camry"
       "Boot settings enforcement"

@@ -103,8 +103,8 @@ import { CompanionUpdates } from './companion-updates.js'""",
      """import { RemoteAccess } from './remote-access.js'
 import { GalaxyTailscale } from './tailscale.js'
 import { CompanionUpdates } from './companion-updates.js'"""),
-    ("""  components: { AppStoreLinks, InstallApp, RemoteAccess, CompanionUpdates },""",
-     """  components: { AppStoreLinks, InstallApp, RemoteAccess, GalaxyTailscale, CompanionUpdates },"""),
+    ("""  components: { WikiHelp, AppStoreLinks, InstallApp, RemoteAccess, CompanionUpdates },""",
+     """  components: { WikiHelp, AppStoreLinks, InstallApp, RemoteAccess, GalaxyTailscale, CompanionUpdates },"""),
     ("""    </ol>
     <section class="gx-card gx-panel gx-stack"><div class="gx-section__header"><i class="bi bi-wifi" aria-hidden="true"></i><span class="gx-section__title">Galaxy Wi-Fi Hotspot</span></div>""",
      """    </ol>
