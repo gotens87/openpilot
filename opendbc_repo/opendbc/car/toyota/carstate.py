@@ -110,7 +110,11 @@ class CarState(CarStateBase):
       cp.vl["WHEEL_SPEEDS"]["WHEEL_SPEED_RL"],
       cp.vl["WHEEL_SPEEDS"]["WHEEL_SPEED_RR"],
     )
-    ret.vEgoCluster = ret.vEgo * 1.015  # minimum of all the cars
+    # Camry dash over-reads true speed by ~4%
+    if self.CP.carFingerprint == CAR.TOYOTA_CAMRY:
+      ret.vEgoCluster = ret.vEgo * 1.04
+    else:
+      ret.vEgoCluster = ret.vEgo * 1.015  # minimum of all the cars
 
     ret.standstill = abs(ret.vEgoRaw) < 1e-3
 
