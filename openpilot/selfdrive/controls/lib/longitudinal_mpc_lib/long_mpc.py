@@ -58,6 +58,18 @@ FCW_IDXS = T_IDXS < 5.0
 T_DIFFS = np.diff(T_IDXS, prepend=[0.])
 COMFORT_BRAKE = 2.5
 STOP_DISTANCE = 6.0
+_DRAFT_M = 2.5
+
+
+def _draft_obstacle(obstacle, lead_xv, v_ego, t_follow):
+  if v_ego < 25.0:
+    return obstacle
+  v_lead = lead_xv[:, 1]
+  if abs(v_ego - v_lead[0]) > 1.0 or v_ego - v_lead.min() > 1.0:
+    return obstacle
+  if lead_xv[0, 0] < t_follow * v_ego + STOP_DISTANCE - _DRAFT_M - 1.0:
+    return obstacle
+  return obstacle + _DRAFT_M
 MIN_X_LEAD_FACTOR = 0.5
 LEAD_T_IDXS_MODEL = np.asarray(ModelConstants.LEAD_T_IDXS, dtype=np.float64)
 MODEL_LEAD_TRAJECTORY_MAX_LEAD_BRAKE = 0.5
@@ -558,8 +570,8 @@ class LongitudinalMpc:
     # To estimate a safe distance from a moving lead, we calculate how much stopping
     # distance that lead needs as a minimum. We can add that to the current distance
     # and then treat that as a stopped car/obstacle at this new distance.
-    lead_0_obstacle = lead_xv_0[:,0] + get_stopped_equivalence_factor(lead_xv_0[:,1])
-    lead_1_obstacle = lead_xv_1[:,0] + get_stopped_equivalence_factor(lead_xv_1[:,1])
+    lead_0_obstacle = _draft_obstacle(lead_xv_0[:,0] + get_stopped_equivalence_factor(lead_xv_0[:,1]), lead_xv_0, self.x0[1], t_follow)
+    lead_1_obstacle = _draft_obstacle(lead_xv_1[:,0] + get_stopped_equivalence_factor(lead_xv_1[:,1]), lead_xv_1, self.x0[1], t_follow)
 
     if type(extra_stopped_gap_m) in (int, float) and math.isfinite(extra_stopped_gap_m) and 0.0 < extra_stopped_gap_m <= 3.048:
       # Shift only lead obstacles; physical trajectories still own collision warnings.
