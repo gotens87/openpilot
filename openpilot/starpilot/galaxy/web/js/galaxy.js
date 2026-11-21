@@ -2,11 +2,12 @@ import { WikiHelp } from './wiki-help.js'
 import { AppStoreLinks } from './app-downloads.js'
 import { InstallApp } from './install-app.js'
 import { RemoteAccess } from './remote-access.js'
+import { GalaxyTailscale } from './tailscale.js'
 import { CompanionUpdates } from './companion-updates.js'
 
 export const GalaxyPage = {
   name: 'GalaxyPage',
-  components: { WikiHelp, AppStoreLinks, InstallApp, RemoteAccess, CompanionUpdates },
+  components: { WikiHelp, AppStoreLinks, InstallApp, RemoteAccess, GalaxyTailscale, CompanionUpdates },
   props: { mode: { type: String, required: true }, unauthorized: { type: Function, required: true } },
   data: () => ({ url: '' }),
   template: `<div class="gx-settings gx-tunnel">
@@ -24,6 +25,7 @@ export const GalaxyPage = {
         </div>
       </li>
     </ol>
+    <GalaxyTailscale :mode="mode" :unauthorized="unauthorized" />
     <section class="gx-card gx-panel gx-stack"><div class="gx-section__header"><i class="bi bi-wifi" aria-hidden="true"></i><span class="gx-section__title">Galaxy Wi-Fi Hotspot</span></div>
       <p>The hotspot, preferred Wi-Fi networks and cellular data are on the Networks page.</p>
       <div class="gx-actions"><a class="gx-btn gx-btn--tonal" href="#/networks">Open Networks</a></div></section>
