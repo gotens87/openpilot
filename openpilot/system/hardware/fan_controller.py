@@ -32,7 +32,8 @@ class FanController:
     self.last_aggressive = aggressive
 
     self.controller.pos_limit = 100 if ignition else 30
-    self.controller.neg_limit = 30 if ignition else 0
+    # Ignition-on floor for a degraded fan that stalls at the stock 30% duty.
+    self.controller.neg_limit = 50 if ignition else 0
 
     return int(self.controller.update(
                  error=(cur_temp - (75 + curve["offset"])),  # temperature setpoint in C
