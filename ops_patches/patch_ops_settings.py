@@ -80,7 +80,7 @@ DESIRED_PARAMS = {
   "AggressiveFollowHigh": 0.5,
   "AlphaLongitudinalEnabled": True,
   "SNGHack": True,
-  "SpeedLimitController": False,
+  "SpeedLimitController": True,
   "SLCPriority1": "Map Data",
   "SLCPriority2": "Dashboard",
   "SLCConfirmation": 0,
