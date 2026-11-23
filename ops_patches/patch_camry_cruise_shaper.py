@@ -136,8 +136,10 @@ class _ShaperPlan:
 
 
 def get_max_accel(v_ego, faster_takeoffs=False):"""),
-    ("""                     *, a_target_prev: float | None = None, ease_slc_braking: bool = False):""",
-     """                     *, a_target_prev: float | None = None, ease_slc_braking: bool = False, shaper: tuple[float, float, float] | None = None):"""),
+    ("""                     *, a_target_prev: float | None = None, ease_slc_braking: bool = False,
+                     speed_step: bool = False):""",
+     """                     *, a_target_prev: float | None = None, ease_slc_braking: bool = False,
+                     speed_step: bool = False, shaper: tuple[float, float, float] | None = None):"""),
     ("""  target_accel = np.clip(speed_error, cruise_min, max_accel)""",
      """  if shaper is not None and not e2e:
     # The plan's feedforward IS the target (no P gain, no corr, no
