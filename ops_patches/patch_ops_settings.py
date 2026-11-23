@@ -74,6 +74,7 @@ DESIRED_PARAMS = {
   "FasterLeadTakeoff": True,
   "LongitudinalPersonality": 0,
   "CameraView": 0,
+  "LaneCentering": False,
   "CustomPersonalities": True,
   "AggressiveFollow": 1.25,
   "AggressiveFollowHigh": 0.5,
