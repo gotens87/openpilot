@@ -47,7 +47,7 @@
 # Shaping stays off for a cruise, curve, or nav ceiling, a force-stop
 # plan, a coast plan that is actually braking or capping speed,
 # force-decel, standstill, the driver brake or throttle, experimental
-# mode, or a state reset.
+# mode, downhill-coast control (downhill_error set), or a state reset.
 #
 # Applying again is a no-op when this text is already present. If older
 # shaper text is in the planner, the patcher aborts; restore
@@ -137,9 +137,10 @@ class _ShaperPlan:
 
 def get_max_accel(v_ego, faster_takeoffs=False):"""),
     ("""                     *, a_target_prev: float | None = None, ease_slc_braking: bool = False,
-                     speed_step: bool = False):""",
+                     speed_step: bool = False, downhill_error: float | None = None):""",
      """                     *, a_target_prev: float | None = None, ease_slc_braking: bool = False,
-                     speed_step: bool = False, shaper: tuple[float, float, float] | None = None):"""),
+                     speed_step: bool = False, downhill_error: float | None = None,
+                     shaper: tuple[float, float, float] | None = None):"""),
     ("""  target_accel = np.clip(speed_error, cruise_min, max_accel)""",
      """  if shaper is not None and not e2e:
     # The plan's feedforward IS the target (no P gain, no corr, no
@@ -211,8 +212,10 @@ def get_max_accel(v_ego, faster_takeoffs=False):"""),
     # 0.2 AND |a_cruise| <= 0.15). Remaining |set-ego| > 8 km/h
     # clears the plan the same frame (stock). Exclusions: any
     # cruise/curve/nav ceiling, force-stop plan, an ACTING coast plan,
-    # forceDecel, standstill, driver pedal, experimental mode or
-    # reset disarms instantly.
+    # forceDecel, standstill, driver pedal, experimental mode,
+    # downhill-coast control (downhill_error set: its own speed-cap
+    # law owns the candidate and forbids throttle) or reset disarms
+    # instantly.
     # CoastOwner.sample ALWAYS returns a CoastPlan instance (idle:
     # force_decel=False, brake_floor=None, speed_ceiling_mps=None,
     # pulse_coasting=False) and plannerd always passes a CoastRuntime,
@@ -229,7 +232,8 @@ def get_max_accel(v_ego, faster_takeoffs=False):"""),
                    navigation_target is None and not coast_acting and
                    self.force_stop_plan.speed_ceiling_mps is None and
                    not self.force_stop_plan.forcing and not sm['controlsState'].forceDecel and
-                   not sm['carState'].standstill and not sm['carState'].brakePressed and not sm['carState'].gasPressed)
+                   not sm['carState'].standstill and not sm['carState'].brakePressed and not sm['carState'].gasPressed and
+                   downhill_error is None)
     shaper_cmd = None
     if not shaper_gate:
       self.cruise_shaper_plan = None
