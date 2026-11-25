@@ -34,12 +34,10 @@ PATCHER_SET=${PATCHER_SET:-default}
 case "$PATCHER_SET" in
   default)
     PATCHERS=(
-      patch_park_valet.py
-      patch_radar_lat_sign.py
+      patch_park_offroad.py
     )
     SUBJECTS=(
-      "Offroad Without OBD Power: auto-offroad on park entry + exit"
-      "Toyota TSS-P: left is left again"
+      "Park auto-offroad"
     )
     ;;
   dom)
