@@ -27,8 +27,8 @@ PAYLOADS = (
 
 EDITS = {
   "openpilot/starpilot/galaxy/server.py": [
-    ("""                local_access=None, tmux_live=None, starport_logs=None, starport_log_sender=None, hotspot=None, toyota_tools=None,""",
-     """                local_access=None, tmux_live=None, starport_logs=None, starport_log_sender=None, hotspot=None, tailscale=None, toyota_tools=None,"""),
+    ("""hotspot=None, toyota_tools=None,""",
+     """hotspot=None, tailscale=None, toyota_tools=None,"""),
     ("""  hotspot_source = hotspot
   hotspot_source_lock = threading.Lock()
 
@@ -103,13 +103,11 @@ import { CompanionUpdates } from './companion-updates.js'""",
      """import { RemoteAccess } from './remote-access.js'
 import { GalaxyTailscale } from './tailscale.js'
 import { CompanionUpdates } from './companion-updates.js'"""),
-    ("""  components: { WikiHelp, AppStoreLinks, InstallApp, RemoteAccess, CompanionUpdates },""",
-     """  components: { WikiHelp, AppStoreLinks, InstallApp, RemoteAccess, GalaxyTailscale, CompanionUpdates },"""),
-    ("""    </ol>
-    <section class="gx-card gx-panel gx-stack"><div class="gx-section__header"><i class="bi bi-wifi" aria-hidden="true"></i><span class="gx-section__title">Galaxy Wi-Fi Hotspot</span></div>""",
+    ("""RemoteAccess, CompanionUpdates""",
+     """RemoteAccess, GalaxyTailscale, CompanionUpdates"""),
+    ("""    </ol>""",
      """    </ol>
-    <GalaxyTailscale :mode="mode" :unauthorized="unauthorized" />
-    <section class="gx-card gx-panel gx-stack"><div class="gx-section__header"><i class="bi bi-wifi" aria-hidden="true"></i><span class="gx-section__title">Galaxy Wi-Fi Hotspot</span></div>"""),
+    <GalaxyTailscale :mode="mode" :unauthorized="unauthorized" />"""),
   ],
 }
 
