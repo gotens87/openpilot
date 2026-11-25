@@ -1,13 +1,13 @@
 name: Build testing
 
-# Builds testing and Dom as: a pinned commit from upstream testing (StarPilotHQ/StarPilot; was upstream Dom before 2026-11-18),
+# Builds testing as: a pinned commit from upstream testing (StarPilotHQ/StarPilot; was upstream Dom before 2026-11-18),
 # PLUS the "dom" patcher set from ops_patches/, verified by the opendbc
 # Toyota tests before anything is pushed. Committer date is pinned to the picked
 # commit's, so the result is a deterministic function of the picked sha and a
 # rollback is just a re-run with an older sha.
 #
-# Scheduled runs (blank sha) follow the Dom tip, skipping the
-# build when Dom is already built on it. A manual dispatch with an explicit
+# Scheduled runs (blank sha) follow the testing tip, skipping the
+# build when testing is already built on it. A manual dispatch with an explicit
 # sha pins or rolls back; to keep a rollback from being undone 10 minutes later,
 # set repo variable DOM_HOLD (any non-empty value parks the schedule),
 # dispatch the pin, then clear the variable to resume following.
@@ -18,7 +18,7 @@ on:
   workflow_dispatch:
     inputs:
       sha:
-        description: 'Full 40-hex commit on upstream Dom to pin Dom to; blank = current Dom tip'
+        description: 'Full 40-hex commit on upstream testing to pin; blank = current testing tip'
         required: false
         type: string
 
@@ -181,9 +181,8 @@ jobs:
           # PAT, not GITHUB_TOKEN: the pushed tree contains .github/workflows, which
           # GITHUB_TOKEN is not permitted to push.
           remote="https://x-access-token:${PATCHQUEUE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          # Keep the device's existing branch synchronized until it is migrated.
-          git push -q --atomic --force "$remote" "HEAD:refs/heads/$TARGET_BRANCH" "HEAD:refs/heads/Dom"
-          echo "pinned testing and Dom to $NEW_SHA"
+          git push -q --force "$remote" "HEAD:refs/heads/$TARGET_BRANCH"
+          echo "pinned $TARGET_BRANCH to $NEW_SHA"
 
 # ponytail: no job-summary step. The pinned sha, moved-check, test outcome, and
 # pushed-or-not are in the step logs, which is where you look when it breaks.
