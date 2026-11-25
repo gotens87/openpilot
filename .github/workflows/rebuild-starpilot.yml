@@ -112,6 +112,42 @@ jobs:
 
           echo "NEW_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
+      - name: Check Camry radar correction
+        if: env.UPSTREAM_MOVED == 'yes'
+        run: |
+          python3 - <<'PYCODE'
+          from pathlib import Path
+          radar = Path('work/opendbc_repo/opendbc/car/toyota/radar_interface.py').read_text()
+          cluster = Path('work/opendbc_repo/opendbc/car/toyota/cluster_radar.py').read_text()
+          assert 'if CP.carFingerprint == CAR.TOYOTA_CAMRY and not CP.radarUnavailable:' in radar
+          assert 'self.cluster = ClusterRadarInterface(CP)' in radar
+          assert "point.yRel = float(cluster['LAT_DIST'])" in cluster
+          assert "point.deprecated.yvRel = float(cluster['LAT_SPEED'])" in cluster
+          PYCODE
+
+      - name: Set up Python 3.12
+        if: env.UPSTREAM_MOVED == 'yes'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run opendbc Toyota tests
+        if: env.UPSTREAM_MOVED == 'yes'
+        run: |
+          cd work/opendbc_repo
+          pip install numpy tqdm pycapnp pycryptodome pytest hypothesis parameterized cffi
+          # Steps run with bash -eo pipefail: any red test fails the job here, so the
+          # push step never runs. Tests gate the push, they don't just report.
+          # -k skips tests that import the full openpilot tree at test runtime
+          # (setproctitle, starpilot.car.toyota.tests, etc.) but cover none of
+          # the safety C / Camry patchers, so they're deselected rather than
+          # chasing deps: test_tx_hook_on_wrong_safety_mode,
+          # test_lta_and_lka_must_both_be_healthy, test_matrix_stock_aol_admission.
+          # --ignore skips tests that import the full openpilot tree at module
+          # scope (collection fails; -k can't filter). They don't cover our Camry patchers.
+          python -m pytest -q opendbc/car/toyota/tests opendbc/safety/tests/test_toyota.py -k "not test_tx_hook_on_wrong_safety_mode and not test_lta_and_lka_must_both_be_healthy and not test_matrix_stock_aol_admission" --ignore=opendbc/car/toyota/tests/test_prius_inactive.py --ignore=opendbc/car/toyota/tests/test_rav4h_filter.py --ignore=opendbc/car/toyota/tests/test_lexus_is.py
+          python -m pytest -q opendbc/car/tests/test_car_interfaces.py -k "TOYOTA or LEXUS"
+
       - name: Push if changed
         if: env.UPSTREAM_MOVED == 'yes'
         env:
