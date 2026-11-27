@@ -45,7 +45,6 @@ case "$PATCHER_SET" in
       patch_sdsu_long.py
       patch_park_offroad.py
       patch_fan_floor.py
-      patch_camry_cruise_shaper.py
       patch_ops_settings.py
       patch_reboot_on_disengage.py
       patch_highway_draft_gap.py
@@ -56,7 +55,6 @@ case "$PATCHER_SET" in
       "Match Reported Vehicle Speed (Testing)"
       "Park auto-offroad"
       "Keep C3 Fan at 50% Minimum"
-      "Smooth Set-Speed Taps on Hybrid Camry"
       "Boot settings enforcement"
       "Delay Reboot Until Disengaged"
       "Highway Draft Gap: Follow Closer at 90+ km/h"
