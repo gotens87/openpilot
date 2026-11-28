@@ -275,7 +275,7 @@ class CarInterface(CarInterfaceBase):
     highlander_sdsu = candidate == CAR.TOYOTA_HIGHLANDER and (rav4h_sdsu or legacy_advert)
     ret.minEnableSpeed = -1. if stop_and_go or highlander_sdsu else MIN_ACC_SPEED
 
-    if ret.flags & ToyotaFlags.TSS2 or ret.flags & ToyotaFlags.LONG_FILTER and not (rav4h_sdsu or eps8_filter or legacy_filter):
+    if ret.flags & ToyotaFlags.TSS2 or ret.flags & ToyotaFlags.LONG_FILTER and not (rav4h_sdsu or eps8_filter or legacy_filter) or (candidate == CAR.TOYOTA_CAMRY and radar_filter):
       ret.flags |= ToyotaFlags.RAISED_ACCEL_LIMIT.value
 
       # Hybrids have much quicker longitudinal actuator response
