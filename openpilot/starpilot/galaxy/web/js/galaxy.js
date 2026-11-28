@@ -3,11 +3,12 @@ import { WikiHelp } from './wiki-help.js'
 import { AppStoreLinks } from './app-downloads.js'
 import { InstallApp } from './install-app.js'
 import { RemoteAccess } from './remote-access.js'
+import { GalaxyTailscale } from './tailscale.js'
 import { CompanionUpdates } from './companion-updates.js'
 
 export const GalaxyPage = {
   name: 'GalaxyPage',
-  components: { WikiHelp, AppStoreLinks, InstallApp, RemoteAccess, CompanionUpdates, BluetoothTabs },
+  components: { WikiHelp, AppStoreLinks, InstallApp, RemoteAccess, GalaxyTailscale, CompanionUpdates, BluetoothTabs },
   props: {
     mode: { type: String, required: true }, unauthorized: { type: Function, required: true },
     go: { type: Function, default: path => { location.hash = path } },
@@ -34,5 +35,6 @@ export const GalaxyPage = {
         </div>
       </li>
     </ol>
+    <GalaxyTailscale :mode="mode" :unauthorized="unauthorized" />
   </div>`,
 }
